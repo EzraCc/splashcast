@@ -179,18 +179,29 @@ let boostAngleDeg = null;
 const URL_PARAMS = new URLSearchParams(location.search);
 let urlStateApplied = false;
 
-// The launch date is deliberately NOT live-synced into the URL by default
-// (unlike site/mode/hour/deploy/rate/alt) -- a target date is inherently
-// perishable (today's "latest" becomes stale the moment a newer capture is
-// pulled), so a plain bookmark or a long-lived tab should keep tracking
-// "whatever's current," not silently freeze on whatever date happened to be
-// selected at the time (user's call 2026-07-17). Date only gets written in
-// once the user does one of two explicit things: picks a date from the
-// dropdown themselves (see dateSelect's 'change' handler), or clicks "Copy
-// link" (an unambiguous "give me a durable link to exactly this" ask) --
-// or if they arrived via a link that already had ?date= on it, which is
-// itself evidence someone already did one of those two things.
+// The launch date is deliberately NOT live-synced into the URL by default --
+// a target date is inherently perishable (today's "latest" becomes stale the
+// moment a newer capture is pulled), so a plain bookmark or a long-lived tab
+// should keep tracking "whatever's current," not silently freeze on whatever
+// date happened to be selected at the time (user's call 2026-07-17). Date
+// only gets written in once the user does one of two explicit things: picks
+// a date from the dropdown themselves (see dateSelect's 'change' handler), or
+// clicks "Copy link" (an unambiguous "give me a durable link to exactly
+// this" ask) -- or if they arrived via a link that already had ?date= on it,
+// which is itself evidence someone already did one of those two things.
 let dateExplicitlyChosen = URL_PARAMS.has('date');
+
+// Hour and deploy get the same treatment (user's call 2026-07-17, same day):
+// their *default* is a fixed constant (DATA.hours[0]/DATA.deploys[0]) rather
+// than a moving target like "latest date" is, so there's no staleness risk
+// in leaving them out -- but a plain click around the map shouldn't start
+// pinning "9am" or "Dual" into the address bar either, only a deliberate
+// toggle click should (see the hour-toggle/deploy-toggle onChange callbacks
+// in initFromData()). Unlike date, Copy Link does NOT force these in --
+// since their default reproduces identically on any later visit, there's
+// nothing for Copy Link to protect against by forcing them.
+let hourExplicitlyChosen = URL_PARAMS.has('hour');
+let deployExplicitlyChosen = URL_PARAMS.has('deploy');
 
 function freshState() {
   const base = {
@@ -1052,15 +1063,17 @@ function drawZone(zone, color, hour) {
 // Only the durable, "what am I looking at" choices go in the URL -- not
 // isolatedX (pure hover, cleared on mouseleave) or boostAngleDeg/padOffsetFt/
 // the color pickers (personal display preferences already persisted via
-// localStorage, not part of a shareable launch scenario). `date` is further
-// gated behind includeDate -- see dateExplicitlyChosen's declaration for why.
+// localStorage, not part of a shareable launch scenario). `date`/`hour`/
+// `deploy` are further gated behind an explicit user action each -- see
+// dateExplicitlyChosen/hourExplicitlyChosen/deployExplicitlyChosen's
+// declarations for why.
 function buildPermalinkParams(includeDate) {
   const p = new URLSearchParams();
   p.set('site', currentSiteId);
   if (includeDate && dateSelect.value) p.set('date', dateSelect.value);
   p.set('mode', state.mode);
-  p.set('hour', state.hour);
-  p.set('deploy', state.deploy);
+  if (hourExplicitlyChosen) p.set('hour', state.hour);
+  if (deployExplicitlyChosen) p.set('deploy', state.deploy);
   if (state.pinnedRate) p.set('rate', state.pinnedRate);
   if (state.mode === 'byAltitude' && state.pinnedAlt !== null) p.set('alt', state.pinnedAlt);
   if (state.mode === 'byTime') p.set('compare', state.compareAlt);
@@ -1220,8 +1233,8 @@ function initFromData() {
   boostAngleReadout.textContent = `${boostAngleDeg}°`;
 
   buildToggle('mode-toggle', ['byAltitude', 'byTime', 'byHistory'], MODE_LABELS, 'mode', () => setMode(state.mode));
-  buildToggle('hour-toggle', DATA.hours, HOUR_LABELS, 'hour');
-  buildToggle('deploy-toggle', DATA.deploys, DEPLOY_LABELS, 'deploy');
+  buildToggle('hour-toggle', DATA.hours, HOUR_LABELS, 'hour', () => { hourExplicitlyChosen = true; });
+  buildToggle('deploy-toggle', DATA.deploys, DEPLOY_LABELS, 'deploy', () => { deployExplicitlyChosen = true; });
   buildTimeLegend();
   buildAltList();
   buildModelLegend();
