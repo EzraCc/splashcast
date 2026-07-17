@@ -1,0 +1,169 @@
+# Splashcast — Project Spec
+
+**Renamed 2026-07-17** (was "Driftcast Expansion"): named Splashcast to distinguish this project from the pre-existing "Driftcast" tool it was originally built to extend (see below) — the two are easy to conflate by name otherwise. Every "Driftcast" mention below that refers to *that* original predecessor tool is left as-is (it's a real, distinct thing being credited); mentions of *this* project have been updated. Same 2026-07-17 pass also moved this doc from `driftcast_expansion_spec.md` to `splashcast/docs/spec.md` and restructured the code into `splashcast/pipeline/` (Python source, not deployed) vs. `splashcast/site/` (the deployable static web app) — see §8/§9 for what that touched.
+
+Scope: internal tool for clubs the author flies with, not a public/community-facing product. Builds on the existing Driftcast tool (wind-drift landing prediction) by David Bellhorn / originally Dave Snyder's spreadsheet.
+
+**Design philosophy**: this tool surfaces signal that already exists in the underlying models' own forecasts and track records — cross-model agreement, seasonal/lead-time skill patterns, descent-rate envelopes — so a launch director sees things they'd otherwise miss. It does not attempt to build a better weather model or correct the underlying forecasts. Everything below (weighting, opacity, seasonal flags) is presentation and pattern-surfacing on top of existing NWP output, not new atmospheric modeling.
+
+**Site scope**: fixed set of Texas launch sites the author actually flies at, not a general/community tool. Regional/domain model variants (e.g., NAM Alaska vs. NAM CONUS, HRRR AK vs. CONUS) don't need to be handled — only CONUS-domain models matter for this build. *(Partially superseded — see §8: multi-site support, including non-Texas sites, is now planned. Still not a public/community tool per the scope line above, just more than one fixed Texas site.)*
+
+## 1. Problem statement
+
+A launch director needs to know, in the days leading up to and during a launch, where a rocket is likely to land given current wind conditions at altitude — and how that estimate might shift as forecasts update. This affects where to set up the range, what waiver-boundary margin exists, and what flights to allow. The existing tool (Driftcast) does this as a single-point-in-time estimate using a generic descent rate; this expansion adds multi-model comparison, forecast-drift tracking, a descent-rate envelope instead of a point estimate, and a feedback loop from real flight data.
+
+## 2. Core mechanic (unchanged from Driftcast)
+
+- Pull wind speed/direction at multiple altitudes for the launch site and time window.
+- Given apogee, descent rate(s) (single or dual deploy), and optional weathercocking, integrate wind vectors from apogee to ground.
+- Output: estimated landing point(s), typically per hour across a launch window.
+
+## 3. Data sources
+
+### 3.1 Live multi-model forecasts — Open-Meteo (free tier)
+- Free tier (10k calls/day, 300k/month, non-commercial) is sufficient for club-scale use.
+- Wind available at 10/80/100/120/180/200m and at 42 pressure levels (1000hPa–10hPa, ~110m–26km), with `geopotential_height` for precise altitude.
+- 30+ individual models queryable (`models=` param) plus `best_match` and provider `seamless` blends. For CONUS purposes, the practically distinct models are GFS, HRRR, RAP, NAM, NBM, HREF, SREF (~7 independent models; NOMADS lists many more dataset entries but most are domain/resolution variants of these same 7). HREF/SREF are themselves multi-member ensembles of one core model, not independent models — decide whether to treat each as one input or unpack members (see §7).
+- **Gap**: Open-Meteo's Historical Weather API, Historical Forecast API, and Previous Model Runs API (the endpoints that would give forecast-drift-over-lead-time and true historical actuals) are gated behind the paid Professional tier — this is an access-tier lock, not a volume limit, so free-tier low usage does not get around it.
+
+### 3.2 Historical / "actuals" — NOAA GRIB2 via AWS Open Data (free)
+- HRRR archive: `s3://noaa-hrrr-bdp-pds` (also mirrored as Zarr at `s3://hrrrzarr`), free, no AWS account required (`--no-sign-request`). Archive depth: since 2014 for HRRR; practical usable window for this project is ~2024–present (~2 years), which caps how much seasonal/accuracy history is available regardless of source.
+- Files are organized by forecast hour: `f00` = analysis (data-assimilated best estimate at init time — the free proxy for "actual"), `f01+` = forecast issued from that run.
+- **Important framing**: `f00` analysis is itself a model product (interpolated/assimilated from sparse ground stations, soundings, radar, satellite), not a raw measurement. There is no full-grid ground truth anywhere — soundings are the closest thing to a real point measurement but are sparse (fixed stations, ~2x/day) and not gridded. Store/label this field as `hrrr_f00_analysis`, not `actual`, so the distinction isn't lost downstream. This is standard practice in meteorology (verifying forecasts against best-available analysis), not a compromise unique to this project.
+- Parsing: confirmed working in this session — `eccodes`/`cfgrib` (Python) reads GRIB2 messages into JSON-serializable records (variable, level, level type, valid date/time, grid values). Wind is stored as U/V components; compute `speed = sqrt(u²+v²)`, `direction = atan2(-u,-v)` after extraction.
+- **Backfill limitation**: this only lets you build a forecast-drift archive going *forward* from whenever you start capturing daily snapshots yourself, for the live-forecast side. For historical seasonal/accuracy analysis, the NOAA archive *can* be queried retroactively back to whenever HRRR coverage starts (no live-capture requirement) — since you're comparing archived forecast-hour files against archived analysis files, not needing your own forward-collected snapshots. The forward-only limitation applies specifically to Open-Meteo's live multi-model forecast side, not to NOAA's own archive.
+- Real cost driver is file size/parse time, not dollars: each HRRR file is tens of MB across many variables/levels. Estimate total download volume (dates × models × lead times × file size) before committing to a sampling plan, rather than assuming "free" means "cheap to run."
+
+## 4. Data model (draft)
+
+Per forecast/analysis pull, store:
+- `model` (GFS, HRRR, RAP, NAM, NBM, HREF, SREF, ...)
+- `source_type` (`forecast` | `hrrr_f00_analysis`)
+- `run_init_time`, `valid_time`, `lead_time_hours`
+- `site_id`, `lat`, `lon`
+- `altitude_m` or `pressure_level_hpa` (+ `geopotential_height_m` if available)
+- `wind_speed`, `wind_direction`
+- `captured_at` (when your system pulled it — needed for staleness display)
+
+Per flight, store:
+- `predicted`: apogee, descent rate(s) as used in the pre-launch sim, main deploy altitude
+- `actual`: GPS-derived apogee, descent rate(s), landing coordinates (preferred); altimeter-supplied values as fallback/supplement
+- `site_id`, `launch_time`, `drogue_size` if variable/reefed
+
+Per model accuracy bucket (see §5, Phase 3), store:
+- `model`, `lead_time_bucket`, `season_bucket_or_day_of_year_encoding`
+- `error_metric` (specify: wind speed error, wind direction error, or downstream landing-distance error — pick one as primary, see §7)
+- `mean_error`, `sd_error`, `n`
+
+## 5. Feature build order
+
+### Phase 1 — Splash-zone envelope (extends current single-point Driftcast output)
+- Run the existing vector calc twice per time/altitude bin using min/max descent rate, not once.
+- Descent rate ranges are asymmetric: main is narrow (~22–29 fps / 15–20 mph, hard-floored by the "under 20 mph" safety limit), drogue is wide (50–100 fps, ~2x range depending on drogue size/reefing).
+- Given that asymmetry, approximate the envelope using drogue extremes with main held near its narrow midpoint (full 4-combination drogue×main envelope likely unnecessary — verify with one real flight's numbers before locking this in).
+- Keep descent-rate bounds as a named, versioned parameter (not hardcoded), so they can be refined later from observed data (Phase 3).
+- Surface main-deploy altitude as its own adjustable input, not just a fixed config value — it trades off predictability (more of descent under narrow-variance main) against altitude margin.
+
+### Phase 2 — Multi-model live pull + forward-looking drift archive
+- Query several Open-Meteo models per site/time/altitude (free tier).
+- Daily automated snapshot job storing each model's current forecast for upcoming launch dates — this is your own self-built "previous day" archive for the live-forecast side, live from whenever this starts running.
+- Compare same-model forecasts across capture dates to see how the picture is shifting T-7 → T-0 for a given launch.
+
+### Phase 2.5 — Seasonal skill research (do this before building seasonal weighting)
+- **Literature check (done this session)**: seasonal variation in short-range NWP wind forecast skill is a documented phenomenon, not something to assume blind. General finding: mid-latitude synoptic-driven regimes (winter) show higher forecast skill than convectively-dominated regimes (summer), where storm timing/location is inherently harder to predict. A 2025 *Wind Energy Science* study evaluating HRRRv3/v4 specifically in the **US Great Plains** found real seasonal skill differences, including model-version sensitivity (HRRRv4 ~50% more skillful than HRRRv3 for summer up-ramp detection specifically). A separate Wyoming/Colorado study found HRRR's wind/gust bias direction itself flips between weak-wind and strong-wind regimes, with season-dependent magnitude. None of this is specific to the club's actual Texas sites — it establishes the phenomenon is real and documented, not that the exact effect size applies locally.
+- **Local test methodology**:
+  - Treat time-of-year as continuous, not discrete season bins. A hard summer/winter cutoff treats dates near the boundary (e.g. June 30 vs. Dec 10) as maximally different and dates within a bin (June 10 vs. June 30) as automatically similar, when the underlying driver is continuous and wraps around the calendar (Dec 31 is adjacent to Jan 1, not opposite). Use a circular encoding (sin/cos of day-of-year) and correlate model error against it directly, rather than pre-deciding where the seasons split.
+  - Sample via stratified/paired draws across the year, not a single uniform-random pull — draw a fixed N from comparable points across the calendar, and pull the *same* dates across all models being compared (paired samples), not just the same count of dates per model. Unpaired equal-N samples can still be confounded if one model's dates cluster in a different weather regime than another's.
+  - Samples aren't limited to actual launch dates — NOAA's archive can be queried for any historical day back to ~2024, so sample size for this specific test is decoupled from how often the club actually flies.
+  - Decision rule: compare the seasonal difference in mean error against the within-season SD (effect size vs. noise), not by eyeballing. If the seasonal gap is smaller than roughly one SD, treat as noise; if clearly larger, it's a real signal worth encoding into the weighting scheme (Phase 3).
+  - Watch multiple-comparisons risk: testing across ~7 models × several lead times × a seasonal encoding is many simultaneous comparisons; some will look "significant" by chance. Lean on effect-size-vs-SD rather than raw p-value chasing given the modest sample sizes available.
+
+### Phase 3 — Ground-truth feedback loop + model weighting/agreement display
+- Accept user-uploaded GPS flight data (preferred) or altimeter data (supplement) post-flight: actual apogee, actual descent rate(s), landing coordinates.
+- Triage order for any prediction miss (do NOT jump straight to "wind model was wrong"):
+  1. Actual apogee vs. predicted apogee — a miss here is a motor/rocket performance issue, unrelated to wind or drift. Exclude these flights from wind-model accuracy stats.
+  2. Given correct apogee, actual descent rate vs. assumed — likely the most common real failure mode (chute didn't fully open, wrong drogue, reefing mismatch). Rule this out before blaming the model.
+  3. Only after both check out: actual wind (HRRR f00 analysis) vs. forecast, per model.
+- Not aiming for a headline "X% accurate" claim. Priority is the per-flight delta/error signal and correctly attributing misses to motor performance vs. rigging vs. wind model, not a marketing-style accuracy score — especially since sample sizes will be small early on.
+- **Model agreement as the primary UI signal**: rather than a hard accuracy threshold excluding a model from the "agreement" calculation, use continuous weighting — fade a model's visual opacity/weight in proportion to its track record, rather than a binary in/out cutoff. This avoids needing to justify an arbitrary exclusion threshold.
+- **Weight/opacity must be conditioned on lead time AND season jointly**, not a lifetime average per model — a model's usable weight is "this model's track record at this lead time, in this season," which is a finer bucket than either dimension alone. Require a minimum sample count `n` per bucket before letting a bucket-specific weight diverge from the model's overall average; otherwise a bucket with a handful of data points can drive a confident-looking weight that isn't actually reliable.
+- **Weighting is applied at the output stage, not the input stage**: run the vector/weathercocking calc separately per model to get per-model landing points, *then* take a weighted average of the landing points — not a weighted average of the wind fields before running the calc once. The descent/weathercocking integration is nonlinear, so these two approaches aren't guaranteed to converge to the same answer; averaging outcomes is also more defensible as "which models do I trust" and naturally supports showing each model's individual landing point at reduced opacity alongside the blended consensus.
+- **Two distinct signals must both be visible, not collapsed into one**: cross-model agreement/spread (precision — how tightly the models cluster right now) and absolute seasonal/lead-time skill level (accuracy — how reliable this ensemble has historically been for this time of year and lead time) are different things. If every model degrades together in a given season, agreement can still look tight while the whole ensemble is collectively less trustworthy than usual — correlated bias across models that share similar limitations (e.g. convective parameterization) won't show up as spread. Surface the seasonal/absolute-skill signal as its own flag (e.g. a banner or confidence modifier), not folded into per-model opacity alone, so a director doesn't mistake "everything agrees" for "this is reliable."
+- Display stats (mean, SD, n) per model per bucket rather than a bare accuracy percentage, so the director can judge whether a bucket's SD is trustworthy or based on too few data points. Specify up front which error the SD describes (wind speed error, wind direction error, or downstream landing-distance error — see §7 for which to prioritize) since these have different units/noise characteristics and probably warrant separate rows rather than one blended figure.
+- Track model performance per-site is *not* required for this build (see site-scope note above — fixed set of Texas sites, not a general multi-region tool), which simplifies the bucket structure to model × lead time × season rather than model × lead time × season × site.
+
+### Phase 4 — Range-day operational tool
+- Shift from a static morning report to an on-demand query tool for range day: input apogee, drogue setting, waiver radius → output minimum descent rate needed to keep drift inside the boundary (inverse of the forward calc), so a director can tell a flyer "reef it" or "swap drogues" with a number.
+- Cadence should increase through the day as launch approaches, not just run once each morning.
+- Explicit staleness indicator on all displayed data (timestamp + age-based visual flag), since cell service at the field is expected to be spotty — a director should never mistake a 3-hour-old pull for current.
+
+## 6. Model count reference (for scoping which models to pull)
+NOMADS lists many dataset entries, but most are domain/resolution variants of the same underlying model (e.g. NAM alone spans ~12 listed entries for CONUS/Alaska/Pacific/Caribbean/NEST variants/SmartInit/MOS). For CONUS wind forecasting, the practically distinct models are GFS, HRRR, RAP, NAM, NBM, HREF, SREF — ~7 independent models. Given the site-scope decision (fixed Texas sites only), regional/domain variant selection logic is unnecessary; just pull the CONUS variant of each.
+
+## 7. Open items / things to decide while building
+- Confirm per-variable historical depth on NOAA's HRRR archive for wind specifically (some variables/models have shorter archived coverage than others).
+- Spot-check the drogue-dominant envelope simplification (Phase 1) against a real flight's numbers.
+- Decide whether HREF/SREF ensembles count as one "model" input or are unpacked into individual members for agreement/weighting purposes.
+- Decide the primary error metric for model weighting: wind speed/direction error (easier to compute directly from forecast vs. analysis) vs. downstream landing-distance error (more directly tied to what actually matters operationally, but requires running the full vector calc per model per historical case rather than just diffing wind fields).
+- Set the minimum sample count `n` per (model × lead-time × season) bucket before a bucket-specific weight is allowed to diverge from the model's overall average.
+- Run the Phase 2.5 seasonal-skill test on this club's actual sites before building the seasonal-weighting logic — the literature confirms the phenomenon is real in general and regionally in the Great Plains, but doesn't substitute for a local check.
+- No public source/license found for the original Driftcast (spreadsheet or Bellhorn's web rewrite) — confirm directly with the creator if any of the existing vector-calc code is reusable rather than rebuilding from scratch.
+
+## 8. Future: multi-site support (coordinates + maps gathered 2026-07-17; Apache Pass + Hearne now pulling live)
+
+Raised 2026-07-17: Ezra wants to add other clubs' launch sites, not just Hutto — he flies with 4 Texas clubs total, and wants Splashcast usable at their sites too, plus for the large national-scale events people travel to. This directly supersedes this doc's original §"Site scope" framing ("fixed set of Texas launch sites... not a general/community tool") — that note needs a rewrite once this work actually starts, not just an addendum here.
+
+**Priority order given:**
+1. Airfest and Seymour, TX (42,000 ft waiver) — start here.
+2. Kloudbusters' Argonia, KS site (50,000 ft waiver) — they're hosting an event there in early September 2026.
+3. Possibly the large national events people travel to for extreme-altitude waivers — Airfest (already #1) and BALLS in Gerlach, NV (Black Rock Desert), where flights reach ~300,000 ft.
+
+**First step done, 2026-07-17**: coordinates and satellite map assets gathered for the 4 non-Hutto sites named that day (Tripoli North Texas @ Seymour, AARG @ Apache Pass, Tripoli Houston @ Hearne, KLOUDBusters @ Argonia) — see `config.SITES` and `pipeline/fetch_site_maps.py`. Notes:
+- Seymour's waiver is actually **45,000 ft** currently (confirmed live on TNT's own site 2026-07-17), not the 42,000 ft figure above — that number was current as of whenever this doc's priority list was first written but has since been upgraded. Left the original text above as-is (history), corrected value lives in `config.SITES["seymour"]`.
+- Map box sizes scale with each site's waiver altitude relative to Hutto's (bigger legal ceiling → bigger possible drift → needs a bigger map) rather than reusing Hutto's fixed box size everywhere — see `fetch_site_maps.py`'s docstring for the ratio/zoom-selection logic.
+- Coordinates are each sourced from the operating club's own site (Hearne via the public KLHB airport record Tripoli Houston's own site points to) — not independently surveyed. Re-verify with the club directly before anything safety-critical.
+- At the time this was written, wiring live pulls for these 4 sites was still open — since resolved, see "Second step done" and the §9 "Still open" note below (all 6 sites now have at least one real capture).
+
+**Second step done, 2026-07-17**: a 6th site added — Dallas Area Rocket Society (DARS, not "Dallas Area Rocketry Group" as first asked; DARS as an acronym covers either) @ Gunter, TX. Coordinates resolved from the Google Maps short link on DARS's own site (`dars.org/Site-Gunter-Modroc.html`) to 33.438004, -96.803632 — matches that page's own description (north of Frisco, just inside Grayson County, southwest of Gunter). `waiver_ft` stores DARS's stated FAA waiver (10,000 ft), not the club's own lower day-to-day operating ceiling (two DARS pages disagree with each other on that number — 9,000 ft vs. a hard 5,280 ft/1-mile-AGL cap — consistent with how every other site here stores the FAA number, not a club-imposed practical limit).
+
+Also done the same day:
+- **Club names normalized** so the site-picker's "club - site" labels actually group by club: `apache_pass`'s club was the long "Austin Area Rocketry Group (AARG)" while `hutto`'s was just "AARG" — same club, two different strings — now both "AARG". `seymour`'s club was "Tripoli North Texas", now "TNT" (matching how `launch_schedule.py` already names those events) — acronym where one exists, per user's direction.
+- **Apache Pass and Hearne pulled live for real** (T-1/T-3/T-5/T-7, same target dates as Hutto's existing captures) — `has_data` for both flipped true automatically via `refresh_regional_sites_metadata()`, no manual manifest edit. Same model-dropout pattern as Hutto's own captures (HRRR gone by T-3, ARPEGE also gone by T-5/T-7) — expected, not site-specific, since it's each model's own forecast horizon that's dropping out, not a per-location effect.
+- **Site picker reverted from the regional-map/marker UI back to a plain `<select>`** (user's call — the map picker was itself only introduced earlier the same day). `maps/regional/sites.json` is still the data source (built by `fetch_site_maps.py --regional`), just no longer needs its per-site pixel-position fields; the marker/modal CSS and JS were removed rather than left dead.
+- **Done 2026-07-17** (during the pipeline/site restructure): the `_web.jpg` compressed/resized image pass now covers all 5 sites, not just Hutto -- see `pipeline/fetch_site_maps.py`'s `_make_web_jpg()`. Map images also moved from one flat `maps/` folder with filename prefixes to `site/maps/<site_id>/{detail,wide}_sat{,_web.jpg}` + `site.json`, and the viewer loads them as real per-site file paths (`maps/${currentSiteId}/detail_sat_web.jpg`) instead of one hardcoded Hutto base64 blob baked into the JS.
+
+**Candidate sites researched 2026-07-17, not added yet** (Ezra's call — just wanted them on record so this doesn't need re-researching later): eastern Colorado clubs/fields. All three below are in Weld County, the actual northeastern plains, not the Front Range corridor -- ruled out as "not really eastern" for the same reason: Tripoli Colorado (Hartsel, South Park, dead-center mountain valley) and SCORE/Tripoli Southern Colorado (Pueblo, south-central).
+- **Northern Colorado Rocketry (NCR)** -- NAR Section 565 / Tripoli Prefecture 72, ~40 min east of Fort Collins:
+  - Atlas Site: 40.649070, -104.384445 -- 12,000 ft AGL waiver (capped by proximity to CO-14, per NCR's own FAQ)
+  - North Site (Pawnee National Grasslands): 40.885835, -104.638787 -- 35,000 ft AGL standing waiver (call-ins higher during their annual multi-day launch) -- NCR's own materials call it one of the best standing waivers in the US
+- **CRASH (Colorado Rocketry Association of Space Hobbyists)** -- NAR Section #482, near Fort Lupton: 40.1020, -104.7349 (a 160-acre leased Colorado State Land Board parcel; launches 1st Sunday + 3rd Saturday monthly). Was at Bear Creek Lake Park (Lakewood) for decades, relocated ~2020.
+
+Sources: [NCR FAQ](https://ncrocketry.club/about-us/frequently-asked-questions/), [NCR North Site](https://ncrocketry.club/about-us/locations/north-site/), [NCR Atlas Site](https://ncrocketry.club/about-us/locations/atlas-site/), [CRASH locations](https://www.crashonline.org/locations/), [CRASH NAR listing](https://www.nar.org/local_club/colorado-rocketry-association-of-space-hobbyists-crash-482/). None of these coordinates have been cross-checked the way Hearne's was (club-provided exact point) -- treat as a starting point, re-verify before anything safety-critical, same caveat as every other site's coordinates in this doc.
+
+## 9. Splash-zone viewer to-do (not started)
+
+Raised 2026-07-17, while iterating on the viewer (`splash_zone_viewer.html` at the time; renamed to `site/index.html` in the same day's later pipeline/site restructure):
+- **User-adjustable slow/fast descent rates.** Now named constants in `config.py` (`SINGLE_DEPLOY_RATES_FPS`, `DUAL_DEPLOY_RATES_FPS`, `MAIN_DEPLOY_ALTITUDE_FT` — promoted 2026-07-17 when the point-generation script was formalized into `splash_zones.py`, see below), but still fixed at build time, not viewer inputs. Should become inputs the viewer itself exposes, not values requiring a code change + re-export to adjust.
+- **User-adjustable boost/launch-rail angle.** **Done 2026-07-17.** `config.BOOST_ANGLE_OFF_VERTICAL_DEG` now only seeds a default (lowered 15→10 the same day) — the viewer has a live 0-25° slider that recomputes the buffer client-side (`computeBufferHullPx()` in `app.js`, ported from `splash_zones.py`'s own hull/buffer math, using `ft_to_px_scale`/`boost_angle_deg` now exposed in the zone JSON specifically so the browser doesn't have to reverse-engineer them). Persists across date/site switches (it's a standing preference, not a "which zone" selection) rather than resetting with everything else `freshState()` clears.
+- **Forecast-history view.** **Done 2026-07-17.** Raised as "Forecast-drift-over-capture-date view" above; built as a third View mode called **"History"**, deliberately not "Drift" — that word already names the wind-drift calc this whole tool descends from (Driftcast) and reusing it here would confuse the two (user's call). Simplified per the same direction: no wind speed/direction/altitude profile in this view, just one splash point per model per capture date, for whichever single hour/deploy/rate/altitude is currently selected (reuses the existing single-select controls `byTime` mode already established, plus forces the Rate legend to a single pinned rate instead of "show both"). Shape = model identity (color now means recency), a light→dark grayscale ramp = days before launch, connecting line per model across its capture dates, and a reserved star shape for an actual post-flight landing marker — schema-ready (`points_history.json`'s `actuals` key) but no real data source yet (Phase 3's GPS upload still isn't built, see §5). Needed a real data-model change, not just a front-end toggle: `splash_zones.py` now backfills `splash_points_captured_*.parquet` for every capture under a target date (not just the latest) and publishes a `points_history.json` per target (`build_points_history()`), referenced from each manifest entry's new `history_path` field.
+- **Cloud-cover/rain-risk display.** Raised 2026-07-17. Cloud coverage and precipitation risk are pulled and shown in `pull_live_forecast.py`'s text summary (`window_stats()`'s `cloud_low_max`/`cloud_mid_max`/`window_precip` etc.) but never surfaced in the splash-zone viewer itself — a launch director looking at the map has no indication of sky conditions alongside the drift zones. Needs a design decision on presentation (per-hour badge? a banner keyed to `config.CLOUD_COVER_NOGO_PCT`? per-model since coverage isn't universally agreed either?) before building.
+
+### Formalized 2026-07-17: `splash_zones.py`
+
+The point-generation pipeline mentioned above (both the descent/drift-integration sim and the hull/pixel-projection step) was, until 2026-07-17, "a one-off analysis script" as this section used to say — it existed only as ad-hoc Bash-heredoc Python run directly against one capture, never committed. It's now `pipeline/splash_zones.py`, a real importable module + CLI (`python splash_zones.py <target_date> [--site site_id]`) that computes drift points, builds the zone JSON, and regenerates `site/data/<site_id>/manifest.json` (which now drives the viewer's launch-date selector) every time it runs. Same formulas/constants as the original script — verified to reproduce the 2026-07-16 Hutto capture's 460 drift points to the decimal — just made re-runnable per target date instead of hand-run once. This is also what made pulling and visualizing the T+3/5/7 model-dropout comparison (see below) practical without hand-editing a script per date.
+
+Both would need the point-generation pipeline to either move client-side (recompute drift in the browser from the raw wind data already embedded) or expose a re-run path — worth deciding which before building either. (Since the above: it's a real re-run path, `splash_zones.py`, not client-side — that decision is made.)
+
+**What's since been generalized past Hutto-only** (was a to-do list here until the 2026-07-17 restructure):
+- `config.py`'s `SITE_ID`/`SITE_LAT`/`SITE_LON` are still there (the live pull/splash-zone pipeline defaults to Hutto), but `config.SITES` is now the real lookup table (§8) that `fetch_site_maps.py`, `pull_live_forecast.py --site`, and `splash_zones.py --site` all read from.
+- The map-fetch pipeline (`fetch_site_maps.py`) is now the repeatable per-site procedure this used to ask for — box size scales with waiver altitude relative to Hutto's, zoom is chosen per box size, no hand-picked landmark roads. Output lives at `site/maps/<site_id>/{detail,wide}_sat{,_web.jpg}` + `site.json` (moved from the old flat `maps/hutto_launch_site.*` naming).
+- The viewer now has a real multi-site UI: a regional (non-satellite) map with clickable site markers (`site/maps/regional/`) replaces what would've been a site `<select>`, jumping to a site's data if it has any (`has_data`, computed live from whether that site's manifest exists/is non-empty) or an honest "no data yet" state if not.
+
+**Still open**:
+- `LEVELS_MB` (the pressure-level bracket for winds aloft) was chosen specifically to bracket Hutto's 15,000 ft waiver with a 12,000 ft margin — a 42,000-50,000+ ft waiver site needs a taller bracket, likely reaching into levels our current live-API sources (GFS/HRRR/ECMWF/ICON/ARPEGE/GEM) may not usefully cover at all that high; worth checking model top heights before assuming this just scales.
+- `BOOST_ANGLE_OFF_VERTICAL_DEG` and other site-agnostic constants can likely stay shared, but should be double-checked once a second site is added instead of assumed.
+- **Done 2026-07-17** (see §8): all 6 sites in `config.SITES` now have at least one real capture — Apache Pass and Hearne pulled at T-1/3/5/7 (same target dates as Hutto's own captures), Seymour/Argonia/Gunter pulled for T-1 only so every site has *something* rather than none.
+
+### Restructured 2026-07-17: pipeline/ vs site/, and the Driftcast → Splashcast rename
+
+Same day as the above, once there were enough moving pieces (5 sites' worth of maps, a regional picker, a real manifest per site) to make "one flat folder, HTML with embedded CSS/JS/base64 images" worth fixing before it got harder to unwind: split the project into `splashcast/pipeline/` (the Python scripts + `pipeline/data/` working data — never published) and `splashcast/site/` (the deployable static app: `index.html` + `assets/css/app.css` + `assets/js/app.js` + `site/maps/` + `site/data/`, meant to be synced to S3/CloudFront as a unit). `docs/spec.md` (this file) moved here from the repo root at the same time. See §8/§9 above for what else that touched (map paths, `has_data`, the manifest layout).

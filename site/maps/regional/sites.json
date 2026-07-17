@@ -1,0 +1,89 @@
+{
+  "bounds": {
+    "lat_s": 29.631360700000002,
+    "lat_n": 38.1536173,
+    "lon_w": -99.74614495475709,
+    "lon_e": -96.21514601352902
+  },
+  "image_size_px": [
+    643,
+    1880
+  ],
+  "zoom": 8,
+  "service": "World_Street_Map (server.arcgisonline.com)",
+  "fetched_at": "2026-07-17",
+  "sites": {
+    "hutto": {
+      "name": "Hutto",
+      "club": "AARG",
+      "lat": 30.614698,
+      "lon": -97.497814,
+      "waiver_ft": 15000,
+      "px": [
+        409.4,
+        1663.1
+      ],
+      "has_data": true
+    },
+    "seymour": {
+      "name": "Seymour, TX (Rocket Ranch)",
+      "club": "TNT",
+      "lat": 33.501037,
+      "lon": -99.338722,
+      "waiver_ft": 45000,
+      "px": [
+        74.2,
+        1026.4
+      ],
+      "has_data": true
+    },
+    "apache_pass": {
+      "name": "Apache Pass",
+      "club": "AARG",
+      "lat": 30.680694,
+      "lon": -97.142621,
+      "waiver_ft": 10000,
+      "px": [
+        474.1,
+        1648.5
+      ],
+      "has_data": true
+    },
+    "hearne": {
+      "name": "Hearne, TX (Hearne Municipal Airport / KLHB)",
+      "club": "Tripoli Houston",
+      "lat": 30.861145710845943,
+      "lon": -96.6225689682861,
+      "waiver_ft": 12000,
+      "px": [
+        568.8,
+        1608.7
+      ],
+      "has_data": true
+    },
+    "argonia": {
+      "name": "Argonia, KS (The Rocket Pasture)",
+      "club": "KLOUDBusters",
+      "lat": 37.17028,
+      "lon": -97.73667,
+      "waiver_ft": 50000,
+      "px": [
+        365.9,
+        216.9
+      ],
+      "has_data": true
+    },
+    "gunter": {
+      "name": "Gunter, TX",
+      "club": "DARS",
+      "lat": 33.438004,
+      "lon": -96.803632,
+      "waiver_ft": 10000,
+      "px": [
+        535.8,
+        1040.3
+      ],
+      "has_data": true
+    }
+  }
+}

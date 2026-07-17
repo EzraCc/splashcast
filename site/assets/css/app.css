@@ -1,0 +1,221 @@
+  .viz-root {
+    color-scheme: light;
+    --surface-1:      #fcfcfb;
+    --surface-2:      #f2f1ee;
+    --text-primary:   #0b0b0b;
+    --text-secondary: #52514e;
+    --text-muted:     #83817a;
+    --border:         #dedcd6;
+    --accent:         #2a78d6;
+    --point-fill:     #21201c;
+    --point-stroke:   #ffffff;
+    --map-bg:         #f2efe9;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:where(:not([data-theme="light"])) .viz-root {
+      color-scheme: dark;
+      --surface-1:      #1a1a19;
+      --surface-2:      #232320;
+      --text-primary:   #ffffff;
+      --text-secondary: #c3c2b7;
+      --text-muted:     #8f8d84;
+      --border:         #3a3936;
+      --accent:         #3987e5;
+      --point-fill:     #f5f4f0;
+      --point-stroke:   #1a1a19;
+    }
+  }
+  :root[data-theme="dark"] .viz-root {
+    color-scheme: dark;
+    --surface-1:      #1a1a19;
+    --surface-2:      #232320;
+    --text-primary:   #ffffff;
+    --text-secondary: #c3c2b7;
+    --text-muted:     #8f8d84;
+    --border:         #3a3936;
+    --accent:         #3987e5;
+    --point-fill:     #f5f4f0;
+    --point-stroke:   #1a1a19;
+  }
+
+  * { box-sizing: border-box; }
+  body { margin: 0; }
+  .viz-root {
+    background: var(--surface-1);
+    color: var(--text-primary);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    padding: 20px 20px 32px;
+    max-width: 1200px;
+    margin: 0 auto;
+  }
+  h1 { font-size: 1.3rem; margin: 0 0 2px; }
+  .subtitle { color: var(--text-secondary); font-size: 0.88rem; margin: 0 0 18px; }
+
+  .controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 20px;
+    align-items: center;
+    margin-bottom: 16px;
+    padding: 12px 14px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+  }
+  .toggle-group { display: flex; align-items: center; gap: 8px; }
+  .toggle-group .group-label { font-size: 0.78rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.03em; margin-right: 2px; }
+  .toggle-btns { display: flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+  .toggle-btns button {
+    border: none;
+    background: var(--surface-1);
+    color: var(--text-secondary);
+    padding: 7px 14px;
+    font-size: 0.85rem;
+    cursor: pointer;
+    border-right: 1px solid var(--border);
+  }
+  .toggle-btns button:last-child { border-right: none; }
+  .toggle-btns button.active { background: var(--accent); color: #fff; font-weight: 600; }
+  .toggle-btns button:hover:not(.active) { background: var(--surface-2); }
+  .toggle-group.disabled { opacity: 0.4; pointer-events: none; }
+
+  .layout { display: flex; gap: 16px; align-items: flex-start; }
+  .map-col { flex: 1 1 auto; min-width: 0; }
+  .side-col { width: 190px; flex: 0 0 auto; }
+
+  .map-wrap {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 1 / 1;
+    border-radius: 10px;
+    overflow: hidden;
+    border: 1px solid var(--border);
+    background: var(--map-bg);
+    touch-action: none;
+    cursor: grab;
+  }
+  .map-wrap.dragging { cursor: grabbing; }
+  .map-wrap svg { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+
+  .zoom-btns { position: absolute; right: 10px; bottom: 10px; display: flex; flex-direction: column; gap: 4px; z-index: 5; }
+  .zoom-btns button {
+    width: 30px; height: 30px; border-radius: 6px; border: 1px solid var(--border);
+    background: var(--surface-1); color: var(--text-primary); font-size: 1rem; cursor: pointer;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.15);
+  }
+  .zoom-btns button:hover { background: var(--surface-2); }
+  .zoom-hint { position: absolute; left: 10px; bottom: 10px; font-size: 0.72rem; color: var(--text-muted); background: var(--surface-1); padding: 3px 8px; border-radius: 6px; border: 1px solid var(--border); opacity: 0.85; }
+
+  .zone-buffer { stroke: none; pointer-events: none; }
+  .zone-core { stroke-width: 3; pointer-events: none; }
+  /* fill is set per-point in JS (by model) -- deliberately not declared here,
+     since a CSS class rule would beat the element's own fill attribute in the
+     cascade (SVG presentation attributes carry the lowest priority) */
+  .pt { stroke: var(--point-stroke); stroke-width: 2.5; cursor: pointer; }
+  .pad-label { font-size: 26px; fill: var(--text-primary); font-weight: 600; paint-order: stroke; stroke: var(--surface-1); stroke-width: 5px; }
+  .pad-marker { cursor: grab; }
+  .pad-marker circle { fill: none; stroke: #e34948; stroke-width: 3; }
+  .pad-marker line { stroke: #e34948; stroke-width: 2; }
+  /* A moved pad is a "what if" state, not the real surveyed position -- the
+     amber tint (vs. the default red) is the same "this isn't the recorded
+     value" signal the site-picker/model-legend use for unavailable states,
+     just recolored since red here already means "the pad." */
+  .pad-marker.moved circle, .pad-marker.moved line { stroke: #e0b400; }
+  .map-wrap.dragging-pad, .map-wrap.dragging-pad .pad-marker { cursor: grabbing; }
+
+  .alt-list { display: flex; flex-direction: column; gap: 4px; }
+  .alt-list-title {
+    font-size: 0.78rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.03em;
+    margin-bottom: 4px; display: flex; align-items: center; gap: 5px;
+  }
+  /* Interaction hints (hover/click to isolate, etc.) are standard enough not
+     to need showing by default -- collapsed behind this "i" button so the
+     legend itself stays the focus; click reveals the same text that used to
+     always be visible. */
+  .info-btn {
+    border: 1px solid var(--border); background: var(--surface-1); color: var(--text-muted);
+    width: 15px; height: 15px; border-radius: 50%; font-size: 0.68rem; line-height: 1;
+    display: inline-flex; align-items: center; justify-content: center;
+    cursor: pointer; padding: 0; flex-shrink: 0; text-transform: none; letter-spacing: normal;
+  }
+  .info-btn:hover, .info-btn.open { background: var(--surface-2); color: var(--text-primary); border-color: var(--accent); }
+  .zone-color-picker {
+    width: 20px; height: 20px; padding: 0; border: 1px solid var(--border); border-radius: 5px;
+    background: none; cursor: pointer; margin-left: auto;
+  }
+  .zone-color-picker::-webkit-color-swatch-wrapper { padding: 1px; }
+  .zone-color-picker::-webkit-color-swatch { border: none; border-radius: 3px; }
+  .zone-color-picker::-moz-color-swatch { border: none; border-radius: 3px; }
+  .zone-color-reset-btn {
+    border: 1px solid var(--border); background: var(--surface-1); color: var(--text-muted);
+    width: 15px; height: 15px; border-radius: 50%; font-size: 0.68rem; line-height: 1;
+    display: inline-flex; align-items: center; justify-content: center;
+    cursor: pointer; padding: 0; flex-shrink: 0;
+  }
+  .zone-color-reset-btn:hover { background: var(--surface-2); color: var(--text-primary); border-color: var(--accent); }
+  .alt-row {
+    display: flex; align-items: center; gap: 8px;
+    padding: 7px 9px; border-radius: 7px; border: 1px solid transparent;
+    font-size: 0.85rem; color: var(--text-secondary); cursor: pointer;
+  }
+  .alt-row:not(.static):hover, .alt-row.pinned { background: var(--surface-2); border-color: var(--border); color: var(--text-primary); }
+  /* Model/Rate legends are reference-only (no click/hover behavior) -- suppress
+     the hover highlight so they don't look like broken interactive controls. */
+  .alt-row.static { cursor: default; }
+  /* A model with no data for the current date/lead time (e.g. HRRR beyond its
+     forecast horizon) -- same idea as .static (no hover/click affordance) plus
+     dimmed so it reads as "unavailable" rather than "just not hovered yet". */
+  .alt-row.unavailable { cursor: default; opacity: 0.5; }
+  .alt-row.unavailable:hover { background: none; border-color: transparent; color: var(--text-secondary); }
+  .alt-swatch { width: 16px; height: 16px; border-radius: 4px; flex-shrink: 0; }
+  .alt-hint { font-size: 0.75rem; color: var(--text-muted); margin-top: 6px; line-height: 1.5; display: none; }
+  .alt-hint.open { display: block; }
+
+  .buffer-note { display: flex; align-items: center; gap: 10px; font-size: 0.8rem; color: var(--text-secondary); margin-top: 16px; max-width: 620px; }
+  .buffer-swatch { width: 20px; height: 14px; border-radius: 3px; flex-shrink: 0; background: #4a3aa7; opacity: 0.14; border: 1px solid #4a3aa7; }
+  .boost-angle-control { display: flex; align-items: center; gap: 10px; margin-top: 8px; max-width: 620px; }
+  .boost-angle-control label { font-size: 0.8rem; color: var(--text-secondary); white-space: nowrap; }
+  .boost-angle-control input[type="range"] { flex: 1 1 auto; accent-color: var(--accent); }
+  .boost-angle-control #boost-angle-readout { color: var(--text-primary); font-weight: 600; }
+  .pad-move-control { display: flex; align-items: center; gap: 10px; margin-top: 8px; max-width: 620px; font-size: 0.8rem; color: var(--text-secondary); flex-wrap: wrap; }
+  #pad-readout { font-weight: 600; color: var(--text-primary); }
+  #pad-reset-btn {
+    border: 1px solid var(--border); border-radius: 6px; background: var(--surface-1); color: var(--text-primary);
+    padding: 3px 10px; font-size: 0.78rem; cursor: pointer;
+  }
+  #pad-reset-btn:hover { background: var(--surface-2); }
+  .pad-move-hint { color: var(--text-muted); flex-basis: 100%; }
+
+  .tooltip {
+    position: fixed;
+    pointer-events: none;
+    background-color: var(--surface-2, #f2f1ee);
+    opacity: 1;
+    border: 1px solid var(--border, #dedcd6);
+    border-radius: 8px;
+    padding: 8px 12px;
+    font-size: 0.8rem;
+    color: var(--text-primary, #0b0b0b);
+    box-shadow: 0 4px 20px rgba(0,0,0,0.35);
+    display: none;
+    z-index: 20;
+    line-height: 1.5;
+    white-space: nowrap;
+  }
+  .tooltip .tt-row + .tt-row { margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--border, #dedcd6); }
+  .tooltip b { color: var(--accent, #2a78d6); }
+
+  .footnote { margin-top: 18px; font-size: 0.78rem; color: var(--text-muted); line-height: 1.6; }
+  .footnote code { background: var(--surface-2); padding: 1px 5px; border-radius: 4px; }
+
+  @media (max-width: 760px) {
+    .layout { flex-direction: column; }
+    .side-col { width: 100%; }
+  }
+
+  /* --- launch-site picker: plain <select> (was a clickable regional map
+     with markers in a modal; replaced 2026-07-17 per user direction). --- */
+  .site-empty-state {
+    padding: 40px 24px; text-align: center; color: var(--text-secondary);
+    background: var(--surface-2); border-radius: 10px; border: 1px solid var(--border);
+  }

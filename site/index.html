@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Splashcast &mdash; Launch-Site Splash Zones</title>
+<link rel="stylesheet" href="assets/css/app.css">
+</head>
+<body>
+
+<div class="viz-root">
+  <h1>Splashcast &mdash; Splash Zones</h1>
+  <p class="subtitle" id="subtitle">Loading&hellip;</p>
+
+  <div class="controls">
+    <div class="toggle-group">
+      <span class="group-label">Launch site</span>
+      <select id="site-select" style="border:1px solid var(--border); border-radius: 8px; background: var(--surface-1); color: var(--text-primary); padding: 6px 10px; font-size: 0.85rem;"></select>
+    </div>
+    <div id="site-data-controls" style="display:contents;">
+      <div class="toggle-group">
+        <span class="group-label">Launch date</span>
+        <select id="date-select" style="border:1px solid var(--border); border-radius: 8px; background: var(--surface-1); color: var(--text-primary); padding: 6px 10px; font-size: 0.85rem;"></select>
+      </div>
+      <div class="toggle-group">
+        <span class="group-label">View</span>
+        <div class="toggle-btns" id="mode-toggle"></div>
+      </div>
+      <div class="toggle-group" id="hour-toggle-group">
+        <span class="group-label">Time</span>
+        <div class="toggle-btns" id="hour-toggle"></div>
+      </div>
+      <div class="toggle-group">
+        <span class="group-label">Deploy</span>
+        <div class="toggle-btns" id="deploy-toggle"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="site-empty-state" id="site-empty-state" style="display:none;"></div>
+
+  <div class="layout" id="main-layout">
+    <div class="map-col">
+      <div class="map-wrap" id="map-wrap">
+        <svg id="overlay"></svg>
+        <div class="zoom-btns">
+          <button id="zoom-in" title="Zoom in">+</button>
+          <button id="zoom-out" title="Zoom out">&minus;</button>
+          <button id="zoom-reset" title="Reset view" style="font-size:0.7rem;">Reset</button>
+        </div>
+        <div class="zoom-hint">scroll or drag to pan/zoom</div>
+      </div>
+      <div class="buffer-note">
+        <div class="buffer-swatch" id="buffer-swatch"></div>
+        <span>Faint outer band = a launch-rail/weathercock buffer added to the wind-only zone (grows with altitude), angle adjustable below. Starts zoomed to Chandler Road (south) / TX 29 East (north); zoom out for real satellite imagery of the wider area &mdash; some slower/higher scenarios drift well past the close view.</span>
+      </div>
+      <div class="boost-angle-control">
+        <label for="boost-angle-slider">Boost/rail angle buffer: <span id="boost-angle-readout">10&deg;</span></label>
+        <input type="range" id="boost-angle-slider" min="0" max="25" step="1" value="10">
+      </div>
+      <div class="pad-move-control">
+        <span id="pad-readout">Pad at surveyed GPS position</span>
+        <button id="pad-reset-btn" type="button" style="display:none;">Reset pad position</button>
+        <span class="pad-move-hint">Drag the crosshair on the map to try a nearby setup spot (capped at 2,000 ft from the surveyed point -- everything shifts with it).</span>
+      </div>
+    </div>
+
+    <div class="side-col">
+      <div class="alt-list-title">
+        Apogee altitude <button class="info-btn" type="button" data-hint="alt-hint" title="Show interaction hint">i</button>
+        <input type="color" id="zone-color-picker" class="zone-color-picker" title="Pick a zone color that stands out against this site's imagery">
+        <button id="zone-color-reset" class="zone-color-reset-btn" type="button" title="Reset to default zone color">&#8635;</button>
+      </div>
+      <div class="alt-list" id="alt-list"></div>
+      <div class="alt-hint" id="alt-hint">Hover an altitude to isolate its zone. Click to pin it; click again to release.</div>
+
+      <div id="time-legend-block" style="display:none;">
+        <div class="alt-list-title" style="margin-top:16px;"><span id="time-legend-title">Time of day</span> <button class="info-btn" type="button" data-hint="time-hint" title="Show interaction hint">i</button></div>
+        <div id="time-legend"></div>
+        <div class="alt-hint" id="time-hint">Hover a time to isolate it. Click to pin; click again to release.</div>
+      </div>
+
+      <div class="alt-list-title" style="margin-top:16px;">Model <button class="info-btn" type="button" data-hint="model-hint" title="Show interaction hint">i</button></div>
+      <div id="model-legend"></div>
+      <div class="alt-hint" id="model-hint">Hover a model to isolate it -- zones collapse to a line (a single model's fast/slow points fall on the same bearing from the pad). Click to pin; click again to release.</div>
+
+      <div class="alt-list-title" style="margin-top:16px;">Rate <button class="info-btn" type="button" data-hint="rate-hint" title="Show interaction hint">i</button></div>
+      <div id="rate-legend"></div>
+      <div class="alt-hint" id="rate-hint">Hover a rate to isolate it; click to pin, click again to release. Fast = single deploy 20 fps, or dual deploy drogue 100 fps + main 20 fps. Slow = single deploy 10 fps, or dual deploy drogue 80 fps + main 10 fps.</div>
+    </div>
+  </div>
+
+  <p class="footnote">
+    Descent-only drift per model (GFS/HRRR/ECMWF/ICON/ARPEGE/GEM &mdash; only models with real pressure-level wind), integrated from apogee to ground, wind sampled every 50 ft of descent. Zone = convex hull of all models' points at that altitude, for both rate variants shown (single: <code>10/20 fps</code>, dual: drogue <code>80/100 fps</code>, main <code>10/20 fps</code>). Point color = model, point shape = rate (circle = faster, square = slower) &mdash; hover any point for exact numbers. Not a go/no-go call &mdash; for a launch director to read against the actual approved landing zone once available.
+  </p>
+
+  <div class="tooltip" id="tooltip"></div>
+</div>
+
+<script src="assets/js/app.js"></script>
+</body>
+</html>

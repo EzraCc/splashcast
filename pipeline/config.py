@@ -1,0 +1,285 @@
+"""Shared constants for Splashcast's historical multi-model pull.
+
+Named/versioned per the expansion spec's guidance to keep tunable parameters
+out of hardcoded logic (see docs/spec.md, Phase 1 note applied here to the
+historical-pull parameters too).
+"""
+
+from pathlib import Path
+
+# splashcast/pipeline/ and splashcast/site/ are fixed siblings -- resolved via
+# __file__ rather than left cwd-relative like DATA_DIR below, since anything
+# that publishes into site/ (fetch_site_maps.py, splash_zones.py) crosses
+# that boundary regardless of which directory it happens to be run from.
+SITE_DIR = Path(__file__).parent.parent / "site"
+
+SITE_ID = "hutto"
+SITE_LAT = 30.614698
+SITE_LON = -97.497814  # west-negative; convert to 0-360 for grid lookups
+
+# --- Multi-site lookup (data/maps only for now -- not yet wired into the
+# live pull / splash-zone pipeline, which is still Hutto-only via SITE_ID/
+# SITE_LAT/SITE_LON above; see docs/spec.md §8) -----------
+# Coordinates found 2026-07-17, each sourced from the operating club's own
+# site (or, for Hearne, the public Hearne Municipal Airport/KLHB record that
+# Tripoli Houston's own site points to as its launch location) -- not
+# surveyed/independently confirmed on the ground. Re-verify against the
+# club directly before using for anything safety-critical (waiver-boundary
+# math, range setup).
+SITES = {
+    "hutto": {
+        "name": "Hutto", "club": "AARG", "lat": SITE_LAT, "lon": SITE_LON,
+        "waiver_ft": 15000,
+    },
+    "seymour": {
+        # "TNT" not the full "Tripoli North Texas" -- matches how the club
+        # names itself elsewhere in this project (launch_schedule.py's "TNT
+        # Seymour" events) and keeps the site-picker's "club - site" labels
+        # to short acronyms where one exists (user's call 2026-07-17).
+        "name": "Seymour, TX (Rocket Ranch)", "club": "TNT",
+        "lat": 33.501037, "lon": -99.338722, "waiver_ft": 45000,
+        # Waiver upgraded from an earlier 42,000' figure -- confirmed current
+        # (45,000' AGL, 4 NM radius) via TNT's own site as of 2026-07-17.
+    },
+    "apache_pass": {
+        # Same club as Hutto -- both are AARG sites (see the grow-season/
+        # off-season site-swap in launch_schedule.py). Kept as the short
+        # "AARG" (matching hutto's) rather than the long form, so the two
+        # sort/group together in the site-picker by club (user's call
+        # 2026-07-17) instead of reading as two different clubs.
+        "name": "Apache Pass", "club": "AARG",
+        "lat": 30.680694, "lon": -97.142621, "waiver_ft": 10000,
+    },
+    "hearne": {
+        # Updated 2026-07-17: club-provided coordinate for the actual point
+        # on the runway they always launch from, not the airport's overall
+        # reference point (KLHB's official coordinate, ~1.2km away, used
+        # until now).
+        "name": "Hearne, TX (Hearne Municipal Airport / KLHB)", "club": "Tripoli Houston",
+        "lat": 30.861145710845943, "lon": -96.6225689682861, "waiver_ft": 12000,
+    },
+    "argonia": {
+        "name": "Argonia, KS (The Rocket Pasture)", "club": "KLOUDBusters",
+        "lat": 37.17028, "lon": -97.73667, "waiver_ft": 50000,
+    },
+    "gunter": {
+        # Dallas Area Rocket Society (DARS) -- note the actual club name is
+        # "Rocket Society" not "Rocketry Group" (user's shorthand when this
+        # was requested 2026-07-17); DARS as an acronym works for either.
+        # Coordinates from DARS's own site (dars.org/Site-Gunter-Modroc.html)
+        # -- its Google Maps short link resolves to 33.438004, -96.803632,
+        # matching the page's own description (north of Frisco, just inside
+        # Grayson County, southwest of Gunter, TX). waiver_ft is DARS's
+        # stated *FAA* waiver (10,000 ft) -- the club's own practical limit
+        # is considerably lower day-to-day (one DARS page says 9,000 ft with
+        # club-president sign-off required over 5,000 ft; another says a
+        # hard 5,280 ft/1-mile-AGL cap -- the two pages disagree and neither
+        # was treated as authoritative over the FAA number itself, consistent
+        # with how every other site here stores the FAA waiver, not the
+        # club's own day-to-day operating ceiling).
+        "name": "Gunter, TX", "club": "DARS",
+        "lat": 33.438004, "lon": -96.803632, "waiver_ft": 10000,
+    },
+}
+
+# Altitude ceiling: Hutto's waiver is 15,000 ft AGL; user wants margin to 12,000 ft.
+# 650 mb ~= 13,400 ft in a standard atmosphere, so this set brackets the target
+# with headroom without pulling the full profile up to the model tops.
+LEVELS_MB = [1000, 900, 800, 700, 650]
+
+# NBM has no isobaric wind profile (post-processed guidance product, not a full
+# 3D field model) -- only near-surface heights are available.
+NBM_HEIGHTS_M = [10, 30, 80]
+
+# Representative launch-window time: 10am *local* (Central) time, DST-aware.
+# Kept as local time + zone rather than a fixed UTC hour so summer and winter
+# Saturdays sample the same local hour-of-day -- a fixed UTC hour would silently
+# drift the local sample time by an hour across the DST boundary, which would
+# bias the Phase 2.5 seasonal comparison (see docs/spec.md).
+SITE_TZ = "America/Chicago"
+TARGET_VALID_HOUR_LOCAL = 10
+
+# All 4 profile models have a 00Z cycle every day, so lead times are anchored
+# there for a consistent T-7 .. T-0 comparison across models.
+ANCHOR_CYCLE_HOUR_UTC = 0
+LEAD_DAYS = list(range(8))  # 0 (morning-of) through 7 (one week out)
+
+# max_fxx = each model's real max forecast-hour reach for the 00Z anchor cycle
+# specifically (some models extend further on 00/06/12/18Z runs than on their
+# other cycles). A lead_days=7 pull needs fxx ~= 183-184h, which HRRR/RAP/NAM
+# cannot reach regardless of file availability -- pull_historical.py uses this
+# to skip those combinations instead of issuing a doomed request. Sourced from
+# NOAA product descriptions; RAP's number assumes it follows the same
+# 00/06/12/18Z-extended-cycle pattern as HRRR (not independently confirmed) --
+# worth re-checking against the pull log if skips/failures look off near the
+# boundary.
+PROFILE_MODELS = {
+    "hrrr": {"model": "hrrr", "product": "prs", "max_fxx": 48},
+    "gfs": {"model": "gfs", "product": "pgrb2.0p25", "max_fxx": 384},
+    "rap": {"model": "rap", "product": "awp130pgrb", "max_fxx": 39},
+    "nam": {"model": "nam", "product": "conusnest.hiresf", "max_fxx": 60},
+}
+
+# Common archive window across all 4 profile models' AWS buckets (verified by
+# listing each bucket directly on 2026-07-15): NAM starts latest at 2021-09-16.
+# Enforced in pull_historical.py's __main__ as a floor on the requested start
+# date, so an overly large `weeks` argument can't generate guaranteed-empty
+# requests before this date.
+ARCHIVE_START = "2021-09-18"  # first Saturday on/after NAM's bucket start
+
+DATA_DIR = "data"
+
+# --- Live forecast pull (pull_live_forecast.py) -----------------------------
+# Separate from the historical Herbie/GRIB2 pull above: this hits Open-Meteo's
+# free endpoints directly (JSON over HTTP, no API key, 10k calls/day) for the
+# *current* forecast rather than archived data. Each model family lives on
+# its own endpoint (not one shared URL) -- Open-Meteo hosts many national
+# agencies' models this way, not just NOAA's.
+#
+# Model IDs and endpoints verified live on 2026-07-16/17 (docs prose has been
+# wrong before in this project -- these came from testing each candidate
+# string against the API, not from docs alone). RAP, HREF, and SREF do NOT
+# exist anywhere on Open-Meteo (confirmed absent from the model list and by
+# direct query), so the NOAA side tops out at GFS/HRRR/NAM/NBM.
+LIVE_MODELS = {
+    # "ncep_gfs_seamless" (not used here) silently splices in raw HRRR data for
+    # near-term lead times -- found 2026-07-17 when GFS and HRRR returned
+    # *identical* wind to the decimal at 3 consecutive hours in a real capture,
+    # diverging normally once past HRRR's horizon. "seamless" blend products
+    # do this by design (best available model per lead time), but it means
+    # gfs_seamless is NOT independent of hrrr_conus early on -- would have
+    # silently double-counted one model as two in any cross-model spread/
+    # consensus math. ncep_gfs_global is the actual raw, non-blended GFS;
+    # confirmed to diverge from HRRR at the same hour/level (19.4 vs 15.9 mph
+    # at 700mb, 9am) and to still carry all the other variables we need
+    # (cloud/precip/temp/cape/surface wind).
+    "gfs": {"model": "ncep_gfs_global", "url": "https://api.open-meteo.com/v1/gfs"},
+    "hrrr": {"model": "ncep_hrrr_conus", "url": "https://api.open-meteo.com/v1/gfs"},
+    "nam": {"model": "ncep_nam_conus", "url": "https://api.open-meteo.com/v1/gfs"},
+    "nbm": {"model": "ncep_nbm_conus", "url": "https://api.open-meteo.com/v1/gfs"},
+    # Added 2026-07-17: other free national-agency models on Open-Meteo, each
+    # independently confirmed to have real (non-null) pressure-level wind --
+    # unlike NAM/NBM's live-side gap below, these give genuinely independent
+    # winds-aloft sources (different agencies/physics, not just more NOAA).
+    "ecmwf": {"model": "ecmwf_ifs025", "url": "https://api.open-meteo.com/v1/ecmwf"},
+    "icon": {"model": "icon_global", "url": "https://api.open-meteo.com/v1/dwd-icon"},
+    "arpege": {"model": "arpege_world", "url": "https://api.open-meteo.com/v1/meteofrance"},
+    "gem": {"model": "gem_global", "url": "https://api.open-meteo.com/v1/gem"},
+}
+
+# Open-Meteo only exposes near-surface wind at these fixed heights regardless
+# of source model -- NBM has no pressure-level profile here either (same
+# limitation as the historical pull), so it's limited to these vs. LEVELS_MB.
+LIVE_NBM_HEIGHTS_M = [10, 80, 120, 180]
+
+# Winds aloft (pressure levels) are only real for these on the *live* side --
+# checked 2026-07-16/17: NAM's wind_speed_*hPa fields are null across all of
+# LEVELS_MB via Open-Meteo (surface wind works fine for NAM, just not
+# pressure levels), unlike the historical Herbie/GRIB2 pull where NAM's raw
+# isobaric data is real -- a live-API-specific gap, not a NAM limitation in
+# general. NBM never had pressure levels on either side. Don't assume the two
+# pulls have matching level-availability per model.
+LIVE_PROFILE_MODELS = ["gfs", "hrrr", "ecmwf", "icon", "arpege", "gem"]
+
+# Coverage of LEVELS_MB is NOT uniform across LIVE_PROFILE_MODELS -- checked
+# 2026-07-17, non-null levels per model:
+#   gfs, hrrr:      all 5 (1000/900/800/700/650)
+#   arpege, gem:    all 5
+#   icon:           4 of 5 -- missing 650
+#   ecmwf:          only 2 of 5 -- has 1000 and 700, but not 900/800/650
+#                   (ECMWF's own native grid uses 925/850 instead, which
+#                   aren't in LEVELS_MB -- not currently pulled)
+# Downstream code already treats a missing level as "that model didn't
+# contribute at that altitude" (same handling as a model being beyond its
+# forecast horizon), so this doesn't break anything -- it just means ECMWF
+# in particular contributes much less to the winds-aloft profile than its
+# presence in LIVE_PROFILE_MODELS might suggest.
+
+# Launch-day window: 8am-5pm local. Flying itself typically runs 9am-3pm, but
+# setup starts at 8am and cleanup can run past 3pm; NOA (the club) extends to
+# 5pm when weather makes that necessary -- widened here so the pull covers the
+# full day range that can actually matter, not just the nominal flying hours.
+LAUNCH_WINDOW_START_HOUR_LOCAL = 8
+LAUNCH_WINDOW_END_HOUR_LOCAL = 17
+
+# Wind-agreement thresholds: a model's wind for a given hour/level is called
+# out separately (rather than folded into the consensus group) if it isn't
+# mutually within this of every other model in that group -- see
+# _split_consensus() in pull_live_forecast.py.
+#
+# WIND_SPEED_AGREEMENT_MPH started at 4, chosen by eyeballing when only
+# 2-4 (mostly NOAA) models were compared at the surface. Widened to 6 on
+# 2026-07-17 after adding 4 more independent-agency models for winds aloft --
+# at 4mph, real cross-model spread aloft (6 genuinely independent models
+# legitimately disagree more than 2-4 NOAA models did) fragmented the output
+# into noise (81 outlier-flags across 50 level/hour cells on a real capture).
+# Swept 4/6/7/8mph against that same data: no value cleanly separates "real
+# spread" from "one standout model" -- 6 was picked as a middle ground (cuts
+# noise by ~40% vs. 4, still catches clear standouts like a model 6-8mph off
+# from a tight cluster of the rest) rather than as a value with a principled
+# derivation. Expect to revisit again as more captures accumulate.
+WIND_DIR_AGREEMENT_DEG = 45
+WIND_SPEED_AGREEMENT_MPH = 6
+
+# Cloud-cover threshold is from Tripoli Unified Safety Code 9-5/9-6 (checked
+# 2026-07-16): no launch through any altitude with >50% cloud coverage, and
+# none into/through an actual cloud. No cloud-base/ceiling *altitude* rule
+# exists in the codes -- coverage % at the transited altitude is what's
+# actually regulated, which is convenient since Open-Meteo's `cloud_base`
+# field returns null for every NCEP model (checked same day) -- not usable
+# regardless. This constant isn't applied as a go/no-go yet (data-pull only,
+# per user direction) -- it's kept here for when that logic gets built.
+#
+# NBM has no cloud_cover_low/mid/high breakdown either (always null, checked
+# same day) -- only a single blended `cloud_cover` total, no altitude
+# attribution. GFS/HRRR/NAM all support the by-layer fields fine.
+CLOUD_COVER_NOGO_PCT = 50
+
+# Texas A&M Forest Service's live per-county burn-ban list (plain text, UTF-16
+# encoded, refreshed regularly, no auth) -- confirmed working 2026-07-16.
+# County name must match its ALL-CAPS spelling in that feed exactly.
+BURN_BAN_URL = "http://tfsfrp.tamu.edu/WILDFIRES/BURNBAN.txt"
+BURN_BAN_COUNTY = "WILLIAMSON"
+
+# --- Splash-zone drift calc (ad-hoc analysis, not yet a permanent script) ---
+# Boost-phase uncertainty: apogee isn't fixed directly above the pad -- a
+# non-vertical launch-rail angle plus real-world weathercocking means it can
+# land anywhere within roughly a cone of this half-angle around vertical, so
+# the descent-only splash zone (computed from wind alone) gets buffered
+# outward by `apogee_ft * tan(angle)` before being called final. Deliberately
+# picked below the safety code's actual 20-degree HP limit -- user's call
+# 2026-07-17: nobody flies rail angle that extreme in practice, but flights
+# aren't perfectly vertical either, so this is a "things happen" allowance,
+# not the code's hard ceiling. Scales with altitude (small offset for a
+# 1,000 ft flight, much larger for 9,000 ft), which is the point: the same
+# angular uncertainty means more absolute drift the higher the rocket goes
+# before that angle stops mattering.
+#
+# This is now only the *default* -- the viewer's boost-angle slider (added
+# 2026-07-17) lets a user override it live per session without a new pull;
+# this value just seeds that slider and is what a fresh, unadjusted pull
+# bakes into buffer_hull_px/buffer_radius_ft. Lowered 15 -> 10 the same day,
+# user's call, no reasoning beyond that given.
+BOOST_ANGLE_OFF_VERTICAL_DEG = 10
+
+# --- Splash-zone point-generation pipeline (splash_zones.py) ----------------
+# Formalized from a one-off analysis script (see docs/spec.md
+# §9) -- values unchanged from that script, just named/versioned per this
+# file's own stated convention instead of living inline.
+SITE_ELEV_M = 197.0  # Hutto site elevation, used to convert pressure levels to AGL feet
+
+# Times of day and apogee altitudes the splash-zone viewer samples. Fixed
+# across every capture/target-date by design, so the viewer's toggles don't
+# need to vary per dataset.
+SPLASH_HOURS_LOCAL = [9, 11, 13, 15]
+SPLASH_ALTITUDES_FT = [1000, 3000, 5000, 7000, 9000]
+
+# Single-deploy: one rate for the whole descent (narrow real-world range).
+SINGLE_DEPLOY_RATES_FPS = {"10fps": 10.0, "20fps": 20.0}
+# Dual-deploy: (drogue_fps, main_fps) pairs -- drogue extremes paired with
+# main's corresponding extreme (not a fixed midpoint -- see Phase 1 note in
+# docs/spec.md; this is what the original script actually ran,
+# preserved as-is here).
+DUAL_DEPLOY_RATES_FPS = {"slow": (80.0, 10.0), "fast": (100.0, 20.0)}
+MAIN_DEPLOY_ALTITUDE_FT = 800.0
+DESCENT_STEP_FT = 50.0
