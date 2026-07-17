@@ -125,13 +125,17 @@ def simulate(profile: list[tuple[float, float, float]], apogee_ft: float, phases
     return x, y
 
 
-def compute_splash_points(df: pd.DataFrame, target_date: date) -> pd.DataFrame:
+def compute_splash_points(df: pd.DataFrame, target_date: date, site_id: str = "hutto") -> pd.DataFrame:
     """Wind capture -> drift points for every hour/model/altitude/deploy/rate combo.
 
     Models with fewer than 2 usable profile points at a given hour (i.e. beyond
     that model's forecast horizon at this lead time) are skipped for that
     hour -- this is the mechanism that naturally drops short-horizon models
     (e.g. HRRR) at longer lead times without any lead-time-specific logic here.
+
+    Altitudes are per-site (config.altitudes_for_site()), not one fixed list
+    for every site -- a 10,000ft-waiver site and a 50,000ft-waiver site need
+    very different apogees simulated (user's call 2026-07-17).
     """
     all_points = []
     for h in config.SPLASH_HOURS_LOCAL:
@@ -140,7 +144,7 @@ def compute_splash_points(df: pd.DataFrame, target_date: date) -> pd.DataFrame:
             profile = build_profile_single(df, hdt, m)
             if len(profile) < 2:
                 continue
-            for alt in config.SPLASH_ALTITUDES_FT:
+            for alt in config.altitudes_for_site(site_id):
                 for rate_name, rate in config.SINGLE_DEPLOY_RATES_FPS.items():
                     x, y = simulate(profile, float(alt), [(rate, float(alt), 0)])
                     all_points.append((h, "single", rate_name, alt, m, x, y))
@@ -308,7 +312,7 @@ def _all_captures(target_dir: Path) -> list[date]:
 # model's splash point for one fixed hour/deploy/rate/altitude landed, and
 # how that moved capture to capture. -----------------------------------
 
-def build_points_history(target_dir: Path, target_date: date) -> dict:
+def build_points_history(target_dir: Path, target_date: date, site_id: str = "hutto") -> dict:
     """Backfills splash_points_captured_<date>.parquet for any capture under
     `target_dir` that doesn't have one yet (a capture only gets its points
     computed when this function -- or run(), which calls it -- processes
@@ -323,7 +327,7 @@ def build_points_history(target_dir: Path, target_date: date) -> dict:
         points_path = target_dir / f"splash_points_captured_{capture_date}.parquet"
         if not points_path.exists():
             df = pd.read_parquet(target_dir / f"captured_{capture_date}.parquet")
-            pts = compute_splash_points(df, target_date)
+            pts = compute_splash_points(df, target_date, site_id)
             pts.to_parquet(points_path)
         else:
             pts = pd.read_parquet(points_path)
@@ -401,7 +405,7 @@ def run(target_date: date, site_id: str = "hutto") -> None:
         raise FileNotFoundError(f"no captured_*.parquet under {pipeline_dir}")
 
     df = pd.read_parquet(pipeline_dir / f"captured_{capture_date}.parquet")
-    pts = compute_splash_points(df, target_date)
+    pts = compute_splash_points(df, target_date, site_id)
     points_path = pipeline_dir / f"splash_points_captured_{capture_date}.parquet"
     pts.to_parquet(points_path)
 
@@ -415,7 +419,7 @@ def run(target_date: date, site_id: str = "hutto") -> None:
     with open(zone_path, "w") as f:
         json.dump(zone_data, f)
 
-    history = build_points_history(pipeline_dir, target_date)
+    history = build_points_history(pipeline_dir, target_date, site_id)
     history_path = published_live_dir / "points_history.json"
     with open(history_path, "w") as f:
         json.dump(history, f)

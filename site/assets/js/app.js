@@ -60,27 +60,37 @@ function clampChroma(L, C, H) {
   for (let i = 0; i < 20 && !inGamut(oklabToRgb(oklchToOklab([L, c, H]))); i++) c *= 0.9;
   return c;
 }
-// Lightest at low altitude, darkest at high altitude -- matches the shape
-// of every ramp used here before this became user-adjustable.
-const ALT_LIGHTNESS_OFFSETS = { 1000: 0.20, 3000: 0.10, 5000: 0, 7000: -0.10, 9000: -0.20 };
-function computeAltRamp(baseHex) {
+// Lightest at the low end, darkest at the high end -- matches the shape of
+// every ramp used here before this became user-adjustable. `keys` drives the
+// step count directly (not a fixed 5) since altitude lists now vary in
+// length per site (1,000ft up to that site's own waiver, 5-9 points --
+// user's call 2026-07-17): a site with 8 altitudes needs 8 shades, not a
+// lookup into a 5-entry table.
+function computeSequentialRamp(baseHex, keys) {
   const [L0, C0, H0] = oklabToOklch(rgbToOklab(hexToRgb01(baseHex)));
+  const n = keys.length;
   const ramp = {};
-  Object.entries(ALT_LIGHTNESS_OFFSETS).forEach(([alt, offset]) => {
-    const L = Math.min(0.92, Math.max(0.18, L0 + offset));
-    ramp[alt] = rgbToHex01(oklabToRgb(oklchToOklab([L, clampChroma(L, C0, H0), H0])));
+  keys.forEach((key, i) => {
+    const t = n === 1 ? 0.5 : i / (n - 1);
+    const L = Math.min(0.92, Math.max(0.18, L0 + (0.20 - t * 0.40)));
+    ramp[key] = rgbToHex01(oklabToRgb(oklchToOklab([L, clampChroma(L, C0, H0), H0])));
   });
   return ramp;
 }
 const DEFAULT_ZONE_BASE_COLOR = '#c04886';
 const ZONE_COLOR_STORAGE_KEY = 'splashcast_zone_base_color';
 let zoneBaseColor = localStorage.getItem(ZONE_COLOR_STORAGE_KEY) || DEFAULT_ZONE_BASE_COLOR;
-let ALT_COLORS_HEX = computeAltRamp(zoneBaseColor);
-// Distinct hue (orange) from altitude's violet -- per the dataviz method, a second
-// simultaneous sequential context takes the next categorical slot's hue. Hand-derived
-// light->dark steps around the categorical orange (#eb6834); not independently
-// validated the way the blue ramp was -- revisit if it reads poorly against the imagery.
-const TIME_COLORS_HEX = { 9: '#fbdcc9', 11: '#f2a679', 13: '#eb6834', 15: '#a33f16' };
+// Placeholder 5-key default until real data loads and ALT_COLORS_HEX gets
+// recomputed against this site's actual altitude list (see initFromData()).
+let ALT_COLORS_HEX = computeSequentialRamp(zoneBaseColor, [1000, 3000, 5000, 7000, 9000]);
+// Orange used to be hardcoded (not independently validated the way the old
+// blue altitude ramp was) -- same user-adjustable treatment as altitude now
+// (user's call 2026-07-17): a fixed hue can't read well against every site's
+// imagery any more here than it could for the zone fill.
+const DEFAULT_TIME_BASE_COLOR = '#eb6834';
+const TIME_COLOR_STORAGE_KEY = 'splashcast_time_base_color';
+let timeBaseColor = localStorage.getItem(TIME_COLOR_STORAGE_KEY) || DEFAULT_TIME_BASE_COLOR;
+let TIME_COLORS_HEX = computeSequentialRamp(timeBaseColor, [9, 11, 13, 15]);
 const HOUR_LABELS = { 9: '9am', 11: '11am', 13: '1pm', 15: '3pm' };
 const DEPLOY_LABELS = { single: 'Single', dual: 'Dual' };
 const MODEL_LABELS = { gfs: 'GFS', hrrr: 'HRRR', ecmwf: 'ECMWF', icon: 'ICON', arpege: 'ARPEGE', gem: 'GEM' };
@@ -157,8 +167,20 @@ let state = null;
 // by every subsequent switch.
 let boostAngleDeg = null;
 
+// Permalink support: site/date/mode/hour/deploy/rate/alt/compare read from
+// the URL on first load, written back out on every render so a bookmark or a
+// pasted link reproduces "what you were looking at" -- no login/accounts,
+// just the querystring (user's call 2026-07-17: a club sends out a link to a
+// launch date, or a flier bookmarks their home site + a fast/slow-only
+// view). Read once into a snapshot rather than re-reading location.search
+// live -- freshState() consumes it exactly once (see urlStateApplied) so a
+// later manual site/mode switch starts from real defaults, not a stale URL
+// value from whatever page load first parsed.
+const URL_PARAMS = new URLSearchParams(location.search);
+let urlStateApplied = false;
+
 function freshState() {
-  return {
+  const base = {
     mode: 'byAltitude',
     hour: DATA.hours[0], deploy: DATA.deploys[0],
     isolatedAlt: null, pinnedAlt: null,
@@ -167,6 +189,47 @@ function freshState() {
     isolatedRate: null, pinnedRate: null,
     compareAlt: DATA.altitudes[0], // which altitude "by time of day" mode compares across hours
   };
+  if (!urlStateApplied) {
+    urlStateApplied = true;
+    const mode = URL_PARAMS.get('mode');
+    if (['byAltitude', 'byTime', 'byHistory'].includes(mode)) base.mode = mode;
+    const hour = Number(URL_PARAMS.get('hour'));
+    if (DATA.hours.includes(hour)) base.hour = hour;
+    const deploy = URL_PARAMS.get('deploy');
+    if (DATA.deploys.includes(deploy)) base.deploy = deploy;
+    const rate = URL_PARAMS.get('rate');
+    if (rate === 'fast' || rate === 'slow') base.pinnedRate = rate;
+    const alt = Number(URL_PARAMS.get('alt'));
+    if (DATA.altitudes.includes(alt)) base.pinnedAlt = alt;
+    const compare = Number(URL_PARAMS.get('compare'));
+    if (DATA.altitudes.includes(compare)) base.compareAlt = compare;
+    if (base.mode === 'byHistory' && !base.pinnedRate) base.pinnedRate = 'fast';
+  }
+  return base;
+}
+
+// Same DOM side effects setMode() applies on a real user click, extracted so
+// initFromData() can apply them for whatever mode the URL/default resolved
+// to on first load too -- without also running setMode()'s pin-clearing
+// (which would stomp the pinnedAlt/pinnedRate a permalink just supplied).
+function applyModeUI(mode) {
+  document.getElementById('hour-toggle-group').classList.toggle('disabled', mode === 'byTime');
+  document.getElementById('time-legend-block').style.display = (mode === 'byTime' || mode === 'byHistory') ? '' : 'none';
+  document.getElementById('time-legend-title').textContent = mode === 'byHistory' ? 'Forecast age' : 'Time of day';
+  document.getElementById('time-color-controls').style.display = mode === 'byHistory' ? 'none' : '';
+  document.getElementById('alt-hint').textContent =
+    mode === 'byTime' ? 'Click an altitude to compare it across all times of day. Map colors now show time of day, not altitude.'
+    : mode === 'byHistory' ? 'Click an altitude to see how each model\'s point for it moved across capture dates.'
+    : 'Hover an altitude to isolate its zone. Click to pin it; click again to release. No single color reads well on every site\'s imagery -- pick one above that stands out here; shades for each altitude are generated from it.';
+  document.getElementById('time-hint').textContent = mode === 'byHistory'
+    ? 'Color = how many days before launch that capture was pulled (lighter = further out, darker = closer to launch).'
+    : 'Hover a time to isolate it. Click to pin; click again to release.';
+  document.getElementById('model-hint').textContent = mode === 'byHistory'
+    ? 'Shape = model here (color means forecast age instead). Hover a model to isolate its path; click to pin, click again to release.'
+    : 'Hover a model to isolate it -- zones collapse to a line (a single model\'s fast/slow points fall on the same bearing from the pad). Click to pin; click again to release.';
+  document.getElementById('rate-hint').textContent =
+    'Fast = single deploy 20 fps, or dual deploy drogue 100 fps + main 20 fps. Slow = single deploy 10 fps, or dual deploy drogue 80 fps + main 10 fps.'
+    + (mode === 'byHistory' ? ' History always shows exactly one -- click the other to switch.' : ' Hover a rate to isolate it; click to pin, click again to release.');
 }
 
 // --- toggles ---
@@ -201,27 +264,12 @@ function setMode(mode) {
   // silently filtering them to "fast only" until the user notices and
   // manually clears it.
   state.isolatedRate = null; state.pinnedRate = null;
-  document.getElementById('hour-toggle-group').classList.toggle('disabled', mode === 'byTime');
-  document.getElementById('time-legend-block').style.display = (mode === 'byTime' || mode === 'byHistory') ? '' : 'none';
-  document.getElementById('time-legend-title').textContent = mode === 'byHistory' ? 'Forecast age' : 'Time of day';
   // History always shows exactly one rate (user's call 2026-07-17 -- showing
   // both would double the model x capture-date marker count for little
   // benefit); default to fast the first time this mode is entered, then
   // leave whatever the user picked alone on later visits.
   if (mode === 'byHistory' && !state.pinnedRate) state.pinnedRate = 'fast';
-  document.getElementById('alt-hint').textContent =
-    mode === 'byTime' ? 'Click an altitude to compare it across all times of day. Map colors now show time of day, not altitude.'
-    : mode === 'byHistory' ? 'Click an altitude to see how each model\'s point for it moved across capture dates.'
-    : 'Hover an altitude to isolate its zone. Click to pin it; click again to release. No single color reads well on every site\'s imagery -- pick one above that stands out here; shades for each altitude are generated from it.';
-  document.getElementById('time-hint').textContent = mode === 'byHistory'
-    ? 'Color = how many days before launch that capture was pulled (lighter = further out, darker = closer to launch).'
-    : 'Hover a time to isolate it. Click to pin; click again to release.';
-  document.getElementById('model-hint').textContent = mode === 'byHistory'
-    ? 'Shape = model here (color means forecast age instead). Hover a model to isolate its path; click to pin, click again to release.'
-    : 'Hover a model to isolate it -- zones collapse to a line (a single model\'s fast/slow points fall on the same bearing from the pad). Click to pin; click again to release.';
-  document.getElementById('rate-hint').textContent =
-    'Fast = single deploy 20 fps, or dual deploy drogue 100 fps + main 20 fps. Slow = single deploy 10 fps, or dual deploy drogue 80 fps + main 10 fps.'
-    + (mode === 'byHistory' ? ' History always shows exactly one -- click the other to switch.' : ' Hover a rate to isolate it; click to pin, click again to release.');
+  applyModeUI(mode);
   buildAltList();
   buildTimeLegend();
   buildModelLegend();
@@ -396,6 +444,7 @@ function applyIsolation() {
       g.style.display = (active === null || hour === active) ? '' : 'none';
     });
   }
+  syncUrl();
 }
 
 // --- pan / zoom (viewBox-based) ---
@@ -486,6 +535,28 @@ document.getElementById('zoom-reset').addEventListener('click', () => {
   setViewBox();
 });
 
+// --- permalink copy button: the URL bar is already kept in sync (see
+// syncUrl(), called on every render/isolation change) -- this just saves a
+// manual select-all-and-copy from the address bar, which matters most on
+// mobile where that's awkward (user's call 2026-07-17: a club sending out a
+// link to a launch date, or someone bookmarking their home site + a fast/
+// slow-only view, with no login/accounts involved). ---
+const copyLinkBtn = document.getElementById('copy-link-btn');
+copyLinkBtn.addEventListener('click', () => {
+  const url = location.href;
+  const showCopied = () => {
+    const original = copyLinkBtn.textContent;
+    copyLinkBtn.textContent = 'Copied!';
+    copyLinkBtn.classList.add('copied');
+    setTimeout(() => { copyLinkBtn.textContent = original; copyLinkBtn.classList.remove('copied'); }, 1500);
+  };
+  if (navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(url).then(showCopied).catch(() => window.prompt('Copy this link:', url));
+  } else {
+    window.prompt('Copy this link:', url);
+  }
+});
+
 // --- boost-angle slider: recomputes the buffer band client-side (see
 // computeBufferHullPx()) rather than reloading data -- boostAngleDeg is the
 // only thing that changes, everything it needs (raw points, ft_to_px_scale)
@@ -498,18 +569,24 @@ boostAngleSlider.addEventListener('input', () => {
   render();
 });
 
-// --- zone color picker: no fixed hue survives every site's imagery (see
-// the comment above ALT_COLORS_HEX), so the user picks a base color and
-// computeAltRamp() derives the 5 altitude shades from it live. Persisted in
-// localStorage so the choice sticks across reloads/sites -- it's a "what
-// reads well on my screen" preference, not a per-site fact. ---
+// --- zone + time-of-day color pickers: no fixed hue survives every site's
+// imagery (see the comment above computeSequentialRamp), so the user picks a
+// base color for each and computeSequentialRamp() derives the shades live.
+// Persisted in localStorage so the choice sticks across reloads/sites --
+// it's a "what reads well on my screen" preference, not a per-site fact.
+// Altitude's key list comes from DATA.altitudes (varies 5-9 per site's
+// waiver); time's is always the fixed 4 hours. ---
 const zoneColorPicker = document.getElementById('zone-color-picker');
 const zoneColorReset = document.getElementById('zone-color-reset');
 const bufferSwatch = document.getElementById('buffer-swatch');
+const timeColorPicker = document.getElementById('time-color-picker');
+const timeColorReset = document.getElementById('time-color-reset');
 zoneColorPicker.value = zoneBaseColor;
+timeColorPicker.value = timeBaseColor;
+
 function applyZoneBaseColor(hex) {
   zoneBaseColor = hex;
-  ALT_COLORS_HEX = computeAltRamp(zoneBaseColor);
+  ALT_COLORS_HEX = computeSequentialRamp(zoneBaseColor, DATA ? DATA.altitudes : [1000, 3000, 5000, 7000, 9000]);
   zoneColorPicker.value = zoneBaseColor;
   bufferSwatch.style.background = zoneBaseColor;
   bufferSwatch.style.borderColor = zoneBaseColor;
@@ -528,9 +605,25 @@ zoneColorReset.addEventListener('click', () => {
 // loaded yet at this point in script execution, so buildAltList()/render()
 // would have nothing to draw. ALT_COLORS_HEX is already correct (computed
 // at module load above); the normal initFromData() -> render() flow below
-// picks it up once data arrives.
+// recomputes it against the real per-site altitude list once data arrives.
 bufferSwatch.style.background = zoneBaseColor;
 bufferSwatch.style.borderColor = zoneBaseColor;
+
+function applyTimeBaseColor(hex) {
+  timeBaseColor = hex;
+  TIME_COLORS_HEX = computeSequentialRamp(timeBaseColor, [9, 11, 13, 15]);
+  timeColorPicker.value = timeBaseColor;
+  buildTimeLegend();
+  render();
+}
+timeColorPicker.addEventListener('input', () => {
+  localStorage.setItem(TIME_COLOR_STORAGE_KEY, timeColorPicker.value);
+  applyTimeBaseColor(timeColorPicker.value);
+});
+timeColorReset.addEventListener('click', () => {
+  localStorage.removeItem(TIME_COLOR_STORAGE_KEY);
+  applyTimeBaseColor(DEFAULT_TIME_BASE_COLOR);
+});
 
 // --- pad-move reset/readout (dragging itself is wired in drawPadMarker()) ---
 const padReadout = document.getElementById('pad-readout');
@@ -923,7 +1016,7 @@ function drawZone(zone, color, hour) {
   buf.setAttribute('points', polyPoints(computeBufferHullPx(points, boostAngleDeg, zone.altitude)));
   buf.setAttribute('class', 'zone-buffer');
   buf.setAttribute('fill', color);
-  buf.setAttribute('fill-opacity', '0.14');
+  buf.setAttribute('fill-opacity', '0.30');
   g.appendChild(buf);
 
   const corePx = convexHull(points.map(p => [p.x_ft, p.y_ft])).map(([x, y]) => ftToPx(x, y));
@@ -939,6 +1032,28 @@ function drawZone(zone, color, hour) {
   points.forEach(pt => drawPoint(g, pt, hour, zone.altitude, MODEL_COLORS_HEX[pt.model] || '#21201c'));
 
   svg.appendChild(g);
+}
+
+// Only the durable, "what am I looking at" choices go in the URL -- not
+// isolatedX (pure hover, cleared on mouseleave) or boostAngleDeg/padOffsetFt/
+// the color pickers (personal display preferences already persisted via
+// localStorage, not part of a shareable launch scenario).
+function buildPermalinkParams() {
+  const p = new URLSearchParams();
+  p.set('site', currentSiteId);
+  if (dateSelect.value) p.set('date', dateSelect.value);
+  p.set('mode', state.mode);
+  p.set('hour', state.hour);
+  p.set('deploy', state.deploy);
+  if (state.pinnedRate) p.set('rate', state.pinnedRate);
+  if (state.mode === 'byAltitude' && state.pinnedAlt !== null) p.set('alt', state.pinnedAlt);
+  if (state.mode === 'byTime') p.set('compare', state.compareAlt);
+  return p;
+}
+
+function syncUrl() {
+  if (!DATA) return;
+  history.replaceState(null, '', `${location.pathname}?${buildPermalinkParams().toString()}`);
 }
 
 function render() {
@@ -1070,6 +1185,15 @@ function compassDir(deg) {
 // just cheap idempotent work, not dataset-specific logic.
 function initFromData() {
   state = freshState();
+  // Matches whatever DOM side effects the resolved mode needs (hour-toggle
+  // disabled state, hint text, etc.) -- on a real user click this same logic
+  // runs via setMode(), but the initial mode here can come from a permalink
+  // (see freshState()) rather than always being the 'byAltitude' default.
+  applyModeUI(state.mode);
+  // Altitude count varies 5-9 per site (scaled to that site's own waiver --
+  // see config.altitudes_for_site()), so the ramp is rebuilt against this
+  // dataset's real list every time, not just when the picker changes.
+  ALT_COLORS_HEX = computeSequentialRamp(zoneBaseColor, DATA.altitudes);
   BASE_VB = DATA.base_view_box;
   IMG_VB = DATA.image_view_box;
   view = { x: IMG_VB[0], y: IMG_VB[1], w: IMG_VB[2], h: IMG_VB[3] };
@@ -1120,6 +1244,12 @@ dateSelect.addEventListener('change', () => {
   if (entry) loadDataset(entry);
 });
 
+// One-shot, like urlStateApplied -- a permalink's ?date= should only steer
+// the very first manifest load. loadSiteManifest() runs again on every
+// manual site switch afterward, and a stale target_date from the original
+// link almost certainly doesn't exist in a different site's manifest anyway.
+let urlDateApplied = false;
+
 function loadSiteManifest(manifestPath) {
   fetch(manifestPath)
     .then(r => r.json())
@@ -1136,8 +1266,15 @@ function loadSiteManifest(manifestPath) {
         opt.textContent = entry.label;
         dateSelect.appendChild(opt);
       });
-      dateSelect.value = manifestEntries[0].target_date;
-      loadDataset(manifestEntries[0]);
+      let initialEntry = manifestEntries[0];
+      if (!urlDateApplied) {
+        urlDateApplied = true;
+        const urlDate = URL_PARAMS.get('date');
+        const found = urlDate && manifestEntries.find(e => e.target_date === urlDate);
+        if (found) initialEntry = found;
+      }
+      dateSelect.value = initialEntry.target_date;
+      loadDataset(initialEntry);
     })
     .catch(err => {
       subtitleEl.textContent = `Failed to load ${manifestPath} -- see console.`;
@@ -1171,6 +1308,16 @@ function shortSiteName(name) {
   return name.split(',')[0];
 }
 
+// A site with no separate field/town name (e.g. SD Rocket Jockies -- the
+// club name IS the site name, nothing more specific was ever given) would
+// otherwise read as "SD Rocket Jockies - SD Rocket Jockies" everywhere this
+// pairing is built; collapse to the single string when club and short-name
+// are identical.
+function siteLabel(site) {
+  const short = shortSiteName(site.name);
+  return short === site.club ? site.club : `${site.club} - ${short}`;
+}
+
 // Every site's manifest lives at the same path (data/<site_id>/manifest.json,
 // written by splash_zones.py's regenerate_manifest()) -- has_data (computed
 // by fetch_site_maps.py's refresh_regional_sites_metadata() from whether that
@@ -1192,7 +1339,7 @@ function selectSite(siteId) {
     siteDataControls.style.display = 'none';
     siteEmptyState.style.display = '';
     siteEmptyState.innerHTML = `
-      <p style="font-weight:600; margin: 0 0 6px;">${site.name} (${site.club})</p>
+      <p style="font-weight:600; margin: 0 0 6px;">${site.name}${site.name === site.club ? '' : ` (${site.club})`}</p>
       <p style="margin: 0;">No live forecast data pulled yet for this site.<br>
       Run <code>pull_live_forecast.py</code> + <code>splash_zones.py</code> for this site to populate this view.</p>`;
     subtitleEl.textContent = `${site.name} -- no data pulled yet`;
@@ -1214,9 +1361,14 @@ fetch('maps/regional/sites.json')
       const site = data.sites[siteId];
       const opt = document.createElement('option');
       opt.value = siteId;
-      opt.textContent = `${site.club} - ${shortSiteName(site.name)}` + (site.has_data ? '' : ' (no data yet)');
+      opt.textContent = siteLabel(site) + (site.has_data ? '' : ' (no data yet)');
       siteSelect.appendChild(opt);
     });
+    // This whole fetch runs exactly once per page load (site switches call
+    // selectSite() directly, not this again) -- no one-shot guard needed,
+    // unlike the date param inside loadSiteManifest().
+    const urlSite = URL_PARAMS.get('site');
+    if (urlSite && data.sites[urlSite]) currentSiteId = urlSite;
     selectSite(currentSiteId);
   })
   .catch(err => {

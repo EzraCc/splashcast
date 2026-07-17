@@ -78,6 +78,12 @@
   .toggle-btns button.active { background: var(--accent); color: #fff; font-weight: 600; }
   .toggle-btns button:hover:not(.active) { background: var(--surface-2); }
   .toggle-group.disabled { opacity: 0.4; pointer-events: none; }
+  .copy-link-btn {
+    border: 1px solid var(--border); border-radius: 8px; background: var(--surface-1); color: var(--text-primary);
+    padding: 7px 14px; font-size: 0.85rem; cursor: pointer;
+  }
+  .copy-link-btn:hover { background: var(--surface-2); }
+  .copy-link-btn.copied { background: var(--accent); color: #fff; border-color: var(--accent); }
 
   .layout { display: flex; gap: 16px; align-items: flex-start; }
   .map-col { flex: 1 1 auto; min-width: 0; }
@@ -172,7 +178,7 @@
   .alt-hint.open { display: block; }
 
   .buffer-note { display: flex; align-items: center; gap: 10px; font-size: 0.8rem; color: var(--text-secondary); margin-top: 16px; max-width: 620px; }
-  .buffer-swatch { width: 20px; height: 14px; border-radius: 3px; flex-shrink: 0; background: #4a3aa7; opacity: 0.14; border: 1px solid #4a3aa7; }
+  .buffer-swatch { width: 20px; height: 14px; border-radius: 3px; flex-shrink: 0; background: #4a3aa7; opacity: 0.30; border: 1px solid #4a3aa7; }
   .boost-angle-control { display: flex; align-items: center; gap: 10px; margin-top: 8px; max-width: 620px; }
   .boost-angle-control label { font-size: 0.8rem; color: var(--text-secondary); white-space: nowrap; }
   .boost-angle-control input[type="range"] { flex: 1 1 auto; accent-color: var(--accent); }

@@ -18,7 +18,7 @@
       "club": "AARG",
       "lat": 30.614698,
       "lon": -97.497814,
-      "waiver_ft": 15000,
+      "waiver_ft": 10000,
       "px": [
         409.4,
         1663.1
@@ -78,10 +78,22 @@
       "club": "DARS",
       "lat": 33.438004,
       "lon": -96.803632,
-      "waiver_ft": 10000,
+      "waiver_ft": 6000,
       "px": [
         535.8,
         1040.3
+      ],
+      "has_data": true
+    },
+    "sd_rocket_jockies": {
+      "name": "SD Rocket Jockies",
+      "club": "SD Rocket Jockies",
+      "lat": 44.51493,
+      "lon": -96.85254,
+      "waiver_ft": 14000,
+      "px": [
+        526.9,
+        -1403.3
       ],
       "has_data": true
     }

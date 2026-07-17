@@ -28,8 +28,12 @@ SITE_LON = -97.497814  # west-negative; convert to 0-360 for grid lookups
 # math, range setup).
 SITES = {
     "hutto": {
+        # Corrected 2026-07-17 (user's call): waiver is 10,000ft AGL, not
+        # 15,000ft -- the 15,000 figure was wrong (see the now-stale "Hutto's
+        # waiver is 15,000ft" note on LEVELS_MB below, left as historical
+        # context rather than silently rewritten).
         "name": "Hutto", "club": "AARG", "lat": SITE_LAT, "lon": SITE_LON,
-        "waiver_ft": 15000,
+        "waiver_ft": 10000,
     },
     "seymour": {
         # "TNT" not the full "Tripoli North Texas" -- matches how the club
@@ -69,22 +73,38 @@ SITES = {
         # Coordinates from DARS's own site (dars.org/Site-Gunter-Modroc.html)
         # -- its Google Maps short link resolves to 33.438004, -96.803632,
         # matching the page's own description (north of Frisco, just inside
-        # Grayson County, southwest of Gunter, TX). waiver_ft is DARS's
-        # stated *FAA* waiver (10,000 ft) -- the club's own practical limit
-        # is considerably lower day-to-day (one DARS page says 9,000 ft with
-        # club-president sign-off required over 5,000 ft; another says a
-        # hard 5,280 ft/1-mile-AGL cap -- the two pages disagree and neither
-        # was treated as authoritative over the FAA number itself, consistent
-        # with how every other site here stores the FAA waiver, not the
-        # club's own day-to-day operating ceiling).
+        # Grayson County, southwest of Gunter, TX). waiver_ft corrected
+        # 2026-07-17 (user's call) to 6,000ft -- the actual altitude this
+        # site needs, superseding the FAA-waiver-number convention every
+        # other site here still uses (the 10,000ft FAA figure and the two
+        # conflicting club-practical-ceiling figures noted below are now
+        # historical context, not what's stored).
         "name": "Gunter, TX", "club": "DARS",
-        "lat": 33.438004, "lon": -96.803632, "waiver_ft": 10000,
+        "lat": 33.438004, "lon": -96.803632, "waiver_ft": 6000,
+    },
+    "sd_rocket_jockies": {
+        # Coordinates given directly by the user 2026-07-17, not independently
+        # researched. Officially "Rocket Jockeys" elsewhere (NAR #785,
+        # rocketryforum.com) -- spelled "Jockies" here per the user's own
+        # explicit instruction for how this should display, not a typo carried
+        # over by mistake. No distinct field/town name given -- "name" reuses
+        # the same string rather than guessing one (site-picker collapses the
+        # club/name duplication, see siteLabel() in app.js).
+        # waiver_ft: 14,000 AGL, per a club member's 2026-05-30 rocketryforum.com
+        # post ("I was able to get a 14,000' waiver this year") -- up from
+        # 8,000/9,000ft figures in earlier years; re-verify with the club before
+        # relying on it for anything safety-critical, same caveat as every
+        # other site here.
+        "name": "SD Rocket Jockies", "club": "SD Rocket Jockies",
+        "lat": 44.51493, "lon": -96.85254, "waiver_ft": 14000,
     },
 }
 
-# Altitude ceiling: Hutto's waiver is 15,000 ft AGL; user wants margin to 12,000 ft.
-# 650 mb ~= 13,400 ft in a standard atmosphere, so this set brackets the target
-# with headroom without pulling the full profile up to the model tops.
+# Altitude ceiling: originally sized to Hutto's waiver with margin to 12,000ft
+# (650 mb ~= 13,400 ft in a standard atmosphere) -- Hutto's own waiver was
+# later corrected down to 10,000ft (2026-07-17), well inside this bracket, but
+# it's still short for the taller-waiver sites added since (Seymour 45,000ft,
+# Argonia 50,000ft) -- see docs/spec.md §9 "still open" note, not fixed here.
 LEVELS_MB = [1000, 900, 800, 700, 650]
 
 # NBM has no isobaric wind profile (post-processed guidance product, not a full
@@ -268,11 +288,40 @@ BOOST_ANGLE_OFF_VERTICAL_DEG = 10
 # file's own stated convention instead of living inline.
 SITE_ELEV_M = 197.0  # Hutto site elevation, used to convert pressure levels to AGL feet
 
-# Times of day and apogee altitudes the splash-zone viewer samples. Fixed
-# across every capture/target-date by design, so the viewer's toggles don't
-# need to vary per dataset.
+# Times of day the splash-zone viewer samples. Fixed across every capture/
+# target-date/site by design, so the viewer's toggles don't need to vary per
+# dataset.
 SPLASH_HOURS_LOCAL = [9, 11, 13, 15]
-SPLASH_ALTITUDES_FT = [1000, 3000, 5000, 7000, 9000]
+
+# --- Per-site apogee altitude list ------------------------------------------
+# Every site used to share one fixed list (1,000-9,000ft, 5 points) regardless
+# of its actual waiver -- wrong at both ends: Apache Pass/DARS (10,000ft
+# waivers) already sit within ~1,000ft of that list's top, while TNT/Argonia
+# (45,000/50,000ft waivers) never got simulated anywhere near what they can
+# actually fly (user's call 2026-07-17: "it makes no sense to go to 9k' for
+# DARS... or to stop at 9k' for TNT"). Altitudes now scale with each site's
+# own waiver_ft instead: start at 1,000ft, end exactly at the waiver, with a
+# point count clamped to [MIN_ALTITUDE_POINTS, MAX_ALTITUDE_POINTS] and
+# spacing that targets TARGET_ALTITUDE_STEP_FT where the waiver allows it.
+# Interior points are rounded to the nearest 100ft for a clean legend label;
+# only the bottom (1,000ft) and top (waiver_ft) are guaranteed exact.
+MIN_ALTITUDE_FT = 1000
+MIN_ALTITUDE_POINTS = 5
+MAX_ALTITUDE_POINTS = 9
+TARGET_ALTITUDE_STEP_FT = 2000  # Hutto's original spacing -- the default whenever the waiver allows it
+
+
+def altitudes_for_site(site_id: str) -> list[int]:
+    waiver_ft = SITES[site_id]["waiver_ft"]
+    span = waiver_ft - MIN_ALTITUDE_FT
+    n = max(MIN_ALTITUDE_POINTS, min(MAX_ALTITUDE_POINTS, span // TARGET_ALTITUDE_STEP_FT + 1))
+    if n <= 1:
+        return [waiver_ft]
+    step = span / (n - 1)
+    altitudes = [MIN_ALTITUDE_FT]
+    altitudes += [round((MIN_ALTITUDE_FT + i * step) / 100) * 100 for i in range(1, n - 1)]
+    altitudes.append(waiver_ft)
+    return altitudes
 
 # Single-deploy: one rate for the whole descent (narrow real-world range).
 SINGLE_DEPLOY_RATES_FPS = {"10fps": 10.0, "20fps": 20.0}

@@ -1,0 +1,38 @@
+{
+  "site_id": "sd_rocket_jockies",
+  "generated_at": "2026-07-17T17:02:08",
+  "launch_dates": [
+    {
+      "target_date": "2026-07-18",
+      "capture_date": "2026-07-17",
+      "lead_days": 1,
+      "label": "Sat, Jul 18 (T-1)",
+      "data_path": "data/sd_rocket_jockies/live/2026-07-18/splash_zones_captured_2026-07-17.json",
+      "history_path": "data/sd_rocket_jockies/live/2026-07-18/points_history.json"
+    },
+    {
+      "target_date": "2026-07-20",
+      "capture_date": "2026-07-17",
+      "lead_days": 3,
+      "label": "Mon, Jul 20 (T-3)",
+      "data_path": "data/sd_rocket_jockies/live/2026-07-20/splash_zones_captured_2026-07-17.json",
+      "history_path": "data/sd_rocket_jockies/live/2026-07-20/points_history.json"
+    },
+    {
+      "target_date": "2026-07-22",
+      "capture_date": "2026-07-17",
+      "lead_days": 5,
+      "label": "Wed, Jul 22 (T-5)",
+      "data_path": "data/sd_rocket_jockies/live/2026-07-22/splash_zones_captured_2026-07-17.json",
+      "history_path": "data/sd_rocket_jockies/live/2026-07-22/points_history.json"
+    },
+    {
+      "target_date": "2026-07-24",
+      "capture_date": "2026-07-17",
+      "lead_days": 7,
+      "label": "Fri, Jul 24 (T-7)",
+      "data_path": "data/sd_rocket_jockies/live/2026-07-24/splash_zones_captured_2026-07-17.json",
+      "history_path": "data/sd_rocket_jockies/live/2026-07-24/points_history.json"
+    }
+  ]
+}
