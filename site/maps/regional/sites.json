@@ -88,11 +88,11 @@
     "sd_rocket_jockies": {
       "name": "SD Rocket Jockies",
       "club": "SD Rocket Jockies",
-      "lat": 44.51493,
-      "lon": -96.85254,
+      "lat": 44.5149338,
+      "lon": -96.8551149,
       "waiver_ft": 14000,
       "px": [
-        526.9,
+        526.5,
         -1403.3
       ],
       "has_data": true

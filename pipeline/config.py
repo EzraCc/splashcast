@@ -95,8 +95,11 @@ SITES = {
         # 8,000/9,000ft figures in earlier years; re-verify with the club before
         # relying on it for anything safety-critical, same caveat as every
         # other site here.
+        # Coordinates corrected 2026-07-17 (user's call) to the exact launch
+        # point -- ~200m west of the original figure, latitude essentially
+        # unchanged.
         "name": "SD Rocket Jockies", "club": "SD Rocket Jockies",
-        "lat": 44.51493, "lon": -96.85254, "waiver_ft": 14000,
+        "lat": 44.5149338, "lon": -96.8551149, "waiver_ft": 14000,
     },
 }
 
