@@ -179,6 +179,19 @@ let boostAngleDeg = null;
 const URL_PARAMS = new URLSearchParams(location.search);
 let urlStateApplied = false;
 
+// The launch date is deliberately NOT live-synced into the URL by default
+// (unlike site/mode/hour/deploy/rate/alt) -- a target date is inherently
+// perishable (today's "latest" becomes stale the moment a newer capture is
+// pulled), so a plain bookmark or a long-lived tab should keep tracking
+// "whatever's current," not silently freeze on whatever date happened to be
+// selected at the time (user's call 2026-07-17). Date only gets written in
+// once the user does one of two explicit things: picks a date from the
+// dropdown themselves (see dateSelect's 'change' handler), or clicks "Copy
+// link" (an unambiguous "give me a durable link to exactly this" ask) --
+// or if they arrived via a link that already had ?date= on it, which is
+// itself evidence someone already did one of those two things.
+let dateExplicitlyChosen = URL_PARAMS.has('date');
+
 function freshState() {
   const base = {
     mode: 'byAltitude',
@@ -535,15 +548,17 @@ document.getElementById('zoom-reset').addEventListener('click', () => {
   setViewBox();
 });
 
-// --- permalink copy button: the URL bar is already kept in sync (see
-// syncUrl(), called on every render/isolation change) -- this just saves a
-// manual select-all-and-copy from the address bar, which matters most on
-// mobile where that's awkward (user's call 2026-07-17: a club sending out a
-// link to a launch date, or someone bookmarking their home site + a fast/
-// slow-only view, with no login/accounts involved). ---
+// --- permalink copy button: the URL bar is kept live-synced for
+// site/mode/hour/deploy/rate/alt (see syncUrl()), but NOT the launch date by
+// default -- clicking this button is itself the explicit "give me a durable
+// link to exactly this" ask (user's call 2026-07-17), so it always includes
+// the currently-selected date regardless, and flips dateExplicitlyChosen so
+// the address bar starts keeping it too from here on. ---
 const copyLinkBtn = document.getElementById('copy-link-btn');
 copyLinkBtn.addEventListener('click', () => {
-  const url = location.href;
+  dateExplicitlyChosen = true;
+  const url = `${location.origin}${location.pathname}?${buildPermalinkParams(true).toString()}`;
+  syncUrl(); // address bar reflects the now-included date immediately too
   const showCopied = () => {
     const original = copyLinkBtn.textContent;
     copyLinkBtn.textContent = 'Copied!';
@@ -1037,11 +1052,12 @@ function drawZone(zone, color, hour) {
 // Only the durable, "what am I looking at" choices go in the URL -- not
 // isolatedX (pure hover, cleared on mouseleave) or boostAngleDeg/padOffsetFt/
 // the color pickers (personal display preferences already persisted via
-// localStorage, not part of a shareable launch scenario).
-function buildPermalinkParams() {
+// localStorage, not part of a shareable launch scenario). `date` is further
+// gated behind includeDate -- see dateExplicitlyChosen's declaration for why.
+function buildPermalinkParams(includeDate) {
   const p = new URLSearchParams();
   p.set('site', currentSiteId);
-  if (dateSelect.value) p.set('date', dateSelect.value);
+  if (includeDate && dateSelect.value) p.set('date', dateSelect.value);
   p.set('mode', state.mode);
   p.set('hour', state.hour);
   p.set('deploy', state.deploy);
@@ -1053,7 +1069,7 @@ function buildPermalinkParams() {
 
 function syncUrl() {
   if (!DATA) return;
-  history.replaceState(null, '', `${location.pathname}?${buildPermalinkParams().toString()}`);
+  history.replaceState(null, '', `${location.pathname}?${buildPermalinkParams(dateExplicitlyChosen).toString()}`);
 }
 
 function render() {
@@ -1240,6 +1256,10 @@ async function loadDataset(entry) {
 }
 
 dateSelect.addEventListener('change', () => {
+  // A real user pick (this listener only fires on genuine interaction, not
+  // the programmatic dateSelect.value assignments during bootstrap) -- from
+  // here on the date is a deliberate choice worth keeping in the URL.
+  dateExplicitlyChosen = true;
   const entry = manifestEntries.find(e => e.target_date === dateSelect.value);
   if (entry) loadDataset(entry);
 });
