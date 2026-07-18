@@ -43,21 +43,79 @@ import config
 import fetch_site_maps
 
 MPH_TO_FTPS = 5280 / 3600
-SITE_ELEV_FT = config.SITE_ELEV_M * 3.28084
+
+
+# --- ICAO standard atmosphere (troposphere + lower stratosphere, 0-20km MSL)
+# -- shared by std_atm_ft() (pressure -> altitude, used to place wind-profile
+# points) and air_density_ratio() (altitude -> density, used by
+# descent_rate_at() below). Verified against published ISA tables to the 3rd
+# decimal at the tropopause and at 50,000ft; comfortably covers every current
+# site's waiver (Argonia's 50,000ft is the tallest) with margin. NOT valid
+# for near-space altitudes like Jim Jarvis's ~200,000ft flights -- those are
+# governed by a very different non-equilibrium/high-Mach freefall regime
+# neither formula models (see docs/spec.md §9's "still open" items).
+_ICAO_T0_K = 288.15
+_ICAO_P0_HPA = 1013.25
+_ICAO_LAPSE_K_PER_M = 0.0065
+_ICAO_TROP_TOP_M = 11000.0
+_ICAO_TROP_EXP = 5.25588  # g0*M / (R*L)
+_ICAO_STRAT_COEF_PER_M = 1.5768e-4  # g0*M / (R*T_stratosphere)
+_ICAO_P11_HPA = _ICAO_P0_HPA * (1 - _ICAO_LAPSE_K_PER_M * _ICAO_TROP_TOP_M / _ICAO_T0_K) ** _ICAO_TROP_EXP
+_ICAO_RHO_RATIO_AT_TROPOPAUSE = (1 - _ICAO_LAPSE_K_PER_M * _ICAO_TROP_TOP_M / _ICAO_T0_K) ** (_ICAO_TROP_EXP - 1)
 
 
 def std_atm_ft(hpa: float) -> float:
-    """Standard-atmosphere height (ft MSL) for a pressure level (hPa)."""
-    return 44330 * (1 - (hpa / 1013.25) ** (1 / 5.255)) * 3.28084
+    """Standard-atmosphere height (ft MSL) for a pressure level (hPa).
+    Extended 2026-07-18 from a troposphere-only formula (valid only to
+    ~36,089ft) to the two-layer model above, once per-site pressure brackets
+    (config.levels_mb_for_site()) started reaching well above that for the
+    taller-waiver sites."""
+    if hpa >= _ICAO_P11_HPA:
+        theta = (hpa / _ICAO_P0_HPA) ** (1 / _ICAO_TROP_EXP)
+        return (_ICAO_T0_K / _ICAO_LAPSE_K_PER_M) * (1 - theta) * 3.28084
+    h_m = _ICAO_TROP_TOP_M - math.log(hpa / _ICAO_P11_HPA) / _ICAO_STRAT_COEF_PER_M
+    return h_m * 3.28084
 
 
-def build_profile_single(df: pd.DataFrame, hour_dt: datetime, model_key: str) -> list[tuple[float, float, float]]:
+# --- Air-density-scaled descent rate (added 2026-07-18) --------------------
+# Terminal velocity under a fixed drogue/canopy scales as 1/sqrt(air density)
+# -- at terminal velocity, drag (0.5*rho*v^2*Cd*A) equals weight, and Cd*A is
+# roughly constant for a given rig, so v ~ 1/sqrt(rho). SINGLE_DEPLOY_RATES_FPS/
+# DUAL_DEPLOY_RATES_FPS are treated as the rate AT THIS SITE'S OWN GROUND LEVEL
+# (AGL=0 -- the number you'd see on a low-altitude test drop), scaled up for
+# thinner air higher via the density-ratio formula above.
+#
+# Both descent_rate_at() and build_profile_single() below take site_elev_ft
+# as a parameter -- per-site (config.elev_ft_for_site()) since 2026-07-18,
+# previously a single Hutto-only module global (SITE_ELEV_FT) applied to
+# every site regardless of its real elevation.
+def air_density_ratio(alt_m_msl: float) -> float:
+    """Air density relative to sea-level standard (ICAO atmosphere)."""
+    if alt_m_msl <= _ICAO_TROP_TOP_M:
+        theta = 1 - _ICAO_LAPSE_K_PER_M * alt_m_msl / _ICAO_T0_K
+        return theta ** (_ICAO_TROP_EXP - 1)
+    return _ICAO_RHO_RATIO_AT_TROPOPAUSE * math.exp(-_ICAO_STRAT_COEF_PER_M * (alt_m_msl - _ICAO_TROP_TOP_M))
+
+
+def descent_rate_at(alt_agl_ft: float, ground_rate_ftps: float, site_elev_ft: float) -> float:
+    """`ground_rate_ftps` (a SINGLE_DEPLOY_RATES_FPS/DUAL_DEPLOY_RATES_FPS
+    value) scaled for the thinner air at `alt_agl_ft` AGL at a site whose
+    ground sits at `site_elev_ft` MSL -- see the module comment above."""
+    ground_rho_ratio = air_density_ratio(site_elev_ft / 3.28084)
+    rho_here = air_density_ratio((alt_agl_ft + site_elev_ft) / 3.28084)
+    return ground_rate_ftps * math.sqrt(ground_rho_ratio / rho_here)
+
+
+def build_profile_single(df: pd.DataFrame, hour_dt: datetime, model_key: str, site_elev_ft: float, levels_mb: list[int]) -> list[tuple[float, float, float]]:
     """(agl_ft, speed_mph, dir_deg) profile for one model/hour, sorted by altitude.
 
-    Surface 10m wind anchors the bottom; each of config.LEVELS_MB except 1000mb
-    (its standard-atm height is unreliable this close to the surface -- surface
-    wind covers that end of the profile instead) contributes one more point,
-    converted from pressure level to AGL feet via the site elevation.
+    Surface 10m wind anchors the bottom; each of `levels_mb` (this site's own
+    pressure-level bracket -- config.levels_mb_for_site(), sized to its
+    waiver) except 1000mb (its standard-atm height is unreliable this close
+    to the surface -- surface wind covers that end of the profile instead)
+    contributes one more point, converted from pressure level to AGL feet via
+    `site_elev_ft` (this site's own ground elevation MSL --
+    config.elev_ft_for_site()).
     """
     points = []
     cell = df[(df["valid_time_local"] == hour_dt) & (df["level_type"] == "height") & (df["level_value"] == 10.0) & (df["model"] == model_key)]
@@ -65,10 +123,10 @@ def build_profile_single(df: pd.DataFrame, hour_dt: datetime, model_key: str) ->
     drc = cell[cell["variable"] == "wind_direction"]["value"]
     if len(spd) and len(drc):
         points.append((0.0, float(spd.iloc[0]), float(drc.iloc[0])))
-    for lvl in config.LEVELS_MB:
+    for lvl in levels_mb:
         if lvl == 1000:
             continue
-        agl = std_atm_ft(lvl) - SITE_ELEV_FT
+        agl = std_atm_ft(lvl) - site_elev_ft
         cell = df[(df["valid_time_local"] == hour_dt) & (df["level_type"] == "pressure") & (df["level_value"] == float(lvl)) & (df["model"] == model_key)]
         spd = cell[cell["variable"] == "wind_speed"]["value"]
         drc = cell[cell["variable"] == "wind_direction"]["value"]
@@ -95,12 +153,18 @@ def interp(profile: list[tuple[float, float, float]], alt: float) -> tuple[float
     raise AssertionError("unreachable -- profile is sorted and alt is bounded above")
 
 
-def simulate(profile: list[tuple[float, float, float]], apogee_ft: float, phases: list[tuple[float, float, float]], step_ft: float = None) -> tuple[float, float]:
+def simulate(profile: list[tuple[float, float, float]], apogee_ft: float, phases: list[tuple[float, float, float]], site_elev_ft: float, step_ft: float = None) -> tuple[float, float]:
     """Integrate drift (x_ft east, y_ft north) across one or more descent phases.
 
     Each phase is (rate_ftps, seg_top_ft, seg_bottom_ft) -- e.g. dual-deploy
     passes a drogue phase down to main-deploy altitude, then a main phase down
     to the ground. Wind sampled at each step_ft slice's midpoint altitude.
+
+    rate_ftps is scaled per-step by descent_rate_at() (thinner air at
+    altitude -> faster actual fall than the same drogue's ground-level rate)
+    rather than held constant across the whole phase -- see that function's
+    docstring/the module comment above it. site_elev_ft is this site's own
+    ground elevation MSL (config.elev_ft_for_site()), needed for that scaling.
     """
     step_ft = config.DESCENT_STEP_FT if step_ft is None else step_ft
     x = y = 0.0
@@ -112,13 +176,13 @@ def simulate(profile: list[tuple[float, float, float]], apogee_ft: float, phases
             continue
         n = max(1, int((top - bottom) / step_ft))
         dz = (top - bottom) / n
-        dt = dz / rate_ftps
         for i in range(n):
             mid = top - (i + 0.5) * dz
             spd_mph, drc = interp(profile, mid)
             spd_ftps = spd_mph * MPH_TO_FTPS
             u = -spd_ftps * math.sin(math.radians(drc))
             v = -spd_ftps * math.cos(math.radians(drc))
+            dt = dz / descent_rate_at(mid, rate_ftps, site_elev_ft)
             x += u * dt
             y += v * dt
         alt = bottom
@@ -135,22 +199,32 @@ def compute_splash_points(df: pd.DataFrame, target_date: date, site_id: str = "h
 
     Altitudes are per-site (config.altitudes_for_site()), not one fixed list
     for every site -- a 10,000ft-waiver site and a 50,000ft-waiver site need
-    very different apogees simulated (user's call 2026-07-17).
+    very different apogees simulated (user's call 2026-07-17). Pressure
+    levels sampled for the wind profile are likewise per-site
+    (config.levels_mb_for_site()), sized to actually reach each site's own
+    waiver instead of one fixed bracket for every site (user's call
+    2026-07-18). Single-deploy points are skipped above
+    config.SINGLE_DEPLOY_MAX_ALT_FT -- not a realistic recovery
+    configuration at higher altitude (user's call 2026-07-18; see the
+    constant's own comment in config.py for why).
     """
+    site_elev_ft = config.elev_ft_for_site(site_id)
+    levels_mb = config.levels_mb_for_site(site_id)
     all_points = []
     for h in config.SPLASH_HOURS_LOCAL:
         hdt = datetime.combine(target_date, dtime(h, 0))
         for m in config.LIVE_PROFILE_MODELS:
-            profile = build_profile_single(df, hdt, m)
+            profile = build_profile_single(df, hdt, m, site_elev_ft, levels_mb)
             if len(profile) < 2:
                 continue
             for alt in config.altitudes_for_site(site_id):
-                for rate_name, rate in config.SINGLE_DEPLOY_RATES_FPS.items():
-                    x, y = simulate(profile, float(alt), [(rate, float(alt), 0)])
-                    all_points.append((h, "single", rate_name, alt, m, x, y))
+                if alt <= config.SINGLE_DEPLOY_MAX_ALT_FT:
+                    for rate_name, rate in config.SINGLE_DEPLOY_RATES_FPS.items():
+                        x, y = simulate(profile, float(alt), [(rate, float(alt), 0)], site_elev_ft)
+                        all_points.append((h, "single", rate_name, alt, m, x, y))
                 for rate_name, (drogue, main) in config.DUAL_DEPLOY_RATES_FPS.items():
                     phases = [(drogue, float(alt), config.MAIN_DEPLOY_ALTITUDE_FT), (main, config.MAIN_DEPLOY_ALTITUDE_FT, 0)]
-                    x, y = simulate(profile, float(alt), phases)
+                    x, y = simulate(profile, float(alt), phases, site_elev_ft)
                     all_points.append((h, "dual", rate_name, alt, m, x, y))
     return pd.DataFrame(all_points, columns=["hour", "deploy", "rate", "altitude", "model", "x_ft", "y_ft"])
 

@@ -1,0 +1,14 @@
+{
+  "site_id": "tripoli_houston_south",
+  "generated_at": "2026-07-18T03:49:00",
+  "launch_dates": [
+    {
+      "target_date": "2026-07-18",
+      "capture_date": "2026-07-18",
+      "lead_days": 0,
+      "label": "Sat, Jul 18 (T-0)",
+      "data_path": "data/tripoli_houston_south/live/2026-07-18/splash_zones_captured_2026-07-18.json",
+      "history_path": "data/tripoli_houston_south/live/2026-07-18/points_history.json"
+    }
+  ]
+}

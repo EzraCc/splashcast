@@ -5,12 +5,14 @@ pull_historical.py for that) from Open-Meteo's free endpoints -- NOAA's GFS/
 HRRR/NAM/NBM plus, added 2026-07-17, four other national agencies' models
 (ECMWF, DWD ICON, Meteo-France ARPEGE, Environment Canada GEM), each on its
 own endpoint (config.LIVE_MODELS[key]["url"]) rather than one shared URL:
-  - surface wind (10m) for all 8 models, and pressure-level wind up to
-    ~12,000 ft (config.LEVELS_MB) for the 6 in config.LIVE_PROFILE_MODELS --
-    NAM (live-side only) and NBM have no pressure-level profile here, so
-    they're limited to surface/near-surface (config.LIVE_NBM_HEIGHTS_M for
-    NBM specifically), same limitation as the historical pull for NBM, but a
-    live-API-specific gap for NAM (its historical/GRIB2 data does have it).
+  - surface wind (10m) for all 8 models, and pressure-level wind up to each
+    site's own waiver altitude (config.levels_mb_for_site(), added 2026-07-18
+    -- previously one fixed ~12,000ft bracket for every site regardless of
+    waiver) for the 6 in config.LIVE_PROFILE_MODELS -- NAM (live-side only)
+    and NBM have no pressure-level profile here, so they're limited to
+    surface/near-surface (config.LIVE_NBM_HEIGHTS_M for NBM specifically),
+    same limitation as the historical pull for NBM, but a live-API-specific
+    gap for NAM (its historical/GRIB2 data does have it).
   - cloud cover by layer (low/mid/high) -- the safety-code-relevant field,
     since no model exposes a working cloud-base/ceiling altitude here.
   - precipitation (total/rain/showers/probability), temperature, and CAPE
@@ -70,7 +72,7 @@ def next_saturday(today: date) -> date:
     return today + timedelta(days=(5 - today.weekday()) % 7)
 
 
-def _hourly_variables(model_key: str) -> list[str]:
+def _hourly_variables(model_key: str, site_id: str) -> list[str]:
     variables = [
         "wind_speed_10m", "wind_direction_10m",
         "cloud_cover", "cloud_cover_low", "cloud_cover_mid", "cloud_cover_high",
@@ -81,7 +83,10 @@ def _hourly_variables(model_key: str) -> list[str]:
         for h in config.LIVE_NBM_HEIGHTS_M:
             variables += [f"wind_speed_{h}m", f"wind_direction_{h}m"]
     else:
-        for lvl in config.LEVELS_MB:
+        # Per-site since 2026-07-18 (config.levels_mb_for_site()) -- sized to
+        # reach this site's own waiver instead of one fixed bracket for
+        # every site regardless of how tall its waiver actually is.
+        for lvl in config.levels_mb_for_site(site_id):
             variables += [f"wind_speed_{lvl}hPa", f"wind_direction_{lvl}hPa", f"geopotential_height_{lvl}hPa"]
     return variables
 
@@ -99,7 +104,7 @@ def fetch_model(model_key: str, target_date: date, site_id: str = "hutto", attem
     params = {
         "latitude": site["lat"],
         "longitude": site["lon"],
-        "hourly": ",".join(_hourly_variables(model_key)),
+        "hourly": ",".join(_hourly_variables(model_key, site_id)),
         "models": model_info["model"],
         "timezone": config.SITE_TZ,
         "forecast_days": days_ahead + 1,

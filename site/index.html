@@ -43,7 +43,7 @@
   <div class="site-empty-state" id="site-empty-state" style="display:none;"></div>
 
   <div class="layout" id="main-layout">
-    <div class="map-col">
+    <div class="map-col-map">
       <div class="map-wrap" id="map-wrap">
         <svg id="overlay"></svg>
         <div class="zoom-btns">
@@ -51,20 +51,7 @@
           <button id="zoom-out" title="Zoom out">&minus;</button>
           <button id="zoom-reset" title="Reset view" style="font-size:0.7rem;">Reset</button>
         </div>
-        <div class="zoom-hint">scroll or drag to pan/zoom</div>
-      </div>
-      <div class="buffer-note">
-        <div class="buffer-swatch" id="buffer-swatch"></div>
-        <span>Faint outer band = a launch-rail/weathercock buffer added to the wind-only zone (grows with altitude), angle adjustable below. Starts zoomed to Chandler Road (south) / TX 29 East (north); zoom out for real satellite imagery of the wider area &mdash; some slower/higher scenarios drift well past the close view.</span>
-      </div>
-      <div class="boost-angle-control">
-        <label for="boost-angle-slider">Boost/rail angle buffer: <span id="boost-angle-readout">10&deg;</span></label>
-        <input type="range" id="boost-angle-slider" min="0" max="25" step="1" value="10">
-      </div>
-      <div class="pad-move-control">
-        <span id="pad-readout">Pad at surveyed GPS position</span>
-        <button id="pad-reset-btn" type="button" style="display:none;">Reset pad position</button>
-        <span class="pad-move-hint">Drag the crosshair on the map to try a nearby setup spot (capped at 2,000 ft from the surveyed point -- everything shifts with it).</span>
+        <div class="zoom-hint">drag or pinch to pan/zoom</div>
       </div>
     </div>
 
@@ -95,12 +82,30 @@
 
       <div class="alt-list-title" style="margin-top:16px;">Rate <button class="info-btn" type="button" data-hint="rate-hint" title="Show interaction hint">i</button></div>
       <div id="rate-legend"></div>
-      <div class="alt-hint" id="rate-hint">Hover a rate to isolate it; click to pin, click again to release. Fast = single deploy 20 fps, or dual deploy drogue 100 fps + main 20 fps. Slow = single deploy 10 fps, or dual deploy drogue 80 fps + main 10 fps.</div>
+      <div class="alt-hint" id="rate-hint">Hover a rate to isolate it; click to pin, click again to release. Fast = single deploy 20 fps, or dual deploy drogue 100 fps + main 20 fps. Slow = single deploy 10 fps, or dual deploy drogue 80 fps + main 10 fps &mdash; all 4 numbers are the rate at this site's own ground level (a low-altitude test-drop number), not a fixed rate for the whole descent. The sim scales each faster for the thinner air higher up (same drogue/canopy falls faster in less dense air), so the actual drogue rate near a 30,000&ndash;50,000ft apogee can be 1.5&ndash;2.5x the ground number shown here, easing back down to it by the time the rocket's low.</div>
+    </div>
+
+    <div class="map-col-notes">
+      <div class="buffer-note">
+        <div class="buffer-swatch" id="buffer-swatch"></div>
+        <span>Rail-buffer band <button class="info-btn" type="button" data-hint="buffer-hint" title="Show details">i</button></span>
+      </div>
+      <div class="alt-hint" id="buffer-hint">Faint outer band = a launch-rail/weathercock buffer added to the wind-only zone (grows with altitude), angle adjustable below. Starts zoomed to Chandler Road (south) / TX 29 East (north); zoom out for real satellite imagery of the wider area &mdash; some slower/higher scenarios drift well past the close view.</div>
+      <div class="boost-angle-control">
+        <label for="boost-angle-slider">Boost/rail angle buffer: <span id="boost-angle-readout">10&deg;</span></label>
+        <input type="range" id="boost-angle-slider" min="0" max="25" step="1" value="10">
+      </div>
+      <div class="pad-move-control">
+        <span id="pad-readout">Pad at surveyed GPS position</span>
+        <button id="pad-reset-btn" type="button" style="display:none;">Reset pad position</button>
+        <button class="info-btn" type="button" data-hint="pad-hint" title="Show details">i</button>
+      </div>
+      <div class="alt-hint" id="pad-hint">Drag the crosshair on the map to try a nearby setup spot (capped at 2,000 ft from the surveyed point -- everything shifts with it).</div>
     </div>
   </div>
 
   <p class="footnote">
-    Descent-only drift per model (GFS/HRRR/ECMWF/ICON/ARPEGE/GEM &mdash; only models with real pressure-level wind), integrated from apogee to ground, wind sampled every 50 ft of descent. Zone = convex hull of all models' points at that altitude, for both rate variants shown (single: <code>10/20 fps</code>, dual: drogue <code>80/100 fps</code>, main <code>10/20 fps</code>). Point color = model, point shape = rate (circle = faster, square = slower) &mdash; hover any point for exact numbers. Not a go/no-go call &mdash; for a launch director to read against the actual approved landing zone once available.
+    Descent-only drift per model (GFS/HRRR/ECMWF/ICON/ARPEGE/GEM &mdash; only models with real pressure-level wind), integrated from apogee to ground, wind sampled every 50 ft of descent. Zone = convex hull of all models' points at that altitude, for both rate variants shown (single: <code>10/20 fps</code>, dual: drogue <code>80/100 fps</code>, main <code>10/20 fps</code>) &mdash; all ground-level rates, scaled up per descent step for the thinner air at altitude (see the Rate legend's info button for how much). Point color = model, point shape = rate (circle = faster, square = slower) &mdash; hover any point for exact numbers. Not a go/no-go call &mdash; for a launch director to read against the actual approved landing zone once available.
   </p>
 
   <div class="tooltip" id="tooltip"></div>

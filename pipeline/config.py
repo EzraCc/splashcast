@@ -26,14 +26,25 @@ SITE_LON = -97.497814  # west-negative; convert to 0-360 for grid lookups
 # surveyed/independently confirmed on the ground. Re-verify against the
 # club directly before using for anything safety-critical (waiver-boundary
 # math, range setup).
+#
+# elev_m (added 2026-07-18, fixing a real bug -- see below): ground elevation
+# in meters MSL at each site's lat/lon, from Open-Meteo's free elevation API
+# (api.open-meteo.com/v1/elevation -- same no-key service already used
+# elsewhere in this pipeline, backed by a digital elevation model, not
+# surveyed). Used to convert pressure levels to AGL feet (splash_zones.py's
+# build_profile_single()) and for the air-density descent-rate scaling
+# (descent_rate_at()) -- both previously used a single Hutto-only constant
+# (the old module-level SITE_ELEV_M, now removed) for every site, which was
+# wrong for anywhere that isn't Hutto; worst case was Tripoli Houston South
+# (~1m elevation) vs. SD Rocket Jockies (~499m) being treated as the same
+# ground level. Hutto's own value (197.0) matches the API exactly, which is
+# what gave confidence to trust it for the rest.
 SITES = {
     "hutto": {
         # Corrected 2026-07-17 (user's call): waiver is 10,000ft AGL, not
-        # 15,000ft -- the 15,000 figure was wrong (see the now-stale "Hutto's
-        # waiver is 15,000ft" note on LEVELS_MB below, left as historical
-        # context rather than silently rewritten).
+        # 15,000ft -- the 15,000 figure was wrong.
         "name": "Hutto", "club": "AARG", "lat": SITE_LAT, "lon": SITE_LON,
-        "waiver_ft": 10000,
+        "waiver_ft": 10000, "elev_m": 197.0,
     },
     "seymour": {
         # "TNT" not the full "Tripoli North Texas" -- matches how the club
@@ -41,7 +52,7 @@ SITES = {
         # Seymour" events) and keeps the site-picker's "club - site" labels
         # to short acronyms where one exists (user's call 2026-07-17).
         "name": "Seymour, TX (Rocket Ranch)", "club": "TNT",
-        "lat": 33.501037, "lon": -99.338722, "waiver_ft": 45000,
+        "lat": 33.501037, "lon": -99.338722, "waiver_ft": 45000, "elev_m": 417.0,
         # Waiver upgraded from an earlier 42,000' figure -- confirmed current
         # (45,000' AGL, 4 NM radius) via TNT's own site as of 2026-07-17.
     },
@@ -52,7 +63,7 @@ SITES = {
         # sort/group together in the site-picker by club (user's call
         # 2026-07-17) instead of reading as two different clubs.
         "name": "Apache Pass", "club": "AARG",
-        "lat": 30.680694, "lon": -97.142621, "waiver_ft": 10000,
+        "lat": 30.680694, "lon": -97.142621, "waiver_ft": 10000, "elev_m": 123.0,
     },
     "hearne": {
         # Updated 2026-07-17: club-provided coordinate for the actual point
@@ -60,11 +71,27 @@ SITES = {
         # reference point (KLHB's official coordinate, ~1.2km away, used
         # until now).
         "name": "Hearne, TX (Hearne Municipal Airport / KLHB)", "club": "Tripoli Houston",
-        "lat": 30.861145710845943, "lon": -96.6225689682861, "waiver_ft": 12000,
+        "lat": 30.861145710845943, "lon": -96.6225689682861, "waiver_ft": 12000, "elev_m": 82.0,
+    },
+    "tripoli_houston_south": {
+        # Added 2026-07-18. Coordinate is the launch-pad candidate found via
+        # a groups.io thread WebFetch couldn't load directly (paywalled/402)
+        # -- taken from search-result text only, not read firsthand. It's
+        # ~15.8km from the club's own confirmed South Site *entrance* gate
+        # (29.27389, -95.14123, from tripolihouston.com/news-updates), which
+        # roughly matches the club's own "~5 miles of gravel/dirt roads from
+        # highway to launch site" figure -- consistent with being the real
+        # pad, but not independently confirmed. User's call to use it "for
+        # now"; re-verify against the club directly before trusting it for
+        # anything safety-critical.
+        # waiver_ft: 17,500 AGL, confirmed on tripolihouston.com's own
+        # homepage ("Current waiver is 17.5 ... FAA waiver of 17,500 feet").
+        "name": "Houston South Site", "club": "Tripoli Houston",
+        "lat": 29.222881, "lon": -95.097461, "waiver_ft": 17500, "elev_m": 1.0,
     },
     "argonia": {
         "name": "Argonia, KS (The Rocket Pasture)", "club": "KLOUDBusters",
-        "lat": 37.17028, "lon": -97.73667, "waiver_ft": 50000,
+        "lat": 37.17028, "lon": -97.73667, "waiver_ft": 50000, "elev_m": 384.0,
     },
     "gunter": {
         # Dallas Area Rocket Society (DARS) -- note the actual club name is
@@ -80,7 +107,7 @@ SITES = {
         # conflicting club-practical-ceiling figures noted below are now
         # historical context, not what's stored).
         "name": "Gunter, TX", "club": "DARS",
-        "lat": 33.438004, "lon": -96.803632, "waiver_ft": 6000,
+        "lat": 33.438004, "lon": -96.803632, "waiver_ft": 6000, "elev_m": 217.0,
     },
     "sd_rocket_jockies": {
         # Coordinates given directly by the user 2026-07-17, not independently
@@ -99,16 +126,49 @@ SITES = {
         # point -- ~200m west of the original figure, latitude essentially
         # unchanged.
         "name": "SD Rocket Jockies", "club": "SD Rocket Jockies",
-        "lat": 44.5149338, "lon": -96.8551149, "waiver_ft": 14000,
+        "lat": 44.5149338, "lon": -96.8551149, "waiver_ft": 14000, "elev_m": 499.0,
     },
 }
 
-# Altitude ceiling: originally sized to Hutto's waiver with margin to 12,000ft
-# (650 mb ~= 13,400 ft in a standard atmosphere) -- Hutto's own waiver was
-# later corrected down to 10,000ft (2026-07-17), well inside this bracket, but
-# it's still short for the taller-waiver sites added since (Seymour 45,000ft,
-# Argonia 50,000ft) -- see docs/spec.md §9 "still open" note, not fixed here.
-LEVELS_MB = [1000, 900, 800, 700, 650]
+# --- Pressure levels requested for winds aloft, per site --------------------
+# Used to be one flat global (LEVELS_MB = [1000, 900, 800, 700, 650], sized to
+# Hutto's waiver with a margin) applied to every site regardless of its own
+# waiver -- wrong for anything taller (Seymour 45,000ft, Argonia 50,000ft
+# never got real data anywhere near their actual ceiling) and wasteful for
+# anything shorter (Gunter's 6,000ft waiver doesn't need levels reaching
+# 12,000ft). Fixed 2026-07-18: PRESSURE_LEVEL_MASTER_MB below is a static
+# hPa->approx-altitude table (ICAO standard atmosphere, sea-level reference --
+# a few hundred ft of site-elevation error doesn't change which of these
+# ~hundred/thousand-ft-spaced levels is nearest, so this doesn't need to be
+# per-site the way splash_zones.py's actual wind-profile math is); every
+# value in it was empirically confirmed (not just doc-page-sourced -- an
+# earlier docs-only pass on ECMWF's ceiling turned out wrong) to return real,
+# non-null wind data for every model in LIVE_PROFILE_MODELS at least as high
+# as 100 hPa (~53,000ft) -- see docs/spec.md §9 for the full per-model probe
+# results. levels_mb_for_site() below picks, for each of a site's own target
+# apogee altitudes (altitudes_for_site()), the smallest available level whose
+# altitude is at or above that target -- guarantees the profile actually
+# reaches each target instead of falling just short of it.
+PRESSURE_LEVEL_MASTER_MB = [
+    (1000, 364), (975, 1061), (950, 1773), (925, 2500), (900, 3243), (875, 4003),
+    (850, 4781), (825, 5578), (800, 6394), (775, 7232), (750, 8091), (725, 8974),
+    (700, 9882), (675, 10817), (650, 11780), (625, 12774), (600, 13801), (575, 14862),
+    (550, 15962), (525, 17103), (500, 18289), (475, 19524), (450, 20812), (425, 22160),
+    (400, 23574), (375, 25062), (350, 26631), (325, 28295), (300, 30065), (275, 31960),
+    (250, 33999), (225, 36211), (200, 38662), (175, 41440), (150, 44647), (125, 48441),
+    (100, 53084), (70, 60505), (50, 67506), (40, 72149), (30, 78135), (20, 86571),
+    (15, 92557), (10, 100994),
+]
+
+
+def levels_mb_for_site(site_id: str) -> list[int]:
+    levels = []
+    for alt in altitudes_for_site(site_id):
+        candidates = [lvl for lvl, lvl_alt in PRESSURE_LEVEL_MASTER_MB if lvl_alt >= alt]
+        chosen = min(candidates, key=lambda lvl: dict(PRESSURE_LEVEL_MASTER_MB)[lvl]) if candidates else PRESSURE_LEVEL_MASTER_MB[-1][0]
+        if chosen not in levels:
+            levels.append(chosen)
+    return sorted(levels, reverse=True)
 
 # NBM has no isobaric wind profile (post-processed guidance product, not a full
 # 3D field model) -- only near-surface heights are available.
@@ -192,31 +252,40 @@ LIVE_MODELS = {
 
 # Open-Meteo only exposes near-surface wind at these fixed heights regardless
 # of source model -- NBM has no pressure-level profile here either (same
-# limitation as the historical pull), so it's limited to these vs. LEVELS_MB.
+# limitation as the historical pull), so it's limited to these vs. the
+# pressure-level models below.
 LIVE_NBM_HEIGHTS_M = [10, 80, 120, 180]
 
 # Winds aloft (pressure levels) are only real for these on the *live* side --
-# checked 2026-07-16/17: NAM's wind_speed_*hPa fields are null across all of
-# LEVELS_MB via Open-Meteo (surface wind works fine for NAM, just not
+# checked 2026-07-16/17: NAM's wind_speed_*hPa fields are null across the
+# whole profile via Open-Meteo (surface wind works fine for NAM, just not
 # pressure levels), unlike the historical Herbie/GRIB2 pull where NAM's raw
 # isobaric data is real -- a live-API-specific gap, not a NAM limitation in
 # general. NBM never had pressure levels on either side. Don't assume the two
 # pulls have matching level-availability per model.
 LIVE_PROFILE_MODELS = ["gfs", "hrrr", "ecmwf", "icon", "arpege", "gem"]
 
-# Coverage of LEVELS_MB is NOT uniform across LIVE_PROFILE_MODELS -- checked
-# 2026-07-17, non-null levels per model:
-#   gfs, hrrr:      all 5 (1000/900/800/700/650)
-#   arpege, gem:    all 5
-#   icon:           4 of 5 -- missing 650
-#   ecmwf:          only 2 of 5 -- has 1000 and 700, but not 900/800/650
-#                   (ECMWF's own native grid uses 925/850 instead, which
-#                   aren't in LEVELS_MB -- not currently pulled)
-# Downstream code already treats a missing level as "that model didn't
-# contribute at that altitude" (same handling as a model being beyond its
-# forecast horizon), so this doesn't break anything -- it just means ECMWF
-# in particular contributes much less to the winds-aloft profile than its
-# presence in LIVE_PROFILE_MODELS might suggest.
+# Coverage is NOT uniform across LIVE_PROFILE_MODELS -- re-checked 2026-07-18
+# by directly probing the live API at every one of PRESSURE_LEVEL_MASTER_MB's
+# 44 levels (not from docs pages, which turned out unreliable here -- Open-
+# Meteo's ECMWF docs page said its ceiling was 50 hPa, but the live API
+# actually returns real, non-null wind at 10 hPa too; always verify against
+# the API directly for anything this decision-relevant). Real (non-null)
+# levels per model, of the 44:
+#   gfs:     44/44 (all of them, down to 10 hPa / ~85,000ft)
+#   hrrr:    38/44, down to 50 hPa / ~67,500ft
+#   arpege:  29/44, down to 10 hPa / ~85,000ft
+#   gem:     28/44, down to 10 hPa / ~85,000ft
+#   icon:    19/44, down to 30 hPa / ~78,000ft
+#   ecmwf:   14/44, down to 10 hPa / ~101,000ft -- fewest levels, but not the
+#            lowest ceiling; its levels are just sparser (1000/925/850/700/
+#            600/500/400/300/250/200/150/100/50/10)
+# Every model here clears every current site's waiver (Argonia's 50,000ft is
+# the tallest) with real data, several with a lot of room to spare. Downstream
+# code already treats a missing level as "that model didn't contribute at
+# that altitude" (same handling as a model being beyond its forecast
+# horizon), so sparser models (ECMWF, ICON) just contribute less to the
+# winds-aloft profile than GFS/ARPEGE/GEM -- expected, not a bug.
 
 # Launch-day window: 8am-5pm local. Flying itself typically runs 9am-3pm, but
 # setup starts at 8am and cleanup can run past 3pm; NOA (the club) extends to
@@ -289,7 +358,13 @@ BOOST_ANGLE_OFF_VERTICAL_DEG = 10
 # Formalized from a one-off analysis script (see docs/spec.md
 # §9) -- values unchanged from that script, just named/versioned per this
 # file's own stated convention instead of living inline.
-SITE_ELEV_M = 197.0  # Hutto site elevation, used to convert pressure levels to AGL feet
+#
+# Site elevation used to live here as a single Hutto-only constant
+# (SITE_ELEV_M = 197.0) applied to every site -- fixed 2026-07-18, now
+# per-site via SITES[site_id]["elev_m"]/elev_ft_for_site() below.
+def elev_ft_for_site(site_id: str) -> float:
+    return SITES[site_id]["elev_m"] * 3.28084
+
 
 # Times of day the splash-zone viewer samples. Fixed across every capture/
 # target-date/site by design, so the viewer's toggles don't need to vary per
@@ -302,32 +377,42 @@ SPLASH_HOURS_LOCAL = [9, 11, 13, 15]
 # waivers) already sit within ~1,000ft of that list's top, while TNT/Argonia
 # (45,000/50,000ft waivers) never got simulated anywhere near what they can
 # actually fly (user's call 2026-07-17: "it makes no sense to go to 9k' for
-# DARS... or to stop at 9k' for TNT"). Altitudes now scale with each site's
-# own waiver_ft instead: start at 1,000ft, end exactly at the waiver, with a
-# point count clamped to [MIN_ALTITUDE_POINTS, MAX_ALTITUDE_POINTS] and
-# spacing that targets TARGET_ALTITUDE_STEP_FT where the waiver allows it.
-# Interior points are rounded to the nearest 100ft for a clean legend label;
-# only the bottom (1,000ft) and top (waiver_ft) are guaranteed exact.
-MIN_ALTITUDE_FT = 1000
-MIN_ALTITUDE_POINTS = 5
-MAX_ALTITUDE_POINTS = 9
-TARGET_ALTITUDE_STEP_FT = 2000  # Hutto's original spacing -- the default whenever the waiver allows it
+# DARS... or to stop at 9k' for TNT"). Scaled to an even step across the
+# whole waiver range next (2026-07-17 -> 07-18), which over-resolved the top
+# of tall-waiver sites and under-resolved exactly where most real flights
+# land: most flights apogee under 10,000ft, a smaller group in 10-20,000ft,
+# very few above that (user's call 2026-07-18) -- so density now tapers by
+# band instead of one uniform step, and it's a fixed list, not a formula:
+# 2,000ft steps 2,000-10,000ft, then 13,500/17,000/20,000, then 5-10,000ft
+# steps 25,000-50,000ft (2,000ft steps at that altitude would be
+# indistinguishable/pointless -- almost nothing flies there at all, let
+# alone needs 2,000ft resolution). altitudes_for_site() caps this master
+# list to each site's own waiver_ft (points above it are dropped) and always
+# appends the waiver itself as the final point if the capped list doesn't
+# already end there exactly, so every site's profile still reaches its real
+# legal ceiling even when it falls between two master-list points.
+ALTITUDES_MASTER_FT = [2000, 4000, 6000, 8000, 10000, 13500, 17000, 20000, 25000, 30000, 40000, 50000]
 
 
 def altitudes_for_site(site_id: str) -> list[int]:
     waiver_ft = SITES[site_id]["waiver_ft"]
-    span = waiver_ft - MIN_ALTITUDE_FT
-    n = max(MIN_ALTITUDE_POINTS, min(MAX_ALTITUDE_POINTS, span // TARGET_ALTITUDE_STEP_FT + 1))
-    if n <= 1:
-        return [waiver_ft]
-    step = span / (n - 1)
-    altitudes = [MIN_ALTITUDE_FT]
-    altitudes += [round((MIN_ALTITUDE_FT + i * step) / 100) * 100 for i in range(1, n - 1)]
-    altitudes.append(waiver_ft)
+    altitudes = [a for a in ALTITUDES_MASTER_FT if a <= waiver_ft]
+    if not altitudes or altitudes[-1] != waiver_ft:
+        altitudes.append(waiver_ft)
     return altitudes
 
 # Single-deploy: one rate for the whole descent (narrow real-world range).
 SINGLE_DEPLOY_RATES_FPS = {"10fps": 10.0, "20fps": 20.0}
+# Above this altitude, single-deploy points are dropped from the sim entirely
+# (user's call 2026-07-18) -- not a number found written into Tripoli's own
+# Unified Safety Code (checked the full text 2026-07-18; the closest rule is
+# §11-1's 35 ft/s max landing speed, which argues against high-altitude
+# single-deploy practically -- a chute sized to hit that speed from 45-
+# 50,000ft would drift for a very long time -- but doesn't set an altitude
+# threshold itself). Treated as a real operational convention worth modeling
+# even without a codified number behind it; re-verify if a specific
+# prefecture's own local rule turns out to say otherwise.
+SINGLE_DEPLOY_MAX_ALT_FT = 10000
 # Dual-deploy: (drogue_fps, main_fps) pairs -- drogue extremes paired with
 # main's corresponding extreme (not a fixed midpoint -- see Phase 1 note in
 # docs/spec.md; this is what the original script actually ran,

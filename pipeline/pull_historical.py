@@ -113,7 +113,11 @@ def _base_row(model: str, source_type: str, run_init_time: datetime, lead_time_h
 
 
 def extract_profile(H: Herbie, model: str, source_type: str, run_init_time: datetime, lead_time_hours: int) -> pd.DataFrame:
-    level_pattern = "|".join(str(l) for l in config.LEVELS_MB)
+    # This script is still Hutto-only (config.SITE_ID/SITE_LAT/SITE_LON above,
+    # no --site option like pull_live_forecast.py/splash_zones.py have) -- so
+    # levels_mb_for_site() is called with config.SITE_ID specifically, not
+    # left as a bare global the way the old flat LEVELS_MB was.
+    level_pattern = "|".join(str(l) for l in config.levels_mb_for_site(config.SITE_ID))
     ds = H.xarray(f":(UGRD|VGRD):({level_pattern}) mb", remove_grib=True)
     picked = ds.herbie.pick_points(_point_df(), method="nearest")
     df = picked[["u", "v", "isobaricInhPa", "valid_time"]].to_dataframe().reset_index()

@@ -85,9 +85,21 @@
   .copy-link-btn:hover { background: var(--surface-2); }
   .copy-link-btn.copied { background: var(--accent); color: #fff; border-color: var(--accent); }
 
-  .layout { display: flex; gap: 16px; align-items: flex-start; }
-  .map-col { flex: 1 1 auto; min-width: 0; }
-  .side-col { width: 190px; flex: 0 0 auto; }
+  /* Grid (not flex) so the source order can differ from the visual order:
+     on mobile the side-col (altitude/model/rate legends) needs to land right
+     after the map and before the longer explanatory notes underneath it, so
+     it's reachable without scrolling past a wall of text -- see the mobile
+     grid-template-areas below. */
+  .layout {
+    display: grid;
+    grid-template-columns: 1fr 190px;
+    grid-template-areas: "map side" "notes side";
+    gap: 16px;
+    align-items: start;
+  }
+  .map-col-map { grid-area: map; min-width: 0; }
+  .side-col { grid-area: side; }
+  .map-col-notes { grid-area: notes; }
 
   .map-wrap {
     position: relative;
@@ -177,7 +189,7 @@
   .alt-hint { font-size: 0.75rem; color: var(--text-muted); margin-top: 6px; line-height: 1.5; display: none; }
   .alt-hint.open { display: block; }
 
-  .buffer-note { display: flex; align-items: center; gap: 10px; font-size: 0.8rem; color: var(--text-secondary); margin-top: 16px; max-width: 620px; }
+  .buffer-note { display: flex; align-items: center; gap: 10px; font-size: 0.8rem; color: var(--text-secondary); max-width: 620px; }
   .buffer-swatch { width: 20px; height: 14px; border-radius: 3px; flex-shrink: 0; background: #4a3aa7; opacity: 0.30; border: 1px solid #4a3aa7; }
   .boost-angle-control { display: flex; align-items: center; gap: 10px; margin-top: 8px; max-width: 620px; }
   .boost-angle-control label { font-size: 0.8rem; color: var(--text-secondary); white-space: nowrap; }
@@ -190,7 +202,6 @@
     padding: 3px 10px; font-size: 0.78rem; cursor: pointer;
   }
   #pad-reset-btn:hover { background: var(--surface-2); }
-  .pad-move-hint { color: var(--text-muted); flex-basis: 100%; }
 
   .tooltip {
     position: fixed;
@@ -215,8 +226,10 @@
   .footnote code { background: var(--surface-2); padding: 1px 5px; border-radius: 4px; }
 
   @media (max-width: 760px) {
-    .layout { flex-direction: column; }
-    .side-col { width: 100%; }
+    .layout {
+      grid-template-columns: 1fr;
+      grid-template-areas: "map" "side" "notes";
+    }
   }
 
   /* --- launch-site picker: plain <select> (was a clickable regional map

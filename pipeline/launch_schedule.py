@@ -6,14 +6,19 @@ up" without a human re-deriving nth-weekday-of-month math every time. Rules
 gathered 2026-07-17 directly from each club (AARG/Hearne/TNT) or their
 published calendar (KLOUDBusters); re-verify before trusting a season this
 schedule hasn't been checked against yet -- clubs change their own schedules
-without this file knowing.
+without this file knowing. SD Rocket Jockies' rule (added 2026-07-18) came
+from the user directly, not the club's own calendar -- same caveat applies.
+Tripoli Houston South Site's rule (also added 2026-07-18) is a known-rough
+placeholder -- 4th Saturday every month, but the club's own materials
+mention a Feb-Aug season similar to TNT Seymour's; deliberately left as
+every month until the user narrows it down (see tripoli_houston_south_events()).
 
 Every site here must already exist in config.SITES.
 
 Four distinct kinds of rule, because the clubs don't actually share one:
   1. Fixed nth-weekday-of-month, valid across a month range (AARG, Hearne,
-     TNT Seymour's regular flight day) -- computed generically, works for
-     any year.
+     TNT Seymour's regular flight day, SD Rocket Jockies, Tripoli Houston
+     South Site) -- computed generically, works for any year.
   2. A named holiday-relative multi-day event (Texas Shootout: the Sat/Sun/
      Mon of Memorial Day weekend) -- also computed generically.
   3. Season-dependent site choice for one recurring rule (AARG: Apache Pass
@@ -93,6 +98,14 @@ def hearne_events(year: int) -> list[LaunchEvent]:
     return [LaunchEvent(nth_weekday(year, m, SAT, 2), "hearne", "Tripoli Houston") for m in range(1, 13)]
 
 
+# --- Rule 1: Tripoli Houston @ South Site -- 4th Saturday every month ------
+# Placeholder as all-year (user's call 2026-07-18: known to actually be a
+# limited season -- club materials found so far say Feb-Aug -- but left as
+# every month until that's confirmed and narrowed down).
+def tripoli_houston_south_events(year: int) -> list[LaunchEvent]:
+    return [LaunchEvent(nth_weekday(year, m, SAT, 4), "tripoli_houston_south", "Tripoli Houston South") for m in range(1, 13)]
+
+
 # --- Rule 1+2: Tripoli North Texas @ Seymour -------------------------------
 # Regular monthly launch is 4th Saturday, but only Jan-May (no listed
 # off-season pattern given, so no launches assumed Jun-Dec until told
@@ -110,6 +123,18 @@ def tnt_seymour_events(year: int) -> list[LaunchEvent]:
                       (mem_day, "Texas Shootout (Memorial Day Mon)")]:
         out.append(LaunchEvent(d, "seymour", label))
     return out
+
+
+# --- Rule 1: SD Rocket Jockies -- 1st Saturday, April-October ---------------
+# Given directly by the user 2026-07-18, not sourced from the club's own
+# calendar like the rules above -- re-verify before trusting a season this
+# hasn't been checked against.
+SD_ROCKET_JOCKIES_MONTHS = range(4, 11)  # April(4)..October(10) inclusive
+
+
+def sd_rocket_jockies_events(year: int) -> list[LaunchEvent]:
+    return [LaunchEvent(nth_weekday(year, m, SAT, 1), "sd_rocket_jockies", "SD Rocket Jockies")
+            for m in SD_ROCKET_JOCKIES_MONTHS]
 
 
 # --- Rule 4: KLOUDBusters @ Argonia -- no fixed weekday-of-month rule ------
@@ -156,7 +181,8 @@ def kloudbusters_events(year: int) -> list[LaunchEvent]:
 
 
 def all_events(year: int) -> list[LaunchEvent]:
-    events = aarg_events(year) + hearne_events(year) + tnt_seymour_events(year)
+    events = (aarg_events(year) + hearne_events(year) + tnt_seymour_events(year)
+              + sd_rocket_jockies_events(year) + tripoli_houston_south_events(year))
     try:
         events += kloudbusters_events(year)
     except ValueError as e:

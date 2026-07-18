@@ -502,36 +502,86 @@ wrap.addEventListener('wheel', evt => {
   zoomAt(factor, evt.clientX, evt.clientY);
 }, { passive: false });
 
+// --- pan (1 finger/mouse) + pinch-zoom (2 fingers), via Pointer Events so
+// mouse and touch share one code path. mapPointers excludes any pointer that
+// started on the pad marker (drawPadMarker() stopPropagation's those) so
+// dragging the pad never also pans the map. Pointer capture keeps events
+// targeting wrap even once a fast finger drags outside its bounds.
+const mapPointers = new Map(); // pointerId -> {x, y}
 let dragging = false, lastX = 0, lastY = 0;
-wrap.addEventListener('mousedown', evt => {
-  dragging = true;
-  wrap.classList.add('dragging');
-  lastX = evt.clientX; lastY = evt.clientY;
-});
-window.addEventListener('mousemove', evt => {
-  if (!dragging) return;
-  const rect = wrap.getBoundingClientRect();
-  const dx = (evt.clientX - lastX) / rect.width * view.w;
-  const dy = (evt.clientY - lastY) / rect.height * view.h;
-  view.x -= dx; view.y -= dy;
-  lastX = evt.clientX; lastY = evt.clientY;
-  setViewBox();
-});
-window.addEventListener('mouseup', () => { dragging = false; wrap.classList.remove('dragging'); });
+let pinchDist = null, pinchMid = null;
 
-// --- draggable launch pad (see MAX_PAD_MOVE_FT/padOffsetFt) -- mousedown is
+wrap.addEventListener('pointerdown', evt => {
+  wrap.setPointerCapture(evt.pointerId);
+  mapPointers.set(evt.pointerId, { x: evt.clientX, y: evt.clientY });
+  if (mapPointers.size === 1) {
+    dragging = true;
+    wrap.classList.add('dragging');
+    lastX = evt.clientX; lastY = evt.clientY;
+  } else if (mapPointers.size === 2) {
+    dragging = false;
+    wrap.classList.remove('dragging');
+    const [p1, p2] = mapPointers.values();
+    pinchDist = Math.hypot(p1.x - p2.x, p1.y - p2.y);
+    pinchMid = { x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2 };
+  }
+});
+wrap.addEventListener('pointermove', evt => {
+  if (!mapPointers.has(evt.pointerId)) return;
+  mapPointers.set(evt.pointerId, { x: evt.clientX, y: evt.clientY });
+
+  if (mapPointers.size >= 2) {
+    const [p1, p2] = mapPointers.values();
+    const dist = Math.hypot(p1.x - p2.x, p1.y - p2.y);
+    const mid = { x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2 };
+    if (pinchDist != null) {
+      zoomAt(pinchDist / dist, mid.x, mid.y); // fingers spreading -> dist grows -> factor<1 -> zoom in
+      const rect = wrap.getBoundingClientRect();
+      view.x -= (mid.x - pinchMid.x) / rect.width * view.w;
+      view.y -= (mid.y - pinchMid.y) / rect.height * view.h;
+      setViewBox();
+    }
+    pinchDist = dist;
+    pinchMid = mid;
+  } else if (dragging) {
+    const rect = wrap.getBoundingClientRect();
+    const dx = (evt.clientX - lastX) / rect.width * view.w;
+    const dy = (evt.clientY - lastY) / rect.height * view.h;
+    view.x -= dx; view.y -= dy;
+    lastX = evt.clientX; lastY = evt.clientY;
+    setViewBox();
+  }
+});
+function endMapPointer(evt) {
+  mapPointers.delete(evt.pointerId);
+  if (mapPointers.size === 0) {
+    dragging = false;
+    wrap.classList.remove('dragging');
+    pinchDist = null; pinchMid = null;
+  } else if (mapPointers.size === 1) {
+    // one finger lifted out of a pinch -- resume single-finger pan from the remaining one
+    dragging = true;
+    pinchDist = null; pinchMid = null;
+    const [p] = mapPointers.values();
+    lastX = p.x; lastY = p.y;
+  }
+}
+wrap.addEventListener('pointerup', endMapPointer);
+wrap.addEventListener('pointercancel', endMapPointer);
+
+// --- draggable launch pad (see MAX_PAD_MOVE_FT/padOffsetFt) -- pointerdown is
 // wired per-render on the marker itself (drawPadMarker()); this just handles
-// the drag continuation, mirroring the map-pan mousemove/mouseup above
+// the drag continuation, mirroring the map-pan pointermove/pointerup above
 // (screen-px delta -> SVG-unit delta via the same rect/view ratio), then one
 // more conversion from SVG px to ft via ft_to_px_scale, since padOffsetFt is
 // stored in feet (stays valid across zoom/pan, unlike a raw pixel offset).
-let draggingPad = false;
-window.addEventListener('mousemove', evt => {
+let draggingPad = false, padLastX = 0, padLastY = 0;
+window.addEventListener('pointermove', evt => {
   if (!draggingPad) return;
   const rect = wrap.getBoundingClientRect();
-  const dxPx = (evt.clientX - lastX) / rect.width * view.w;
-  const dyPx = (evt.clientY - lastY) / rect.height * view.h;
-  lastX = evt.clientX; lastY = evt.clientY;
+  const dxPx = (evt.clientX - padLastX) / rect.width * view.w;
+  const dyPx = (evt.clientY - padLastY) / rect.height * view.h;
+  padLastX = evt.clientX; padLastY = evt.clientY;
 
   const newX = padOffsetFt.x + dxPx / DATA.ft_to_px_scale.x;
   const newY = padOffsetFt.y - dyPx / DATA.ft_to_px_scale.y; // screen y grows downward, north is +y
@@ -544,7 +594,9 @@ window.addEventListener('mousemove', evt => {
   }
   render();
 });
-window.addEventListener('mouseup', () => { draggingPad = false; wrap.classList.remove('dragging-pad'); });
+function endPadDrag() { draggingPad = false; wrap.classList.remove('dragging-pad'); }
+window.addEventListener('pointerup', endPadDrag);
+window.addEventListener('pointercancel', endPadDrag);
 
 document.getElementById('zoom-in').addEventListener('click', () => {
   const rect = wrap.getBoundingClientRect();
@@ -1178,10 +1230,11 @@ function drawPadMarker() {
   label.textContent = padOffsetFt.x || padOffsetFt.y ? 'Launch pad (moved)' : 'Launch pad';
   g.appendChild(label);
 
-  g.addEventListener('mousedown', evt => {
-    evt.stopPropagation(); // don't also start a map-pan drag (see wrap's own mousedown)
+  g.addEventListener('pointerdown', evt => {
+    evt.stopPropagation(); // don't also start a map-pan drag (see wrap's own pointerdown)
+    g.setPointerCapture(evt.pointerId);
     draggingPad = true;
-    lastX = evt.clientX; lastY = evt.clientY;
+    padLastX = evt.clientX; padLastY = evt.clientY;
     wrap.classList.add('dragging-pad');
   });
 
