@@ -10,8 +10,12 @@ __pycache__/
 # expire/archive older captures (e.g. to S3) later, not yet built.
 #
 # Still excluded: raw satellite PNGs (redundant with the published _web.jpg
-# versions, large, only useful for future reprocessing) and the old
-# Herbie/GRIB2 historical-archive pulls (a separate, manually-run research
-# feature, not part of the daily live-pull history above).
+# versions, large, only useful for future reprocessing) and the Herbie/GRIB2
+# historical-archive pulls (pull_historical.py, made multi-site 2026-07-18 --
+# path changed from the old flat pipeline/data/raw/ to per-site
+# pipeline/data/<site_id>/raw/, hence the glob). Regeneratable raw
+# intermediates either way; what matters is the *simulated* actual/forecast
+# points published into site/data/, not this raw GRIB2-derived cache.
 pipeline/data/maps_raw/
 pipeline/data/raw/
+pipeline/data/*/raw/

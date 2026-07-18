@@ -93,13 +93,14 @@
   .layout {
     display: grid;
     grid-template-columns: 1fr 190px;
-    grid-template-areas: "map side" "notes side";
+    grid-template-areas: "map side" "notes side" "accuracy accuracy";
     gap: 16px;
     align-items: start;
   }
   .map-col-map { grid-area: map; min-width: 0; }
   .side-col { grid-area: side; }
   .map-col-notes { grid-area: notes; }
+  .accuracy-section { grid-area: accuracy; min-width: 0; }
 
   .map-wrap {
     position: relative;
@@ -203,6 +204,22 @@
   }
   #pad-reset-btn:hover { background: var(--surface-2); }
 
+  /* Distance-from-actual accuracy table (added 2026-07-18, History mode
+     only). Cell backgrounds use the four fixed status-scale colors (not a
+     plain sequential ramp) since the color here literally means good/bad
+     accuracy, not just "big number" -- dark ink (#1a1a19) clears >=3:1 text
+     contrast against all four (verified: good 5.19, warning 9.49, serious
+     6.6, critical 3.62), and every cell's exact number is always visible
+     as text regardless, so color is never the only channel. */
+  .accuracy-table-wrap { overflow-x: auto; margin-top: 8px; }
+  .accuracy-table { border-collapse: collapse; font-size: 0.8rem; white-space: nowrap; }
+  .accuracy-table th, .accuracy-table td { padding: 6px 10px; text-align: center; border: 1px solid var(--border); }
+  .accuracy-table thead th { background: var(--surface-2); color: var(--text-secondary); font-weight: 600; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.03em; }
+  .accuracy-table tbody th { background: var(--surface-2); color: var(--text-primary); text-align: left; font-weight: 600; }
+  .accuracy-table td.accuracy-empty { color: var(--text-muted); background: var(--surface-1); }
+  .accuracy-dist { font-weight: 700; color: #1a1a19; }
+  .accuracy-xy { font-size: 0.72rem; color: #1a1a19; opacity: 0.75; }
+
   .tooltip {
     position: fixed;
     pointer-events: none;
@@ -228,7 +245,7 @@
   @media (max-width: 760px) {
     .layout {
       grid-template-columns: 1fr;
-      grid-template-areas: "map" "side" "notes";
+      grid-template-areas: "map" "side" "notes" "accuracy";
     }
   }
 

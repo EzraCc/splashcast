@@ -31,9 +31,10 @@ points_history are public.
 
 import json
 import math
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from datetime import time as dtime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import numpy as np
 import pandas as pd
@@ -43,6 +44,7 @@ import config
 import fetch_site_maps
 
 MPH_TO_FTPS = 5280 / 3600
+_SITE_TZ = ZoneInfo(config.SITE_TZ)
 
 
 # --- ICAO standard atmosphere (troposphere + lower stratosphere, 0-20km MSL)
@@ -227,6 +229,77 @@ def compute_splash_points(df: pd.DataFrame, target_date: date, site_id: str = "h
                     x, y = simulate(profile, float(alt), phases, site_elev_ft)
                     all_points.append((h, "dual", rate_name, alt, m, x, y))
     return pd.DataFrame(all_points, columns=["hour", "deploy", "rate", "altitude", "model", "x_ft", "y_ft"])
+
+
+# --- "Actual" splash points from HRRR's own analysis (added 2026-07-18) ----
+# pull_historical.py's pull_actual() fetches HRRR's f00 (its own data-
+# assimilation output, not a forecast) at every SPLASH_HOURS_LOCAL hour for
+# a past target date -- the closest this project has to "what actually
+# happened" absent real post-flight GPS (see build_points_history()'s
+# comment on points_history.json's actuals key). The two functions below
+# turn that raw pull into the same kind of simulated point every forecast
+# gets, so the viewer's star marker has something real to show.
+MPS_TO_MPH = 2.236936
+
+
+def build_actual_profile(hour_df: pd.DataFrame, site_elev_ft: float) -> list[tuple[float, float, float]]:
+    """(agl_ft, speed_mph, dir_deg) profile for one hour, from
+    pull_historical.py's extract_profile()/extract_surface() output --
+    same shape as build_profile_single()'s return, but sourced from that
+    script's simpler (pressure_level_hpa, wind_speed[[m/s]], wind_direction)
+    schema instead of the live pull's tidy long format, and needing the
+    m/s -> mph conversion the live pull's own wind_speed_unit=mph param
+    already handles for us elsewhere."""
+    points = []
+    surf = hour_df[hour_df["pressure_level_hpa"].isna()]
+    if not surf.empty:
+        row = surf.iloc[0]
+        points.append((0.0, row["wind_speed"] * MPS_TO_MPH, row["wind_direction"]))
+    for _, row in hour_df.dropna(subset=["pressure_level_hpa"]).iterrows():
+        agl = std_atm_ft(row["pressure_level_hpa"]) - site_elev_ft
+        points.append((agl, row["wind_speed"] * MPS_TO_MPH, row["wind_direction"]))
+    return sorted(points)
+
+
+def compute_actual_points(site_id: str, target_date: date) -> dict[str, dict]:
+    """One simulated point per hour/deploy/rate/altitude -- same grid
+    compute_splash_points() iterates, just against the single HRRR-analysis
+    profile per hour instead of every live model -- keyed exactly like
+    points_by_key so the viewer can look either up the same way. Returns {}
+    if pull_historical.py hasn't pulled this site/date yet (most target
+    dates won't have this -- it's a manually-run backfill, not part of the
+    daily live-pull path)."""
+    raw_path = Path(config.DATA_DIR) / site_id / "raw" / f"{target_date}_actual.parquet"
+    if not raw_path.exists():
+        return {}
+    raw = pd.read_parquet(raw_path)
+    site_elev_ft = config.elev_ft_for_site(site_id)
+    actuals = {}
+    for h in config.SPLASH_HOURS_LOCAL:
+        # raw["valid_time"] is UTC-naive (straight from the GRIB2 files via
+        # Herbie, which does no timezone conversion) -- NOT local like the
+        # live pull's "valid_time_local" column build_profile_single() reads
+        # elsewhere. h is a local hour (config.SPLASH_HOURS_LOCAL), so it has
+        # to go through the same local->UTC conversion pull_historical.py's
+        # target_valid_time() already does, or every lookup here would
+        # silently match nothing.
+        hdt_utc = datetime.combine(target_date, dtime(h, 0), tzinfo=_SITE_TZ).astimezone(timezone.utc).replace(tzinfo=None)
+        hour_df = raw[raw["valid_time"] == hdt_utc]
+        if hour_df.empty:
+            continue
+        profile = build_actual_profile(hour_df, site_elev_ft)
+        if len(profile) < 2:
+            continue
+        for alt in config.altitudes_for_site(site_id):
+            if alt <= config.SINGLE_DEPLOY_MAX_ALT_FT:
+                for rate_name, rate in config.SINGLE_DEPLOY_RATES_FPS.items():
+                    x, y = simulate(profile, float(alt), [(rate, float(alt), 0)], site_elev_ft)
+                    actuals[f"{h}_single_{rate_name}_{alt}"] = {"x_ft": round(float(x), 1), "y_ft": round(float(y), 1)}
+            for rate_name, (drogue, main) in config.DUAL_DEPLOY_RATES_FPS.items():
+                phases = [(drogue, float(alt), config.MAIN_DEPLOY_ALTITUDE_FT), (main, config.MAIN_DEPLOY_ALTITUDE_FT, 0)]
+                x, y = simulate(profile, float(alt), phases, site_elev_ft)
+                actuals[f"{h}_dual_{rate_name}_{alt}"] = {"x_ft": round(float(x), 1), "y_ft": round(float(y), 1)}
+    return actuals
 
 
 def hull_of(points_xy: list[tuple[float, float]]) -> list[list[float]]:
@@ -424,11 +497,13 @@ def build_points_history(target_dir: Path, target_date: date, site_id: str = "hu
         "target_date": str(target_date),
         "captures": [str(c) for c in captures],
         "points_by_key": points_by_key,
-        # Populated once real post-flight GPS data exists (spec.md Phase 3,
-        # not built) -- same key scheme as points_by_key so the viewer can
-        # look a flight's actual up the same way it looks up projections,
-        # rather than needing a second lookup convention once that lands.
-        "actuals": {},
+        # HRRR-analysis-based best-guess (compute_actual_points(), added
+        # 2026-07-18) if pull_historical.py has backfilled this site/date --
+        # {} otherwise (most target dates won't have it; it's a separate,
+        # manually-run pull, not part of the daily live-pull path). Real
+        # post-flight GPS (spec.md Phase 3, not built) would replace this
+        # under the same key scheme once that lands, not need a second one.
+        "actuals": compute_actual_points(site_id, target_date),
     }
 
 

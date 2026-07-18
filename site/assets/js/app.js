@@ -1012,6 +1012,87 @@ function renderHistory() {
   }
 }
 
+// --- Accuracy-vs-actual table (History mode only, added 2026-07-18) --------
+// Cell color uses the fixed 4-step status scale (good/warning/serious/
+// critical), not a plain sequential ramp -- the color here literally means
+// "how accurate," not just "big number" (dataviz skill's own carve-out for
+// exactly this case: status tokens are legal, even required, when the color
+// *means* good/bad rather than encoding identity). Dark ink (#1a1a19) on all
+// four clears >=3:1 text contrast (verified 5.19/9.49/6.6/3.62); every
+// cell's number is always visible as text too, so color is never the sole
+// channel. Thresholds are quartiles of the distances actually present in
+// THIS table, not a fixed-feet scale -- 200ft is a great miss at a
+// 50,000ft-waiver site and a mediocre one at a 6,000ft site, so "green"
+// here means "relatively best in this specific comparison," not some
+// universal accuracy bar.
+const ACCURACY_COLORS = ['#0ca30c', '#fab219', '#ec835a', '#d03b3b']; // good -> critical
+
+function accuracyColor(dist, thresholds) {
+  if (dist <= thresholds[0]) return ACCURACY_COLORS[0];
+  if (dist <= thresholds[1]) return ACCURACY_COLORS[1];
+  if (dist <= thresholds[2]) return ACCURACY_COLORS[2];
+  return ACCURACY_COLORS[3];
+}
+
+function quartileThresholds(values) {
+  const sorted = [...values].sort((a, b) => a - b);
+  const q = p => sorted[Math.min(sorted.length - 1, Math.floor(p * (sorted.length - 1)))];
+  return [q(0.25), q(0.5), q(0.75)];
+}
+
+function renderAccuracyTable() {
+  const section = document.getElementById('accuracy-section');
+  const rate = state.pinnedRate;
+  const key = `${state.hour}_${state.deploy}_${rate}_${state.compareAlt}`;
+  const actual = HISTORY && HISTORY.actuals[key];
+  if (!actual) return; // stays hidden -- render() already set display:none
+
+  const seriesByModel = {};
+  (HISTORY.points_by_key[key] || []).forEach(pt => {
+    (seriesByModel[pt.model] ??= []).push(pt);
+  });
+  const models = Object.keys(seriesByModel).sort();
+  if (!models.length) return;
+
+  const cellData = {}; // model -> capture_date -> {dist, dx, dy}
+  const allDists = [];
+  models.forEach(model => {
+    cellData[model] = {};
+    seriesByModel[model].forEach(pt => {
+      const dx = pt.x_ft - actual.x_ft, dy = pt.y_ft - actual.y_ft;
+      const dist = Math.hypot(dx, dy);
+      cellData[model][pt.capture_date] = { dist, dx, dy };
+      allDists.push(dist);
+    });
+  });
+  const thresholds = quartileThresholds(allDists);
+
+  const table = document.getElementById('accuracy-table');
+  let html = '<thead><tr><th>Model</th>';
+  HISTORY.captures.forEach(c => {
+    html += `<th>${leadDaysLabel(c, HISTORY.target_date)}</th>`;
+  });
+  html += '</tr></thead><tbody>';
+  models.forEach(model => {
+    html += `<tr><th>${model}</th>`;
+    HISTORY.captures.forEach(c => {
+      const cell = cellData[model][c];
+      if (!cell) {
+        html += '<td class="accuracy-empty">&mdash;</td>';
+        return;
+      }
+      const color = accuracyColor(cell.dist, thresholds);
+      const dxStr = (cell.dx >= 0 ? '+' : '') + Math.round(cell.dx);
+      const dyStr = (cell.dy >= 0 ? '+' : '') + Math.round(cell.dy);
+      html += `<td style="background:${color}"><div class="accuracy-dist">${Math.round(cell.dist)} ft</div><div class="accuracy-xy">(${dxStr}, ${dyStr})</div></td>`;
+    });
+    html += '</tr>';
+  });
+  html += '</tbody>';
+  table.innerHTML = html;
+  section.style.display = '';
+}
+
 function drawPoint(g, pt, hour, altitude, fillColor) {
   // Recomputed from x_ft/y_ft via ftToPx() rather than trusting pt.px/pt.py
   // (the server-baked pixel position) -- the baked value is only ever right
@@ -1140,6 +1221,7 @@ function syncUrl() {
 function render() {
   svg.innerHTML = '';
   renderedPoints = [];
+  document.getElementById('accuracy-section').style.display = 'none'; // shown by renderAccuracyTable() in History mode only, when actuals exist
 
   // background covering the full pannable extent, then two geo-registered image
   // layers on top: a coarser wide-area satellite image for context when zoomed
@@ -1184,6 +1266,7 @@ function render() {
     ordered.forEach(zone => drawZone(zone, ALT_COLORS_HEX[zone.altitude], state.hour));
   } else if (state.mode === 'byHistory') {
     renderHistory();
+    renderAccuracyTable();
   } else {
     // "I'm flying to this altitude -- what time of day is best?": one fixed
     // altitude, all 4 times of day at once, colored by time instead.

@@ -102,6 +102,16 @@
       </div>
       <div class="alt-hint" id="pad-hint">Drag the crosshair on the map to try a nearby setup spot (capped at 2,000 ft from the surveyed point -- everything shifts with it).</div>
     </div>
+
+    <div class="accuracy-section" id="accuracy-section" style="display:none;">
+      <div class="alt-list-title">
+        Accuracy vs. actual <button class="info-btn" type="button" data-hint="accuracy-hint" title="Show details">i</button>
+      </div>
+      <div class="alt-hint" id="accuracy-hint">Distance from each model's forecast point to the "actual" point (HRRR's own analysis, not a forecast -- see the History legend) for the currently-selected hour/deploy/rate/altitude. Format is total distance, then the (east, north) breakdown in feet. Color = relative rank within this table only (greenest = closest here, reddest = farthest here) -- not a fixed distance scale, since 200ft is a great miss at a 50,000ft-waiver site and a mediocre one at a 6,000ft site.</div>
+      <div class="accuracy-table-wrap">
+        <table class="accuracy-table" id="accuracy-table"></table>
+      </div>
+    </div>
   </div>
 
   <p class="footnote">
