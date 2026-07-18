@@ -1,38 +1,22 @@
 {
   "site_id": "sd_rocket_jockies",
-  "generated_at": "2026-07-18T03:52:13",
+  "generated_at": "2026-07-18T15:32:12",
   "launch_dates": [
     {
-      "target_date": "2026-07-18",
-      "capture_date": "2026-07-18",
+      "target_date": "2026-07-04",
+      "capture_date": "2026-07-04",
       "lead_days": 0,
-      "label": "Sat, Jul 18 (T-0)",
-      "data_path": "data/sd_rocket_jockies/live/2026-07-18/splash_zones_captured_2026-07-18.json",
-      "history_path": "data/sd_rocket_jockies/live/2026-07-18/points_history.json"
+      "label": "Sat, Jul 4 (T-0)",
+      "data_path": "data/sd_rocket_jockies/live/2026-07-04/splash_zones_captured_2026-07-04.json",
+      "history_path": "data/sd_rocket_jockies/live/2026-07-04/points_history.json"
     },
     {
-      "target_date": "2026-07-20",
+      "target_date": "2026-07-25",
       "capture_date": "2026-07-18",
-      "lead_days": 2,
-      "label": "Mon, Jul 20 (T-2)",
-      "data_path": "data/sd_rocket_jockies/live/2026-07-20/splash_zones_captured_2026-07-18.json",
-      "history_path": "data/sd_rocket_jockies/live/2026-07-20/points_history.json"
-    },
-    {
-      "target_date": "2026-07-22",
-      "capture_date": "2026-07-18",
-      "lead_days": 4,
-      "label": "Wed, Jul 22 (T-4)",
-      "data_path": "data/sd_rocket_jockies/live/2026-07-22/splash_zones_captured_2026-07-18.json",
-      "history_path": "data/sd_rocket_jockies/live/2026-07-22/points_history.json"
-    },
-    {
-      "target_date": "2026-07-24",
-      "capture_date": "2026-07-18",
-      "lead_days": 6,
-      "label": "Fri, Jul 24 (T-6)",
-      "data_path": "data/sd_rocket_jockies/live/2026-07-24/splash_zones_captured_2026-07-18.json",
-      "history_path": "data/sd_rocket_jockies/live/2026-07-24/points_history.json"
+      "lead_days": 7,
+      "label": "Sat, Jul 25 (T-7)",
+      "data_path": "data/sd_rocket_jockies/live/2026-07-25/splash_zones_captured_2026-07-18.json",
+      "history_path": "data/sd_rocket_jockies/live/2026-07-25/points_history.json"
     }
   ]
 }

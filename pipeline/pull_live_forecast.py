@@ -43,6 +43,7 @@ import re
 import warnings
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
+from time import sleep as _sleep
 
 import pandas as pd
 import requests
@@ -132,6 +133,94 @@ def fetch_model(model_key: str, target_date: date, site_id: str = "hutto", attem
             last_exc = e
             log.debug(f"{model_key} fetch attempt {attempt + 1}/{attempts} failed: {e}")
     raise last_exc
+
+
+# --- Historical backfill (added 2026-07-18) --------------------------------
+# Separate from fetch_model() above -- hits Open-Meteo's Single Runs API
+# (single-runs-api.open-meteo.com, free tier despite what its own pricing
+# page's summarized text initially suggested; verified against the raw
+# pricing table directly) instead of the live-forecast endpoints, letting us
+# pull a SPECIFIC past model run (run=<cycle time>) rather than only "the
+# current forecast." Returns that run's full ~7-day forecast horizon from
+# its init time forward (no start_date/end_date param -- not accepted by
+# this endpoint), so backfill_capture() below filters down to just the
+# target date after parsing.
+#
+# Archive floor is 2026-04-02 for most models (checked empirically, not just
+# from docs -- the same docs-vs-live-API mismatch already found for ECMWF's
+# level ceiling). GEM specifically errors on every run tested here (a raw
+# "modelRunUnavailable" failure, not the clean JSON `error` shape the other
+# models return) -- unclear if that's an archive gap or an API quirk
+# specific to this model; treated as "unavailable," same tolerance as any
+# other model missing from a given capture, not investigated further.
+#
+# precipitation_probability is dropped from the variable list entirely here
+# (unlike the live pull, which keeps it) -- found 2026-07-18 that requesting
+# it against this endpoint fails the WHOLE request with "model run not
+# available... Model: ncep_gefs05" even when every other variable is fine.
+# It's an ensemble-derived field (needs spread across members, not a single
+# deterministic run) that this endpoint silently tries to route to GEFS
+# internally and fails, rather than nulling just that one field the way the
+# live-forecast endpoints do for an unsupported variable. Confirmed via
+# direct curl isolation, not guessed.
+SINGLE_RUNS_URL = "https://single-runs-api.open-meteo.com/v1/forecast"
+
+
+def fetch_model_at_run(model_key: str, run_dt: datetime, site_id: str = "hutto", attempts: int = 2) -> dict:
+    site = config.SITES[site_id]
+    model_info = config.LIVE_MODELS[model_key]
+    variables = [v for v in _hourly_variables(model_key, site_id) if v != "precipitation_probability"]
+    params = {
+        "latitude": site["lat"],
+        "longitude": site["lon"],
+        "hourly": ",".join(variables),
+        "models": model_info["model"],
+        "timezone": config.SITE_TZ,
+        "run": run_dt.strftime("%Y-%m-%dT%H:%M"),
+        "wind_speed_unit": "mph",
+        "temperature_unit": "fahrenheit",
+        "precipitation_unit": "inch",
+    }
+    last_exc = None
+    for attempt in range(attempts):
+        try:
+            resp = requests.get(SINGLE_RUNS_URL, params=params, timeout=30)
+            resp.raise_for_status()
+            data = resp.json()
+            if data.get("error"):
+                raise RuntimeError(f"Open-Meteo error for {model_key} @ run {run_dt}: {data.get('reason')}")
+            return data
+        except Exception as e:
+            last_exc = e
+            log.debug(f"{model_key} @ run {run_dt} fetch attempt {attempt + 1}/{attempts} failed: {e}")
+    raise last_exc
+
+
+def backfill_capture(target_date: date, lead_days: int, site_id: str = "hutto") -> tuple[pd.DataFrame, date]:
+    """Like run(), but for a specific PAST target_date/lead_days combo instead
+    of "today's" live forecast -- capture_date is derived (target_date minus
+    lead_days), not date.today(). No burn-ban check (that's current-status
+    only, meaningless for a backfilled past date)."""
+    run_dt = datetime.combine(target_date - timedelta(days=lead_days), time(0, 0))
+    capture_date = run_dt.date()
+    frames = []
+    for i, model_key in enumerate(config.LIVE_MODELS):
+        if i:
+            _sleep(0.5)  # observed transient 502s hammering this endpoint back-to-back with no pause
+        try:
+            raw = fetch_model_at_run(model_key, run_dt, site_id)
+            df = parse_hourly(raw, model_key)
+            if not df.empty:
+                df = df[df["valid_time_local"].dt.date == target_date]
+            frames.append(df)
+        except Exception as e:
+            log.warning(f"{model_key} backfill pull failed ({site_id}, target {target_date}, lead {lead_days}): {e}")
+    combined = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+    if not combined.empty:
+        combined["target_date"] = target_date
+        combined["capture_date"] = capture_date
+        combined["lead_time_days"] = lead_days
+    return combined, capture_date
 
 
 def _split_variable(name: str) -> tuple[str, str | None, float | None]:
@@ -524,8 +613,19 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("target_date", nargs="?", type=date.fromisoformat, default=next_saturday(date.today()))
     parser.add_argument("--site", default="hutto", choices=list(config.SITES))
+    parser.add_argument("--backfill", action="store_true", help="target_date is in the past -- pull its full T-7..T-0 lead-time history via the Single Runs API instead of today's live forecast")
     args = parser.parse_args()
     target_date, site_id = args.target_date, args.site
+
+    if args.backfill:
+        for lead_days in config.LEAD_DAYS:
+            df, capture_date = backfill_capture(target_date, lead_days, site_id)
+            if df.empty:
+                log.warning(f"[{site_id}] no data for {target_date} at lead {lead_days}d (run {capture_date}) -- skipping, not saved")
+                continue
+            out_path = save_capture(df, None, target_date, capture_date, site_id)
+            log.info(f"[{site_id}] backfilled {target_date} T-{lead_days}d (run {capture_date}): {len(df)} rows -> {out_path}")
+        raise SystemExit(0)
 
     df, burn_ban, capture_date = run(target_date, site_id)
     log.info(f"[{site_id}] Pulling live forecast for {target_date} (captured {capture_date}, T-{(target_date - capture_date).days}d)")

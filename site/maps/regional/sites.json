@@ -100,12 +100,12 @@
     "tripoli_houston_south": {
       "name": "Houston South Site",
       "club": "Tripoli Houston",
-      "lat": 29.222881,
-      "lon": -95.097461,
+      "lat": 29.2232,
+      "lon": -95.09726,
       "waiver_ft": 17500,
       "px": [
-        846.5,
-        1970.1
+        846.6,
+        1970.0
       ],
       "has_data": true
     }

@@ -74,20 +74,22 @@ SITES = {
         "lat": 30.861145710845943, "lon": -96.6225689682861, "waiver_ft": 12000, "elev_m": 82.0,
     },
     "tripoli_houston_south": {
-        # Added 2026-07-18. Coordinate is the launch-pad candidate found via
-        # a groups.io thread WebFetch couldn't load directly (paywalled/402)
-        # -- taken from search-result text only, not read firsthand. It's
-        # ~15.8km from the club's own confirmed South Site *entrance* gate
-        # (29.27389, -95.14123, from tripolihouston.com/news-updates), which
-        # roughly matches the club's own "~5 miles of gravel/dirt roads from
-        # highway to launch site" figure -- consistent with being the real
-        # pad, but not independently confirmed. User's call to use it "for
-        # now"; re-verify against the club directly before trusting it for
-        # anything safety-critical.
+        # Added 2026-07-18, coordinate corrected same day. Original figure
+        # was a launch-pad *candidate* found via a groups.io thread WebFetch
+        # couldn't load directly (paywalled/402) -- taken from search-result
+        # text only, not read firsthand. Corrected to 29.22320, -95.09726
+        # (user's own direct knowledge of where the rails are actually set
+        # up -- "down the road a bit" from the original figure, ~40m/133ft
+        # away, confirmed via haversine before accepting the change). That
+        # small a shift didn't warrant a full map re-fetch on distance alone
+        # (well inside the existing ~6.1km detail crop) but the pad's own
+        # marker position would've been ~19px off on the 2920px detail image
+        # (bigger than the marker's own ~14px radius), so fetch_site_maps.py
+        # was re-run anyway to keep the crosshair and site_px consistent.
         # waiver_ft: 17,500 AGL, confirmed on tripolihouston.com's own
         # homepage ("Current waiver is 17.5 ... FAA waiver of 17,500 feet").
         "name": "Houston South Site", "club": "Tripoli Houston",
-        "lat": 29.222881, "lon": -95.097461, "waiver_ft": 17500, "elev_m": 1.0,
+        "lat": 29.22320, "lon": -95.09726, "waiver_ft": 17500, "elev_m": 1.0,
     },
     "argonia": {
         "name": "Argonia, KS (The Rocket Pasture)", "club": "KLOUDBusters",

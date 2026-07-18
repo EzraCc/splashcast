@@ -2,8 +2,16 @@ __pycache__/
 *.pyc
 *:Zone.Identifier
 
-# Pipeline working data (raw parquet weather captures, raw satellite PNGs) --
-# never published, regeneratable by re-running the pipeline scripts. Keeping
-# it out of git keeps this repo focused on the deployable site + source, not
-# a ~100MB cache of source imagery.
-pipeline/data/
+# pipeline/data/<site_id>/live/ (per-capture wind data + splash points) is
+# tracked as of 2026-07-18 -- needed to persist across GitHub Actions runs
+# (ephemeral runners, nothing survives between scheduled runs unless it's in
+# the repo) and so the History view has real capture history to show, not
+# just whatever's on one machine. Repo will grow steadily; the plan is to
+# expire/archive older captures (e.g. to S3) later, not yet built.
+#
+# Still excluded: raw satellite PNGs (redundant with the published _web.jpg
+# versions, large, only useful for future reprocessing) and the old
+# Herbie/GRIB2 historical-archive pulls (a separate, manually-run research
+# feature, not part of the daily live-pull history above).
+pipeline/data/maps_raw/
+pipeline/data/raw/

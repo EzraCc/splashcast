@@ -98,6 +98,13 @@ def hearne_events(year: int) -> list[LaunchEvent]:
     return [LaunchEvent(nth_weekday(year, m, SAT, 2), "hearne", "Tripoli Houston") for m in range(1, 13)]
 
 
+# --- Rule 1: DARS @ Gunter -- 3rd Saturday every month ---------------------
+# Confirmed 2026-07-18 directly from dars.org: "Gunter launches are normally
+# held on the third Saturday."
+def gunter_events(year: int) -> list[LaunchEvent]:
+    return [LaunchEvent(nth_weekday(year, m, SAT, 3), "gunter", "DARS") for m in range(1, 13)]
+
+
 # --- Rule 1: Tripoli Houston @ South Site -- 4th Saturday every month ------
 # Placeholder as all-year (user's call 2026-07-18: known to actually be a
 # limited season -- club materials found so far say Feb-Aug -- but left as
@@ -116,7 +123,13 @@ TNT_SEYMOUR_MONTHLY_MONTHS = range(1, 6)  # January(1)..May(5)
 
 
 def tnt_seymour_events(year: int) -> list[LaunchEvent]:
-    out = [LaunchEvent(nth_weekday(year, m, SAT, 4), "seymour", "TNT Seymour") for m in TNT_SEYMOUR_MONTHLY_MONTHS]
+    # 4th Saturday's regular monthly launch runs into the Sunday directly
+    # after it too (user's call 2026-07-18), not a Saturday-only event.
+    out = []
+    for m in TNT_SEYMOUR_MONTHLY_MONTHS:
+        sat = nth_weekday(year, m, SAT, 4)
+        out.append(LaunchEvent(sat, "seymour", "TNT Seymour (Sat)"))
+        out.append(LaunchEvent(sat + timedelta(days=1), "seymour", "TNT Seymour (Sun)"))
     mem_day = memorial_day(year)
     for d, label in [(mem_day - timedelta(days=2), "Texas Shootout (Sat)"),
                       (mem_day - timedelta(days=1), "Texas Shootout (Sun)"),
@@ -182,7 +195,8 @@ def kloudbusters_events(year: int) -> list[LaunchEvent]:
 
 def all_events(year: int) -> list[LaunchEvent]:
     events = (aarg_events(year) + hearne_events(year) + tnt_seymour_events(year)
-              + sd_rocket_jockies_events(year) + tripoli_houston_south_events(year))
+              + sd_rocket_jockies_events(year) + tripoli_houston_south_events(year)
+              + gunter_events(year))
     try:
         events += kloudbusters_events(year)
     except ValueError as e:
