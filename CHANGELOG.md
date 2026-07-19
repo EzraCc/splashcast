@@ -4,6 +4,9 @@ Dated, terse log of notable changes. For the full design rationale and decision 
 
 ## 2026-07-19
 
+**DARS/Gunter's July schedule fixed: 4th Saturday, not 3rd**
+- Recurring exception, not a one-off: the 3rd Saturday regularly conflicts with "Moon Day" activities the club does instead every July (user's direct knowledge), so `gunter_events()` now uses the 4th Saturday specifically for July, 3rd for every other month. 2026's own 3rd Saturday (07-18) was a Moon Day; the real July launch is expected 07-25, which was already being watched for heat (a fresh capture pulled the same day confirms it -- 87-109F across the models). Every other month's DARS schedule is unchanged.
+
 **Accuracy table color now means the same thing across every launch, plus a legend**
 - Real design flaw fixed: cell color used to be binned by quartile of whatever distances happened to be in that one table, so the same color meant wildly different things launch to launch (a 188ft miss read as the worst color at a calm, low-altitude site while 337ft read as the best color at a windier one, since each table was only ever graded against itself). Now graded against how far the wind actually carried the rocket that day: a miss under 200ft is always green regardless of that day's drift distance (a floor -- nobody's actually unhappy with a miss that small, and grading it as a percentage of a very small actual drift blows up meaninglessly), and beyond that it's a percentage of the actual drift (25/50/100% cutoffs, placeholders -- not a principled derivation, expect to revisit as more real launches accumulate).
 - Added a color legend above the table (`buildAccuracyLegend()`) generated from the same constants the coloring logic itself uses, not hand-duplicated text, so the two can't drift out of sync.
