@@ -4,6 +4,9 @@ Dated, terse log of notable changes. For the full design rationale and decision 
 
 ## 2026-07-19
 
+**Fixed: cron pulls weren't triggering a site redeploy**
+- Real bug, caught while checking why a scheduled pull wasn't showing up on the live site: `cron-pulls.yml`'s commits were landing on `master` successfully, but GitHub suppresses `on: push` workflow triggers for pushes made with the default `GITHUB_TOKEN` (an anti-infinite-loop guard) -- so `pages.yml` never redeployed even though the data was really there. Fixed by having each cron job explicitly dispatch `pages.yml` via the API (`gh workflow run`, which isn't subject to that suppression) right after a successful push, but only when something actually changed.
+
 **Tripoli Houston South Site schedule narrowed**
 - Was an all-year placeholder (4th Saturday every month); confirmed directly against tripolihouston.com/news-updates ("South site 4th Saturday of each month February thru August") and narrowed to that Feb-Aug season -- a member-only site that doesn't operate the rest of the year. The live cron job will stop attempting pulls for it outside that window.
 

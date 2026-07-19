@@ -27,7 +27,15 @@ name: Scheduled data pulls
 #     not through Open-Meteo -- the sync-race note above doesn't apply here.
 # Both commit pipeline/data + site/data + site/maps back to master when
 # they've actually changed something -- required for the data to survive past
-# this ephemeral runner, and it's what triggers pages.yml's deploy.
+# this ephemeral runner. That push does NOT trigger pages.yml's own `on:
+# push` deploy, though -- GitHub suppresses workflow-triggering-workflow for
+# the default GITHUB_TOKEN specifically to prevent infinite loops, which
+# silently applies here too even though this isn't a loop (found 2026-07-19:
+# a real scheduled run pulled and committed real data successfully, but
+# never redeployed -- the push landed with no error, it just didn't fire
+# pages.yml). So each "commit and push" step here explicitly dispatches
+# pages.yml afterward via the API (gh workflow run), which is NOT subject to
+# that same suppression -- only the automatic push-event trigger is.
 
 on:
   schedule:
@@ -43,6 +51,7 @@ on:
 
 permissions:
   contents: write
+  actions: write
 
 jobs:
   open-meteo-live:
@@ -63,17 +72,25 @@ jobs:
         working-directory: pipeline
         run: python launch_schedule.py --run-live
       - name: Commit and push updated data
+        id: commit
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add pipeline/data site/data site/maps
           if git diff --cached --quiet; then
             echo "no data changes"
+            echo "pushed=false" >> "$GITHUB_OUTPUT"
           else
             git commit -m "Automated Open-Meteo pull: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
             git pull --rebase origin master
             git push
+            echo "pushed=true" >> "$GITHUB_OUTPUT"
           fi
+      - name: Trigger Pages deploy
+        if: steps.commit.outputs.pushed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run pages.yml --ref master
 
   noaa-actuals:
     if: >
@@ -93,14 +110,22 @@ jobs:
         working-directory: pipeline
         run: python launch_schedule.py --run-actuals
       - name: Commit and push updated data
+        id: commit
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add pipeline/data site/data site/maps
           if git diff --cached --quiet; then
             echo "no data changes"
+            echo "pushed=false" >> "$GITHUB_OUTPUT"
           else
             git commit -m "Automated NOAA actuals pull: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
             git pull --rebase origin master
             git push
+            echo "pushed=true" >> "$GITHUB_OUTPUT"
           fi
+      - name: Trigger Pages deploy
+        if: steps.commit.outputs.pushed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run pages.yml --ref master
