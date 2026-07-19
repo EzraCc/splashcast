@@ -2,6 +2,11 @@
 
 Dated, terse log of notable changes. For the full design rationale and decision history, see [docs/spec.md](docs/spec.md).
 
+## 2026-07-19
+
+**Tripoli Houston South Site schedule narrowed**
+- Was an all-year placeholder (4th Saturday every month); confirmed directly against tripolihouston.com/news-updates ("South site 4th Saturday of each month February thru August") and narrowed to that Feb-Aug season -- a member-only site that doesn't operate the rest of the year. The live cron job will stop attempting pulls for it outside that window.
+
 ## 2026-07-18
 
 **Mobile UI**

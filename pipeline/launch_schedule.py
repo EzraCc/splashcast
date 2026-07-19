@@ -99,11 +99,17 @@ def gunter_events(year: int) -> list[LaunchEvent]:
     return [LaunchEvent(nth_weekday(year, m, SAT, 3), "gunter", "DARS") for m in range(1, 13)]
 
 
-# --- Rule 1: Tripoli Houston @ South Site -- 4th Saturday every month ------
-# Placeholder as all-year -- club materials mention a Feb-Aug season similar
-# to TNT Seymour's, but left as every month until that's confirmed/narrowed.
+# --- Rule 1: Tripoli Houston @ South Site -- 4th Saturday, Feb-Aug ---------
+# Confirmed directly from tripolihouston.com/news-updates: "South site 4th
+# Saturday of each month February thru August" -- a member-only site that
+# doesn't operate the rest of the year (was an all-year placeholder here
+# until this was checked against the club's own page).
+TRIPOLI_HOUSTON_SOUTH_MONTHS = range(2, 9)  # February(2)..August(8) inclusive
+
+
 def tripoli_houston_south_events(year: int) -> list[LaunchEvent]:
-    return [LaunchEvent(nth_weekday(year, m, SAT, 4), "tripoli_houston_south", "Tripoli Houston South") for m in range(1, 13)]
+    return [LaunchEvent(nth_weekday(year, m, SAT, 4), "tripoli_houston_south", "Tripoli Houston South")
+            for m in TRIPOLI_HOUSTON_SOUTH_MONTHS]
 
 
 # --- Rule 1+2: Tripoli North Texas @ Seymour -------------------------------
