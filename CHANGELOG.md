@@ -4,6 +4,11 @@ Dated, terse log of notable changes. For the full design rationale and decision 
 
 ## 2026-07-19
 
+**Date selector defaults to the upcoming launch; map layer added to permalinks; site-label fix**
+- `regenerate_manifest()` now sorts a site's launch dates descending (was ascending) -- the date `<select>` defaults to its first entry, so this is what makes loading a site default to the soonest upcoming launch (or the most recent one, in the gap right after it's passed) instead of the oldest backfilled date. Applied immediately to all 8 sites' existing manifests, not just future pulls.
+- Satellite/road map layer is now part of the shareable permalink (`?layer=sat|road`), not just a localStorage preference -- a shared link can force a specific layer regardless of the recipient's own stored choice, useful for a site with no real terrain to avoid where "road" reads much better than satellite.
+- Fixed Tripoli Houston South Site's site-picker label reading "Tripoli Houston - Houston South Site" (doubled "Houston" -- the club name and the site's own name both contained it). Site's `name` is now just "South Site".
+
 **Fixed: cron pulls weren't triggering a site redeploy**
 - Real bug, caught while checking why a scheduled pull wasn't showing up on the live site: `cron-pulls.yml`'s commits were landing on `master` successfully, but GitHub suppresses `on: push` workflow triggers for pushes made with the default `GITHUB_TOKEN` (an anti-infinite-loop guard) -- so `pages.yml` never redeployed even though the data was really there. Fixed by having each cron job explicitly dispatch `pages.yml` via the API (`gh workflow run`, which isn't subject to that suppression) right after a successful push, but only when something actually changed.
 

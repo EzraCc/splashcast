@@ -89,11 +89,19 @@ let TIME_COLORS_HEX = computeSequentialRamp(timeBaseColor, [9, 11, 13, 15]);
 // terrain features to avoid, where satellite imagery is closer to visual
 // noise than useful signal; road tiles (fetch_site_maps.py's World_Street_Map
 // pull, same bounds/zoom as its satellite sibling) are the alternative.
-// Persisted across reloads/sites like the color pickers, not part of a
-// shareable permalink -- it's a standing display preference, not "which
-// scenario."
+// Persisted across reloads/sites like the color pickers (so it stays put on a
+// plain revisit), but also part of the permalink (?layer=sat|road, see
+// buildPermalinkParams()) so a shared link can force a specific layer even
+// if the recipient's own stored preference differs -- unlike the color
+// pickers, this is something a club might want to standardize in a shared
+// link (e.g. "road" for a site with no real terrain to avoid).
 const MAP_LAYER_STORAGE_KEY = 'splashcast_map_layer';
-let mapLayer = localStorage.getItem(MAP_LAYER_STORAGE_KEY) === 'road' ? 'road' : 'sat';
+function initialMapLayer() {
+  const urlLayer = new URLSearchParams(location.search).get('layer');
+  if (urlLayer === 'sat' || urlLayer === 'road') return urlLayer;
+  return localStorage.getItem(MAP_LAYER_STORAGE_KEY) === 'road' ? 'road' : 'sat';
+}
+let mapLayer = initialMapLayer();
 const HOUR_LABELS = { 9: '9am', 11: '11am', 13: '1pm', 15: '3pm' };
 const DEPLOY_LABELS = { single: 'Single', dual: 'Dual' };
 const MODEL_LABELS = { gfs: 'GFS', hrrr: 'HRRR', ecmwf: 'ECMWF', icon: 'ICON', arpege: 'ARPEGE', gem: 'GEM' };
@@ -1279,8 +1287,10 @@ function drawZone(zone, color, hour) {
 // Only the durable, "what am I looking at" choices go in the URL -- not
 // isolatedX (pure hover, cleared on mouseleave) or boostAngleDeg/padOffsetFt/
 // the color pickers (personal display preferences already persisted via
-// localStorage, not part of a shareable launch scenario). `date`/`hour`/
-// `deploy` are further gated behind an explicit user action each -- see
+// localStorage, not part of a shareable launch scenario). `layer` is the
+// exception among the localStorage-backed prefs -- see mapLayer's own
+// comment for why it's also shareable. `date`/`hour`/`deploy` are further
+// gated behind an explicit user action each -- see
 // dateExplicitlyChosen/hourExplicitlyChosen/deployExplicitlyChosen's
 // declarations for why.
 function buildPermalinkParams(includeDate) {
@@ -1288,6 +1298,7 @@ function buildPermalinkParams(includeDate) {
   p.set('site', currentSiteId);
   if (includeDate && dateSelect.value) p.set('date', dateSelect.value);
   p.set('mode', state.mode);
+  p.set('layer', mapLayer);
   if (hourExplicitlyChosen) p.set('hour', state.hour);
   if (deployExplicitlyChosen) p.set('deploy', state.deploy);
   if (state.pinnedRate) p.set('rate', state.pinnedRate);

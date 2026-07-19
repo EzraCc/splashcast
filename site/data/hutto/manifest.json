@@ -1,15 +1,7 @@
 {
   "site_id": "hutto",
-  "generated_at": "2026-07-18T17:18:44",
+  "generated_at": "2026-07-19T15:16:29",
   "launch_dates": [
-    {
-      "target_date": "2026-04-04",
-      "capture_date": "2026-04-04",
-      "lead_days": 0,
-      "label": "Sat, Apr 4 (T-0)",
-      "data_path": "data/hutto/live/2026-04-04/splash_zones_captured_2026-04-04.json",
-      "history_path": "data/hutto/live/2026-04-04/points_history.json"
-    },
     {
       "target_date": "2026-07-25",
       "capture_date": "2026-07-18",
@@ -17,6 +9,14 @@
       "label": "Sat, Jul 25 (T-7)",
       "data_path": "data/hutto/live/2026-07-25/splash_zones_captured_2026-07-18.json",
       "history_path": "data/hutto/live/2026-07-25/points_history.json"
+    },
+    {
+      "target_date": "2026-04-04",
+      "capture_date": "2026-04-04",
+      "lead_days": 0,
+      "label": "Sat, Apr 4 (T-0)",
+      "data_path": "data/hutto/live/2026-04-04/splash_zones_captured_2026-04-04.json",
+      "history_path": "data/hutto/live/2026-04-04/points_history.json"
     }
   ]
 }

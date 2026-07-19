@@ -520,7 +520,12 @@ def regenerate_manifest(site_id: str, published_live_dir: Path) -> Path:
             "data_path": f"data/{site_id}/live/{target_date}/splash_zones_captured_{capture_date}.json",
             "history_path": f"data/{site_id}/live/{target_date}/points_history.json" if history_path.exists() else None,
         })
-    entries.sort(key=lambda e: e["target_date"])
+    # Descending -- the viewer's date <select> lists these in this order and
+    # defaults to entries[0] (see loadSiteManifest() in app.js), so this is
+    # what makes "load the site" default to the soonest upcoming launch
+    # (or, in the gap after one's passed and before the next enters the
+    # pull window, the most recent one) instead of the oldest backfilled date.
+    entries.sort(key=lambda e: e["target_date"], reverse=True)
     manifest = {"site_id": site_id, "generated_at": datetime.now().isoformat(timespec="seconds"), "launch_dates": entries}
     out_path = published_live_dir.parent / "manifest.json"
     with open(out_path, "w") as f:

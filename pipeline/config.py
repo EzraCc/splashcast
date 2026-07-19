@@ -59,7 +59,10 @@ SITES = {
     },
     "tripoli_houston_south": {
         # waiver_ft: 17,500 AGL, per tripolihouston.com's homepage.
-        "name": "Houston South Site", "club": "Tripoli Houston",
+        # name is "South Site", not "Houston South Site" -- club is already
+        # "Tripoli Houston", and siteLabel() in app.js joins them as
+        # "{club} - {name}"; the longer form doubled up on "Houston" there.
+        "name": "South Site", "club": "Tripoli Houston",
         "lat": 29.22320, "lon": -95.09726, "waiver_ft": 17500, "elev_m": 1.0, "cron_cutoff_hour_utc": 20,
     },
     "argonia": {
