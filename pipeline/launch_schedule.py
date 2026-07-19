@@ -33,7 +33,7 @@ Four distinct kinds of rule, because the clubs don't actually share one:
 import subprocess
 import sys
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 import config
 
@@ -212,12 +212,18 @@ def upcoming(from_date: date = None, days_ahead: int = 60) -> list[LaunchEvent]:
     return sorted([e for e in events if from_date <= e.event_date <= to_date], key=lambda e: e.event_date)
 
 
-def run_pulls_for(target_date: date, dry_run: bool = False) -> None:
+def run_pulls_for(target_date: date, dry_run: bool = False, only_sites: set[str] | None = None) -> None:
     """Runs pull_live_forecast.py + splash_zones.py for every site with an
     event on target_date -- the daily driver's actual job. Safe to call for
     any date repeatedly (each day's capture is its own file, per
     pull_live_forecast.py's design), so re-running today's date just adds
-    today's capture to that target's forecast-drift history."""
+    today's capture to that target's forecast-drift history.
+
+    only_sites (added 2026-07-18, for run_live_pulls()'s per-site cron-cutoff
+    gating below): if given, sites with an event on target_date but not in
+    this set are silently skipped -- lets a caller drop just the sites that
+    are past their own cutoff without touching the others sharing this date.
+    """
     events = [e for e in all_events(target_date.year) if e.event_date == target_date]
     if not events:
         print(f"no scheduled launches on {target_date}")
@@ -227,7 +233,12 @@ def run_pulls_for(target_date: date, dry_run: bool = False) -> None:
     # site once, not once per coinciding event.
     sites_seen = {}
     for e in events:
+        if only_sites is not None and e.site_id not in only_sites:
+            continue
         sites_seen.setdefault(e.site_id, []).append(e.label)
+    if not sites_seen:
+        print(f"no scheduled launches on {target_date} (after site filter)")
+        return
     for site_id, labels in sites_seen.items():
         print(f"=== {', '.join(labels)}: {site_id} on {target_date} ===")
         if dry_run:
@@ -236,16 +247,92 @@ def run_pulls_for(target_date: date, dry_run: bool = False) -> None:
         subprocess.run([sys.executable, "splash_zones.py", str(target_date), "--site", site_id], check=True)
 
 
+def events_by_lead(today: date, min_lead: int, max_lead: int) -> list[LaunchEvent]:
+    """Events whose event_date is min_lead..max_lead days out from `today`
+    (inclusive both ends)."""
+    years = {today.year, (today + timedelta(days=max_lead)).year}
+    events = [e for y in years for e in all_events(y)]
+    return sorted([e for e in events if min_lead <= (e.event_date - today).days <= max_lead], key=lambda e: e.event_date)
+
+
+def run_live_pulls(today: date = None, dry_run: bool = False) -> None:
+    """The Open-Meteo "leading up to launch" cron job: pulls the current
+    forecast for every site with a launch T-0..T-(config.LEAD_DAYS max) days
+    out, building that day's forecast-drift snapshot. Meant to run several
+    times a day (see the workflow's cron schedule) -- matches Open-Meteo's
+    own ~6-hourly model refresh cadence, not because more than one pull a
+    day is otherwise needed: capture_date dedup (UTC day, in
+    pull_live_forecast.py's run()) already keeps only one stored point per
+    model per day no matter how often this fires.
+
+    UTC throughout (today defaults to UTC-now, not date.today()) -- same
+    reasoning as the rest of this pipeline: unambiguous regardless of what
+    timezone the runner happens to be in. The one per-site local-time
+    exception is config.SITES[...]["cron_cutoff_hour_utc"]: once a launch
+    day (lead 0) is past that stored UTC hour, stop pulling for it -- the
+    forecast's usefulness is over once the window it was for has passed.
+    """
+    today = today or datetime.now(timezone.utc).date()
+    max_lead = max(config.LEAD_DAYS)
+    events = events_by_lead(today, 0, max_lead)
+    if not events:
+        print(f"no launches 0-{max_lead} days out from {today} (UTC)")
+        return
+
+    now_hour_utc = datetime.now(timezone.utc).hour
+    by_date: dict[date, set[str]] = {}
+    for e in events:
+        lead = (e.event_date - today).days
+        cutoff = config.SITES[e.site_id]["cron_cutoff_hour_utc"]
+        if lead == 0 and now_hour_utc > cutoff:
+            print(f"skip {e.site_id} {e.event_date} (T-0): past today's {cutoff}:00 UTC cron cutoff")
+            continue
+        by_date.setdefault(e.event_date, set()).add(e.site_id)
+
+    for target_date, site_ids in sorted(by_date.items()):
+        run_pulls_for(target_date, dry_run=dry_run, only_sites=site_ids)
+
+
+def run_actual_pulls(today: date = None, dry_run: bool = False) -> None:
+    """The NOAA "day after" cron job: pulls the HRRR-analysis "actual" (see
+    pull_historical.py's pull_actual()) for every site that launched
+    yesterday (UTC), then re-runs splash_zones.py so points_history.json's
+    actuals key picks it up. Deliberately not same-day -- pull_actual()'s
+    own docstring explains why (HRRR's AWS archive needs a full day to
+    finish publishing that day's cycles)."""
+    today = today or datetime.now(timezone.utc).date()
+    yesterday = today - timedelta(days=1)
+    site_ids = sorted({e.site_id for e in all_events(yesterday.year) if e.event_date == yesterday})
+    if not site_ids:
+        print(f"no launches on {yesterday} -- nothing to pull actuals for")
+        return
+    for site_id in site_ids:
+        print(f"=== actual: {site_id} for {yesterday} ===")
+        if dry_run:
+            continue
+        try:
+            subprocess.run([sys.executable, "pull_historical.py", "--site", site_id, "--actual-only", str(yesterday)], check=True)
+            subprocess.run([sys.executable, "splash_zones.py", str(yesterday), "--site", site_id], check=True)
+        except subprocess.CalledProcessError as e:
+            print(f"actual pull failed for {site_id} {yesterday}: {e}", file=sys.stderr)
+
+
 if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--days-ahead", type=int, default=60)
-    parser.add_argument("--run-today", action="store_true", help="actually run pulls for today's scheduled launches (not just list them)")
-    parser.add_argument("--dry-run", action="store_true", help="with --run-today, print what would run without pulling")
+    parser.add_argument("--run-today", action="store_true", help="actually run pulls for today's scheduled launches only (not just list them)")
+    parser.add_argument("--run-live", action="store_true", help="cron entry point: Open-Meteo pulls for every site T-0..T-7 out (see run_live_pulls())")
+    parser.add_argument("--run-actuals", action="store_true", help="cron entry point: NOAA actual pull for every site that launched yesterday (see run_actual_pulls())")
+    parser.add_argument("--dry-run", action="store_true", help="with --run-today/--run-live/--run-actuals, print what would run without pulling")
     args = parser.parse_args()
 
-    if args.run_today:
+    if args.run_live:
+        run_live_pulls(dry_run=args.dry_run)
+    elif args.run_actuals:
+        run_actual_pulls(dry_run=args.dry_run)
+    elif args.run_today:
         run_pulls_for(date.today(), dry_run=args.dry_run)
     else:
         print(f"Upcoming launches (next {args.days_ahead} days):")

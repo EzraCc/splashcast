@@ -1,0 +1,94 @@
+name: Scheduled data pulls
+
+# Two independent jobs, gated to their own cron entry via github.event.schedule
+# (a workflow_dispatch run defaults to firing both, or pick one via the `job`
+# input):
+#   - open-meteo-live: the "leading up to launch" forecast pull. Runs every 6h
+#     (matches Open-Meteo's own model-refresh cadence) for every site with a
+#     launch T-0..T-7 days out (pipeline/launch_schedule.py's run_live_pulls()
+#     -- per-site config.SITES[...]["cron_cutoff_hour_utc"] stops same-day
+#     pulls once a launch day is functionally over). Only ever produces one
+#     stored point per model per UTC day regardless of how often this fires.
+#   - noaa-actuals: the day-after HRRR-analysis "actual" pull
+#     (run_actual_pulls()) for whichever site(s) launched yesterday (UTC).
+#     Deliberately not same-day -- HRRR's own AWS archive needs a full day to
+#     finish publishing.
+# Both commit pipeline/data + site/data + site/maps back to master when
+# they've actually changed something -- required for the data to survive past
+# this ephemeral runner, and it's what triggers pages.yml's deploy.
+
+on:
+  schedule:
+    - cron: "0 0,6,12,18 * * *"  # open-meteo-live, 4x daily
+    - cron: "0 11 * * *"         # noaa-actuals, once daily
+  workflow_dispatch:
+    inputs:
+      job:
+        description: "Which job to run"
+        type: choice
+        options: [both, live, actuals]
+        default: both
+
+permissions:
+  contents: write
+
+jobs:
+  open-meteo-live:
+    if: >
+      (github.event_name == 'schedule' && github.event.schedule == '0 0,6,12,18 * * *') ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.job != 'actuals')
+    runs-on: ubuntu-latest
+    concurrency:
+      group: cron-pulls-live
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - run: pip install -r pipeline/requirements-live.txt
+      - name: Pull upcoming-launch forecasts (Open-Meteo)
+        working-directory: pipeline
+        run: python launch_schedule.py --run-live
+      - name: Commit and push updated data
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add pipeline/data site/data site/maps
+          if git diff --cached --quiet; then
+            echo "no data changes"
+          else
+            git commit -m "Automated Open-Meteo pull: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            git pull --rebase origin master
+            git push
+          fi
+
+  noaa-actuals:
+    if: >
+      (github.event_name == 'schedule' && github.event.schedule == '0 11 * * *') ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.job != 'live')
+    runs-on: ubuntu-latest
+    concurrency:
+      group: cron-pulls-actuals
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - run: pip install -r pipeline/requirements.txt
+      - name: Pull HRRR-analysis actuals for yesterday's launches (NOAA)
+        working-directory: pipeline
+        run: python launch_schedule.py --run-actuals
+      - name: Commit and push updated data
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add pipeline/data site/data site/maps
+          if git diff --cached --quiet; then
+            echo "no data changes"
+          else
+            git commit -m "Automated NOAA actuals pull: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            git pull --rebase origin master
+            git push
+          fi

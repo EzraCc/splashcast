@@ -114,7 +114,17 @@ def fetch_model(model_key: str, target_date: date, site_id: str = "hutto", attem
         "hourly": ",".join(_hourly_variables(model_key, site_id)),
         "models": model_info["model"],
         "timezone": config.SITE_TZ,
-        "forecast_days": days_ahead + 1,
+        # +2, not +1: Open-Meteo appears to anchor forecast_days' countdown to
+        # its own resolved "today" in the requested `timezone` (Central), not
+        # our UTC `today` above -- during the ~7pm-midnight Central window
+        # where the UTC calendar date has already rolled to tomorrow but
+        # Central's hasn't, that's a 1-day skew, and a bare `days_ahead + 1`
+        # silently returns a horizon that ends *before* target_date, with the
+        # launch window landing entirely outside the response (found
+        # 2026-07-19 testing the T-6 cron pull -- 0 rows in every model's
+        # window despite the request succeeding). +1 extra day of margin is
+        # cheap and costs nothing on the days it isn't needed.
+        "forecast_days": days_ahead + 2,
         "wind_speed_unit": "mph",
         "temperature_unit": "fahrenheit",
         "precipitation_unit": "inch",

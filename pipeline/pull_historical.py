@@ -335,9 +335,25 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("weeks", nargs="?", type=int, default=12)
+    parser.add_argument("weeks", nargs="?", type=int, default=12,
+                         help="backfill mode (default): weeks back to pull full T-7..T-0 forecast history "
+                              "+ actual for every Saturday found")
     parser.add_argument("--site", default="hutto", choices=list(config.SITES))
+    parser.add_argument("--actual-only", type=date.fromisoformat, metavar="YYYY-MM-DD", default=None,
+                         help="skip the weeks-based backfill entirely -- just pull the HRRR-analysis "
+                              "'actual' for this one date (the day-after-launch cron job's use case; "
+                              "the forecast side is already covered by pull_live_forecast.py's daily "
+                              "captures through launch week, so re-pulling it here would be redundant)")
     args = parser.parse_args()
+
+    if args.actual_only:
+        saturday = args.actual_only
+        log.info(f"[{args.site}] Pulling actual only for {saturday}")
+        if pull_actual(saturday, args.site) is None:
+            log.warning(f"[{args.site}] actual pull failed for {saturday}")
+            raise SystemExit(1)
+        log.info(f"[{args.site}] actual pull complete for {saturday}")
+        raise SystemExit(0)
 
     end = date.today()
     start = max(end - timedelta(weeks=args.weeks), date.fromisoformat(config.ARCHIVE_START))

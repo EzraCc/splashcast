@@ -1,0 +1,11 @@
+# Deps for the Open-Meteo "leading up to launch" cron job (launch_schedule.py
+# --run-live), which runs pull_live_forecast.py + splash_zones.py. Kept
+# separate from requirements.txt's full set -- no herbie/cfgrib/eccodes here,
+# since this job runs several times a day and those are the slow, heavy
+# installs only the once-a-day NOAA actuals job (--run-actuals) actually needs.
+pandas==3.0.3
+numpy==2.5.1
+scipy==1.18.0
+pyarrow==25.0.0
+pillow==12.3.0
+requests==2.34.2
