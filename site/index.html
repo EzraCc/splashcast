@@ -111,7 +111,8 @@
       <div class="alt-list-title">
         Accuracy vs. actual <button class="info-btn" type="button" data-hint="accuracy-hint" title="Show details">i</button>
       </div>
-      <div class="alt-hint" id="accuracy-hint">Distance from each model's forecast point to the "actual" point (HRRR's own analysis, not a forecast -- see the History legend) for the currently-selected hour/deploy/rate/altitude. Format is total distance, then the (east, north) breakdown in feet. Color = relative rank within this table only (greenest = closest here, reddest = farthest here) -- not a fixed distance scale, since 200ft is a great miss at a 50,000ft-waiver site and a mediocre one at a 6,000ft site.</div>
+      <div class="alt-hint" id="accuracy-hint">Distance from each model's forecast point to the "actual" point (HRRR's own analysis, not a forecast -- see the History legend) for the currently-selected hour/deploy/rate/altitude. Format is total distance, then the (east, north) breakdown in feet. Color means the same thing across every launch, not just within this one table: a miss under 200ft is always green, and beyond that it's graded against how far the wind actually carried the rocket that day, so the same foot-error reads worse on a calm, short flight than a long, windy one.</div>
+      <div class="accuracy-legend" id="accuracy-legend"></div>
       <div class="accuracy-table-wrap">
         <table class="accuracy-table" id="accuracy-table"></table>
       </div>

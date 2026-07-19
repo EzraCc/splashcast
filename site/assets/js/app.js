@@ -1100,24 +1100,57 @@ function renderHistory() {
 // *means* good/bad rather than encoding identity). Dark ink (#1a1a19) on all
 // four clears >=3:1 text contrast (verified 5.19/9.49/6.6/3.62); every
 // cell's number is always visible as text too, so color is never the sole
-// channel. Thresholds are quartiles of the distances actually present in
-// THIS table, not a fixed-feet scale -- 200ft is a great miss at a
-// 50,000ft-waiver site and a mediocre one at a 6,000ft site, so "green"
-// here means "relatively best in this specific comparison," not some
-// universal accuracy bar.
+// channel.
+//
+// Green means the same thing across every site/date/altitude, not "best of
+// what happens to be in this table" -- an earlier per-table-quartile version
+// let the same color mean wildly different things (e.g. a 188ft miss read
+// as the worst color in one low-altitude/calm-day table while 337ft read as
+// the best color in a higher-drift one elsewhere, since each table was only
+// ever graded against itself). A miss is graded instead against how far the
+// wind actually carried the rocket that day (the actual point's own
+// distance from the pad) -- the same absolute error matters more on a
+// short, calm flight than a long, windy one. Below
+// ACCURACY_GREEN_FLOOR_FT it's always green regardless of that ratio --
+// a miss that small is one nobody's actually unhappy with in practice, and
+// percentage-of-a-tiny-drift blows up meaninglessly on very calm days
+// anyway. The percentage bands beyond that floor are placeholders (25/50/
+// 100% of the actual drift distance), not a principled derivation --
+// revisit as more real launches accumulate.
 const ACCURACY_COLORS = ['#0ca30c', '#fab219', '#ec835a', '#d03b3b']; // good -> critical
+const ACCURACY_GREEN_FLOOR_FT = 200;
+const ACCURACY_PCT_BANDS = [0.25, 0.50, 1.00]; // good/warning/serious cutoffs, as a fraction of the actual drift distance
 
-function accuracyColor(dist, thresholds) {
-  if (dist <= thresholds[0]) return ACCURACY_COLORS[0];
-  if (dist <= thresholds[1]) return ACCURACY_COLORS[1];
-  if (dist <= thresholds[2]) return ACCURACY_COLORS[2];
+function accuracyColor(errorFt, actualDistFt) {
+  // Monotonically non-decreasing by construction: ACCURACY_PCT_BANDS is
+  // itself increasing, so pct*actualDistFt only grows across the array, and
+  // max(floor, x) preserves that ordering -- no separate clamp needed.
+  const cutoffs = ACCURACY_PCT_BANDS.map(pct => Math.max(ACCURACY_GREEN_FLOOR_FT, pct * actualDistFt));
+  if (errorFt <= cutoffs[0]) return ACCURACY_COLORS[0];
+  if (errorFt <= cutoffs[1]) return ACCURACY_COLORS[1];
+  if (errorFt <= cutoffs[2]) return ACCURACY_COLORS[2];
   return ACCURACY_COLORS[3];
 }
 
-function quartileThresholds(values) {
-  const sorted = [...values].sort((a, b) => a - b);
-  const q = p => sorted[Math.min(sorted.length - 1, Math.floor(p * (sorted.length - 1)))];
-  return [q(0.25), q(0.5), q(0.75)];
+const ACCURACY_BAND_LABELS = ['Good', 'Warning', 'Serious', 'Critical'];
+// Built from the same constants accuracyColor() itself uses, not
+// hand-duplicated text -- if the bands above ever change, this changes with
+// them instead of quietly going stale.
+const ACCURACY_BAND_DESCRIPTIONS = [
+  `within ${ACCURACY_GREEN_FLOOR_FT}ft, or ${Math.round(ACCURACY_PCT_BANDS[0] * 100)}% of the day's drift`,
+  `up to ${Math.round(ACCURACY_PCT_BANDS[1] * 100)}% of the day's drift`,
+  `up to ${Math.round(ACCURACY_PCT_BANDS[2] * 100)}% of the day's drift`,
+  `over ${Math.round(ACCURACY_PCT_BANDS[2] * 100)}% of the day's drift`,
+];
+
+function buildAccuracyLegend() {
+  const el = document.getElementById('accuracy-legend');
+  if (el.childElementCount) return; // static -- doesn't depend on data, build once
+  el.innerHTML = ACCURACY_COLORS.map((color, i) => `
+    <span class="accuracy-legend-item">
+      <span class="accuracy-legend-swatch" style="background:${color}"></span>
+      ${ACCURACY_BAND_LABELS[i]} <span class="accuracy-legend-desc">(${ACCURACY_BAND_DESCRIPTIONS[i]})</span>
+    </span>`).join('');
 }
 
 function renderAccuracyTable() {
@@ -1126,6 +1159,7 @@ function renderAccuracyTable() {
   const key = `${state.hour}_${state.deploy}_${rate}_${state.compareAlt}`;
   const actual = HISTORY && HISTORY.actuals[key];
   if (!actual) return; // stays hidden -- render() already set display:none
+  buildAccuracyLegend();
 
   // Respects the same isolate/pin filters as the map (model legend,
   // Forecast-age legend) so the table always matches what's plotted --
@@ -1143,8 +1177,14 @@ function renderAccuracyTable() {
   if (!models.length) return;
   const captures = activeCapture ? [activeCapture] : HISTORY.captures;
 
+  // The pad is always the ft-space origin (see simulate()/ftToPx()), so the
+  // actual point's own distance from it is just its own magnitude -- this is
+  // accuracyColor()'s scale reference, computed once per table since it
+  // doesn't vary per model/capture.
+  const actualDistFt = Math.hypot(actual.x_ft, actual.y_ft);
+
   const cellData = {}; // model -> capture_date -> {dist, dx, dy}
-  const allDists = [];
+  let hasAnyCell = false;
   models.forEach(model => {
     cellData[model] = {};
     seriesByModel[model].forEach(pt => {
@@ -1152,11 +1192,10 @@ function renderAccuracyTable() {
       const dx = pt.x_ft - actual.x_ft, dy = pt.y_ft - actual.y_ft;
       const dist = Math.hypot(dx, dy);
       cellData[model][pt.capture_date] = { dist, dx, dy };
-      allDists.push(dist);
+      hasAnyCell = true;
     });
   });
-  if (!allDists.length) return;
-  const thresholds = quartileThresholds(allDists);
+  if (!hasAnyCell) return;
 
   const table = document.getElementById('accuracy-table');
   let html = '<thead><tr><th>Model</th>';
@@ -1172,7 +1211,7 @@ function renderAccuracyTable() {
         html += '<td class="accuracy-empty">&mdash;</td>';
         return;
       }
-      const color = accuracyColor(cell.dist, thresholds);
+      const color = accuracyColor(cell.dist, actualDistFt);
       const dxStr = (cell.dx >= 0 ? '+' : '') + Math.round(cell.dx);
       const dyStr = (cell.dy >= 0 ? '+' : '') + Math.round(cell.dy);
       html += `<td style="background:${color}"><div class="accuracy-dist">${Math.round(cell.dist)} ft</div><div class="accuracy-xy">(${dxStr}, ${dyStr})</div></td>`;

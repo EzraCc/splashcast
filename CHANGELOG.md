@@ -4,6 +4,13 @@ Dated, terse log of notable changes. For the full design rationale and decision 
 
 ## 2026-07-19
 
+**Accuracy table color now means the same thing across every launch, plus a legend**
+- Real design flaw fixed: cell color used to be binned by quartile of whatever distances happened to be in that one table, so the same color meant wildly different things launch to launch (a 188ft miss read as the worst color at a calm, low-altitude site while 337ft read as the best color at a windier one, since each table was only ever graded against itself). Now graded against how far the wind actually carried the rocket that day: a miss under 200ft is always green regardless of that day's drift distance (a floor -- nobody's actually unhappy with a miss that small, and grading it as a percentage of a very small actual drift blows up meaninglessly), and beyond that it's a percentage of the actual drift (25/50/100% cutoffs, placeholders -- not a principled derivation, expect to revisit as more real launches accumulate).
+- Added a color legend above the table (`buildAccuracyLegend()`) generated from the same constants the coloring logic itself uses, not hand-duplicated text, so the two can't drift out of sync.
+
+**DARS/Gunter GPS moved to the middle of the field**
+- Was the gate coordinate (dars.org's own figure); moved ~2,000ft to the actual setup spot per the user's direct knowledge of the field. The gate location ate nearly the entire pad-drag budget (`MAX_PAD_MOVE_FT`, 2,000ft) on its own, leaving no real room to try a different spot within the field. Maps re-fetched (site.json's bounds/site_px changed with it) and both existing target dates' published zone data regenerated -- the underlying wind captures didn't need re-pulling (drift offsets are wind-only, independent of the pad's absolute position), just re-anchored onto the new center point and new map images.
+
 **Date selector defaults to the upcoming launch; map layer added to permalinks; site-label fix**
 - `regenerate_manifest()` now sorts a site's launch dates descending (was ascending) -- the date `<select>` defaults to its first entry, so this is what makes loading a site default to the soonest upcoming launch (or the most recent one, in the gap right after it's passed) instead of the oldest backfilled date. Applied immediately to all 8 sites' existing manifests, not just future pulls.
 - Satellite/road map layer is now part of the shareable permalink (`?layer=sat|road`), not just a localStorage preference -- a shared link can force a specific layer regardless of the recipient's own stored choice, useful for a site with no real terrain to avoid where "road" reads much better than satellite.
