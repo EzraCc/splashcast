@@ -95,11 +95,9 @@ def hearne_events(year: int) -> list[LaunchEvent]:
 
 # --- Rule 1: DARS @ Gunter -- 3rd Saturday every month, except July --------
 # Per dars.org: "Gunter launches are normally held on the third Saturday."
-# July is a recurring exception (user's direct knowledge of the club,
-# 2026-07-20): the 3rd Saturday regularly conflicts with "Moon Day"
-# activities the club does instead, so DARS moves to the 4th Saturday that
-# month most years -- 2026's own 3rd Saturday (07-18) was one such Moon Day,
-# with the real July launch expected 07-25 instead.
+# July is a recurring exception (per the club): the 3rd Saturday regularly
+# conflicts with "Moon Day" activities the club does instead, so DARS moves
+# to the 4th Saturday that month most years.
 GUNTER_JULY_SATURDAY_N = 4
 
 

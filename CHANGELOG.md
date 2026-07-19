@@ -4,6 +4,9 @@ Dated, terse log of notable changes. For the full design rationale and decision 
 
 ## 2026-07-19
 
+**Hutto GPS moved to get the rails off the road**
+- Repinned against the porta-potty/trailer visible on satellite imagery, ~510ft from the original figure -- a more reliable landmark for the real rail setup spot. Maps re-fetched and both existing target dates' published zone data regenerated (same as the DARS move above -- wind captures didn't need re-pulling, just re-anchoring onto the new center point and map images).
+
 **DARS/Gunter's July schedule fixed: 4th Saturday, not 3rd**
 - Recurring exception, not a one-off: the 3rd Saturday regularly conflicts with "Moon Day" activities the club does instead every July (user's direct knowledge), so `gunter_events()` now uses the 4th Saturday specifically for July, 3rd for every other month. 2026's own 3rd Saturday (07-18) was a Moon Day; the real July launch is expected 07-25, which was already being watched for heat (a fresh capture pulled the same day confirms it -- 87-109F across the models). Every other month's DARS schedule is unchanged.
 

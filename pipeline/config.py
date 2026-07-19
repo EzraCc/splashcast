@@ -12,8 +12,11 @@ from pathlib import Path
 SITE_DIR = Path(__file__).parent.parent / "site"
 
 SITE_ID = "hutto"
-SITE_LAT = 30.614698
-SITE_LON = -97.497814  # west-negative; convert to 0-360 for grid lookups
+# Pinned against the porta-potty/trailer visible on satellite imagery --
+# ~510ft off the road from where this used to point, a more reliable
+# landmark for the real rail setup spot.
+SITE_LAT = 30.613928
+SITE_LON = -97.496454  # west-negative; convert to 0-360 for grid lookups
 
 # --- Per-site config ---------------------------------------------------------
 # Coordinates are sourced from each club's own site/materials, not surveyed --

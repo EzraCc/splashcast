@@ -30,10 +30,9 @@ name: Scheduled data pulls
 # this ephemeral runner. That push does NOT trigger pages.yml's own `on:
 # push` deploy, though -- GitHub suppresses workflow-triggering-workflow for
 # the default GITHUB_TOKEN specifically to prevent infinite loops, which
-# silently applies here too even though this isn't a loop (found 2026-07-19:
-# a real scheduled run pulled and committed real data successfully, but
-# never redeployed -- the push landed with no error, it just didn't fire
-# pages.yml). So each "commit and push" step here explicitly dispatches
+# silently applies here too even though this isn't a loop: a scheduled run
+# can pull and commit real data successfully with no error, yet never fire
+# pages.yml. So each "commit and push" step here explicitly dispatches
 # pages.yml afterward via the API (gh workflow run), which is NOT subject to
 # that same suppression -- only the automatic push-event trigger is.
 
