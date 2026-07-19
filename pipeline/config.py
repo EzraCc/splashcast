@@ -39,12 +39,26 @@ SITE_LON = -97.497814  # west-negative; convert to 0-360 for grid lookups
 # (~1m elevation) vs. SD Rocket Jockies (~499m) being treated as the same
 # ground level. Hutto's own value (197.0) matches the API exactly, which is
 # what gave confidence to trust it for the rest.
+#
+# cron_cutoff_hour_utc (added 2026-07-18): the last UTC hour the T-3..T-0
+# 6-hourly cron window should still pull for this site -- everything else
+# in the pipeline uses UTC directly (unambiguous regardless of what
+# timezone the machine running it is in, e.g. a GitHub Actions runner; the
+# models' own refresh cycles are UTC-anchored anyway), so this is the ONE
+# place local time actually matters: don't keep pulling once a launch day
+# is functionally over. Deliberately a fixed stored number, not live
+# DST-aware conversion -- user's call: bias it to the LATER of the two
+# DST-year UTC-equivalents of "2pm local" (CDT's 19:00 UTC / CST's 20:00
+# UTC -> stored as 20) so a real last-pull opportunity is never missed;
+# the cost is occasionally pulling slightly past 2pm local during CDT
+# months, which is fine. Per-site so a future non-Central-time site isn't
+# stuck with this value.
 SITES = {
     "hutto": {
         # Corrected 2026-07-17 (user's call): waiver is 10,000ft AGL, not
         # 15,000ft -- the 15,000 figure was wrong.
         "name": "Hutto", "club": "AARG", "lat": SITE_LAT, "lon": SITE_LON,
-        "waiver_ft": 10000, "elev_m": 197.0,
+        "waiver_ft": 10000, "elev_m": 197.0, "cron_cutoff_hour_utc": 20,
     },
     "seymour": {
         # "TNT" not the full "Tripoli North Texas" -- matches how the club
@@ -52,7 +66,7 @@ SITES = {
         # Seymour" events) and keeps the site-picker's "club - site" labels
         # to short acronyms where one exists (user's call 2026-07-17).
         "name": "Seymour, TX (Rocket Ranch)", "club": "TNT",
-        "lat": 33.501037, "lon": -99.338722, "waiver_ft": 45000, "elev_m": 417.0,
+        "lat": 33.501037, "lon": -99.338722, "waiver_ft": 45000, "elev_m": 417.0, "cron_cutoff_hour_utc": 20,
         # Waiver upgraded from an earlier 42,000' figure -- confirmed current
         # (45,000' AGL, 4 NM radius) via TNT's own site as of 2026-07-17.
     },
@@ -63,7 +77,7 @@ SITES = {
         # sort/group together in the site-picker by club (user's call
         # 2026-07-17) instead of reading as two different clubs.
         "name": "Apache Pass", "club": "AARG",
-        "lat": 30.680694, "lon": -97.142621, "waiver_ft": 10000, "elev_m": 123.0,
+        "lat": 30.680694, "lon": -97.142621, "waiver_ft": 10000, "elev_m": 123.0, "cron_cutoff_hour_utc": 20,
     },
     "hearne": {
         # Updated 2026-07-17: club-provided coordinate for the actual point
@@ -71,7 +85,7 @@ SITES = {
         # reference point (KLHB's official coordinate, ~1.2km away, used
         # until now).
         "name": "Hearne, TX (Hearne Municipal Airport / KLHB)", "club": "Tripoli Houston",
-        "lat": 30.861145710845943, "lon": -96.6225689682861, "waiver_ft": 12000, "elev_m": 82.0,
+        "lat": 30.861145710845943, "lon": -96.6225689682861, "waiver_ft": 12000, "elev_m": 82.0, "cron_cutoff_hour_utc": 20,
     },
     "tripoli_houston_south": {
         # Added 2026-07-18, coordinate corrected same day. Original figure
@@ -89,11 +103,11 @@ SITES = {
         # waiver_ft: 17,500 AGL, confirmed on tripolihouston.com's own
         # homepage ("Current waiver is 17.5 ... FAA waiver of 17,500 feet").
         "name": "Houston South Site", "club": "Tripoli Houston",
-        "lat": 29.22320, "lon": -95.09726, "waiver_ft": 17500, "elev_m": 1.0,
+        "lat": 29.22320, "lon": -95.09726, "waiver_ft": 17500, "elev_m": 1.0, "cron_cutoff_hour_utc": 20,
     },
     "argonia": {
         "name": "Argonia, KS (The Rocket Pasture)", "club": "KLOUDBusters",
-        "lat": 37.17028, "lon": -97.73667, "waiver_ft": 50000, "elev_m": 384.0,
+        "lat": 37.17028, "lon": -97.73667, "waiver_ft": 50000, "elev_m": 384.0, "cron_cutoff_hour_utc": 20,
     },
     "gunter": {
         # Dallas Area Rocket Society (DARS) -- note the actual club name is
@@ -109,7 +123,7 @@ SITES = {
         # conflicting club-practical-ceiling figures noted below are now
         # historical context, not what's stored).
         "name": "Gunter, TX", "club": "DARS",
-        "lat": 33.438004, "lon": -96.803632, "waiver_ft": 6000, "elev_m": 217.0,
+        "lat": 33.438004, "lon": -96.803632, "waiver_ft": 6000, "elev_m": 217.0, "cron_cutoff_hour_utc": 20,
     },
     "sd_rocket_jockies": {
         # Coordinates given directly by the user 2026-07-17, not independently
@@ -128,7 +142,7 @@ SITES = {
         # point -- ~200m west of the original figure, latitude essentially
         # unchanged.
         "name": "SD Rocket Jockies", "club": "SD Rocket Jockies",
-        "lat": 44.5149338, "lon": -96.8551149, "waiver_ft": 14000, "elev_m": 499.0,
+        "lat": 44.5149338, "lon": -96.8551149, "waiver_ft": 14000, "elev_m": 499.0, "cron_cutoff_hour_utc": 20,
     },
 }
 

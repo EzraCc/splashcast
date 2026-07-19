@@ -91,6 +91,16 @@ const DEFAULT_TIME_BASE_COLOR = '#eb6834';
 const TIME_COLOR_STORAGE_KEY = 'splashcast_time_base_color';
 let timeBaseColor = localStorage.getItem(TIME_COLOR_STORAGE_KEY) || DEFAULT_TIME_BASE_COLOR;
 let TIME_COLORS_HEX = computeSequentialRamp(timeBaseColor, [9, 11, 13, 15]);
+
+// Satellite vs. road/street map layer (added 2026-07-18) -- some sites (e.g.
+// Hutto) have no real terrain features to avoid, where satellite imagery is
+// closer to visual noise than useful signal; road tiles (fetch_site_maps.py's
+// World_Street_Map pull, same bounds/zoom as its satellite sibling so no
+// other geometry needs to change) are the alternative. Persisted across
+// reloads/sites like the color pickers, not part of a shareable permalink --
+// it's a standing display preference, not "which scenario."
+const MAP_LAYER_STORAGE_KEY = 'splashcast_map_layer';
+let mapLayer = localStorage.getItem(MAP_LAYER_STORAGE_KEY) === 'road' ? 'road' : 'sat';
 const HOUR_LABELS = { 9: '9am', 11: '11am', 13: '1pm', 15: '3pm' };
 const DEPLOY_LABELS = { single: 'Single', dual: 'Dual' };
 const MODEL_LABELS = { gfs: 'GFS', hrrr: 'HRRR', ecmwf: 'ECMWF', icon: 'ICON', arpege: 'ARPEGE', gem: 'GEM' };
@@ -130,10 +140,17 @@ const MODEL_COLORS_HEX = {
 // ARPEGE, GFS/ECMWF/ICON/GEM still present at T-7).
 const MODEL_LEGEND_ORDER = ['gfs', 'ecmwf', 'gem', 'icon', 'arpege', 'hrrr'];
 
-// History view only: model identity moves from color (color is recency
-// there instead) to shape. "star" is deliberately not assigned to any model
-// -- reserved for the actual-landing marker (see renderHistory()) so it's
-// never ambiguous with a model's projection.
+// History view: model identity is color (same MODEL_COLORS_HEX as every
+// other view -- "the colored dots from the splash are easy to see," user's
+// call 2026-07-18, reversing the original design where History repurposed
+// color for recency and used shape alone for model identity) AND shape,
+// redundantly -- shape is the colorblind-safe fallback so identity never
+// depends on color perception alone. Recency (which capture date a point is
+// from) moved to its own selectable "Forecast age" filter (buildTimeLegend()
+// in History mode) instead of a visual color/opacity gradient, so it no
+// longer needs a channel of its own here. "star" is deliberately not
+// assigned to any model -- reserved for the actual-landing marker (see
+// renderHistory()) so it's never ambiguous with a model's projection.
 const MODEL_SHAPES = { gfs: 'circle', ecmwf: 'square', gem: 'triangle-up', icon: 'diamond', arpege: 'triangle-down', hrrr: 'plus' };
 // Circle = the faster rate, square = the slower one, so fast/slow reads at a
 // glance without needing to hover -- covers both naming schemes (single
@@ -211,6 +228,7 @@ function freshState() {
     isolatedHour: null, pinnedHour: null,
     isolatedModel: null, pinnedModel: null,
     isolatedRate: null, pinnedRate: null,
+    isolatedCapture: null, pinnedCapture: null, // History mode only -- which capture_date ("forecast age") to isolate
     compareAlt: DATA.altitudes[0], // which altitude "by time of day" mode compares across hours
   };
   if (!urlStateApplied) {
@@ -246,10 +264,10 @@ function applyModeUI(mode) {
     : mode === 'byHistory' ? 'Click an altitude to see how each model\'s point for it moved across capture dates.'
     : 'Hover an altitude to isolate its zone. Click to pin it; click again to release. No single color reads well on every site\'s imagery -- pick one above that stands out here; shades for each altitude are generated from it.';
   document.getElementById('time-hint').textContent = mode === 'byHistory'
-    ? 'Color = how many days before launch that capture was pulled (lighter = further out, darker = closer to launch).'
+    ? 'Each row is one capture date -- swatch shade shows how many days before launch it was pulled (lighter = further out, darker = closer to launch). Hover to isolate just that capture (map + accuracy table); click to pin, click again to release.'
     : 'Hover a time to isolate it. Click to pin; click again to release.';
   document.getElementById('model-hint').textContent = mode === 'byHistory'
-    ? 'Shape = model here (color means forecast age instead). Hover a model to isolate its path; click to pin, click again to release.'
+    ? 'Color and shape both mean model here (same colors as the main map) -- shape is the colorblind-safe backup. Hover a model to isolate its path; click to pin, click again to release.'
     : 'Hover a model to isolate it -- zones collapse to a line (a single model\'s fast/slow points fall on the same bearing from the pad). Click to pin; click again to release.';
   document.getElementById('rate-hint').textContent =
     'Fast = single deploy 20 fps, or dual deploy drogue 100 fps + main 20 fps. Slow = single deploy 10 fps, or dual deploy drogue 80 fps + main 10 fps.'
@@ -283,6 +301,7 @@ function setMode(mode) {
   state.isolatedAlt = null; state.pinnedAlt = null;
   state.isolatedHour = null; state.pinnedHour = null;
   state.isolatedModel = null; state.pinnedModel = null;
+  state.isolatedCapture = null; state.pinnedCapture = null;
   // Rate resets here too, same as everything else above -- otherwise the
   // rate History auto-pins (below) leaks into byAltitude/byTime afterward,
   // silently filtering them to "fast only" until the user notices and
@@ -367,10 +386,11 @@ function buildModelLegend() {
     const row = document.createElement('div');
     row.className = 'alt-row' + (hasData ? '' : ' unavailable');
     const label = MODEL_LABELS[m] || m.toUpperCase();
-    // History mode: model identity is shape, not color (color means recency
-    // there instead) -- see MODEL_SHAPES.
+    // History mode swatch shows shape (its markers' distinguishing feature
+    // there, for colorblind-safe redundancy) filled with the same color as
+    // everywhere else -- see MODEL_SHAPES's comment.
     const swatch = isHistory
-      ? shapeSwatchSVG(MODEL_SHAPES[m], hasData ? 'var(--text-secondary)' : 'var(--text-muted)')
+      ? shapeSwatchSVG(MODEL_SHAPES[m], hasData ? MODEL_COLORS_HEX[m] : 'var(--text-muted)')
       : `<div class="alt-swatch" style="background:${hasData ? MODEL_COLORS_HEX[m] : 'var(--text-muted)'}"></div>`;
     row.innerHTML = `${swatch}<span>${label}${hasData ? '' : ' (no data)'}</span>`;
     if (hasData) {
@@ -424,11 +444,25 @@ function buildTimeLegend() {
   el.innerHTML = '';
   if (state.mode === 'byHistory') {
     if (!HISTORY) return;
+    // Selectable like every other legend here (user's call 2026-07-18) --
+    // was static/reference-only. Swatch still uses the grayscale recency
+    // ramp (recencyColor()) as a visual "how far back" cue on the row
+    // itself; the markers it filters on the map use model color instead
+    // (see MODEL_SHAPES's comment) now that recency has its own channel.
     [...HISTORY.captures].sort().forEach(captureDate => {
       const leadDays = Math.round((new Date(HISTORY.target_date) - new Date(captureDate)) / 86400000);
       const row = document.createElement('div');
-      row.className = 'alt-row static';
+      row.className = 'alt-row';
       row.innerHTML = `<div class="alt-swatch" style="background:${recencyColor(leadDays)}"></div><span>${leadDaysLabel(captureDate, HISTORY.target_date)} (${captureDate})</span>`;
+      row.addEventListener('mouseenter', () => { state.isolatedCapture = captureDate; render(); });
+      row.addEventListener('mouseleave', () => { state.isolatedCapture = null; render(); });
+      row.addEventListener('click', () => {
+        state.pinnedCapture = (state.pinnedCapture === captureDate) ? null : captureDate;
+        [...el.children].forEach(r => r.classList.remove('pinned'));
+        if (state.pinnedCapture === captureDate) row.classList.add('pinned');
+        render();
+      });
+      if (state.pinnedCapture === captureDate) row.classList.add('pinned');
       el.appendChild(row);
     });
     const actualRow = document.createElement('div');
@@ -598,6 +632,22 @@ function endPadDrag() { draggingPad = false; wrap.classList.remove('dragging-pad
 window.addEventListener('pointerup', endPadDrag);
 window.addEventListener('pointercancel', endPadDrag);
 
+// Regression found + fixed 2026-07-18: every button living inside #map-wrap
+// (zoom controls, the layer toggle below) stopped responding to real clicks
+// once the touch pan/zoom work added wrap's own pointerdown handler
+// (setPointerCapture() + drag tracking, above) -- that handler has no
+// evt.target check, so a pointerdown on any of these buttons bubbles up and
+// gets captured by wrap before the browser's click synthesis on the button
+// completes. Confirmed via a real Playwright click (not a synthetic
+// .click() call, which bypasses the pointer pipeline and misleadingly
+// "worked"): viewBox never changed on a real #zoom-in click. Same fix as
+// the pad marker already uses (stopPropagation() on its own pointerdown) --
+// applied here at the container level so every button inside inherits it
+// without needing its own listener.
+document.querySelectorAll('.zoom-btns, .layer-toggle').forEach(el => {
+  el.addEventListener('pointerdown', evt => evt.stopPropagation());
+});
+
 document.getElementById('zoom-in').addEventListener('click', () => {
   const rect = wrap.getBoundingClientRect();
   zoomAt(1 / 1.4, rect.left + rect.width / 2, rect.top + rect.height / 2);
@@ -610,6 +660,20 @@ document.getElementById('zoom-reset').addEventListener('click', () => {
   view = { x: IMG_VB[0], y: IMG_VB[1], w: IMG_VB[2], h: IMG_VB[3] };
   setViewBox();
 });
+
+const layerToggleEl = document.getElementById('layer-toggle');
+function updateLayerToggleUI() {
+  [...layerToggleEl.children].forEach(btn => btn.classList.toggle('active', btn.dataset.layer === mapLayer));
+}
+layerToggleEl.querySelectorAll('button').forEach(btn => {
+  btn.addEventListener('click', () => {
+    mapLayer = btn.dataset.layer;
+    localStorage.setItem(MAP_LAYER_STORAGE_KEY, mapLayer);
+    updateLayerToggleUI();
+    render();
+  });
+});
+updateLayerToggleUI();
 
 // --- permalink copy button: the URL bar is kept live-synced for
 // site/mode/hour/deploy/rate/alt (see syncUrl()), but NOT the launch date by
@@ -976,10 +1040,13 @@ function renderHistory() {
   const actual = HISTORY.actuals[key];
 
   const activeModel = state.isolatedModel ?? state.pinnedModel;
+  const activeCapture = state.isolatedCapture ?? state.pinnedCapture;
 
   Object.entries(seriesByModel).forEach(([model, series]) => {
     if (activeModel && model !== activeModel) return;
-    const sorted = [...series].sort((a, b) => new Date(a.capture_date) - new Date(b.capture_date));
+    let sorted = [...series].sort((a, b) => new Date(a.capture_date) - new Date(b.capture_date));
+    if (activeCapture) sorted = sorted.filter(pt => pt.capture_date === activeCapture);
+    if (!sorted.length) return;
     const shape = MODEL_SHAPES[model] || 'circle';
     const pxPts = sorted.map(p => ftToPx(p.x_ft, p.y_ft));
 
@@ -995,9 +1062,8 @@ function renderHistory() {
     }
 
     sorted.forEach((pt, i) => {
-      const leadDays = Math.round((new Date(HISTORY.target_date) - new Date(pt.capture_date)) / 86400000);
       const [px, py] = pxPts[i];
-      const marker = drawMarker(svg, shape, px, py, 9, recencyColor(leadDays));
+      const marker = drawMarker(svg, shape, px, py, 9, MODEL_COLORS_HEX[model] || 'var(--point-fill)');
       marker.classList.add('pt');
       const rp = { model, rate, x_ft: pt.x_ft, y_ft: pt.y_ft, px, py, capture_date: pt.capture_date, altitude: state.compareAlt, hour: state.hour };
       renderedPoints.push(rp);
@@ -1047,35 +1113,46 @@ function renderAccuracyTable() {
   const actual = HISTORY && HISTORY.actuals[key];
   if (!actual) return; // stays hidden -- render() already set display:none
 
+  // Respects the same isolate/pin filters as the map (model legend,
+  // Forecast-age legend) so the table always matches what's plotted --
+  // isolating one model narrows the rows, isolating one forecast age
+  // narrows the columns, "across models" (both stay open by default).
+  const activeModel = state.isolatedModel ?? state.pinnedModel;
+  const activeCapture = state.isolatedCapture ?? state.pinnedCapture;
+
   const seriesByModel = {};
   (HISTORY.points_by_key[key] || []).forEach(pt => {
+    if (activeModel && pt.model !== activeModel) return;
     (seriesByModel[pt.model] ??= []).push(pt);
   });
   const models = Object.keys(seriesByModel).sort();
   if (!models.length) return;
+  const captures = activeCapture ? [activeCapture] : HISTORY.captures;
 
   const cellData = {}; // model -> capture_date -> {dist, dx, dy}
   const allDists = [];
   models.forEach(model => {
     cellData[model] = {};
     seriesByModel[model].forEach(pt => {
+      if (activeCapture && pt.capture_date !== activeCapture) return;
       const dx = pt.x_ft - actual.x_ft, dy = pt.y_ft - actual.y_ft;
       const dist = Math.hypot(dx, dy);
       cellData[model][pt.capture_date] = { dist, dx, dy };
       allDists.push(dist);
     });
   });
+  if (!allDists.length) return;
   const thresholds = quartileThresholds(allDists);
 
   const table = document.getElementById('accuracy-table');
   let html = '<thead><tr><th>Model</th>';
-  HISTORY.captures.forEach(c => {
+  captures.forEach(c => {
     html += `<th>${leadDaysLabel(c, HISTORY.target_date)}</th>`;
   });
   html += '</tr></thead><tbody>';
   models.forEach(model => {
     html += `<tr><th>${model}</th>`;
-    HISTORY.captures.forEach(c => {
+    captures.forEach(c => {
       const cell = cellData[model][c];
       if (!cell) {
         html += '<td class="accuracy-empty">&mdash;</td>';
@@ -1238,8 +1315,8 @@ function render() {
   // embedded data URIs -- lets the JS bundle stay a real JS file (no
   // megabyte-long base64 lines) and lets each site use its own imagery
   // instead of one hardcoded to Hutto's.
-  const wideImgHref = `maps/${currentSiteId}/wide_sat_web.jpg`;
-  const detailImgHref = `maps/${currentSiteId}/detail_sat_web.jpg`;
+  const wideImgHref = `maps/${currentSiteId}/wide_${mapLayer}_web.jpg`;
+  const detailImgHref = `maps/${currentSiteId}/detail_${mapLayer}_web.jpg`;
 
   const WIDE_VB = DATA.wide_view_box;
   const wideImage = document.createElementNS(ns, 'image');

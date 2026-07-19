@@ -302,11 +302,29 @@ def build_site_maps(site_key: str) -> Path:
     wide_size, _ = fetch_satellite(wide_bounds, wide_zoom, wide_png, mark_site=None)
     _make_web_jpg(wide_png, site_dir / "wide_sat_web.jpg", WIDE_WEB_LONG_EDGE)
 
+    # Road/street layer (added 2026-07-18, user's call) -- same bounds/zoom as
+    # the satellite crops above, just World_Street_Map instead of
+    # World_Imagery (the same ArcGIS service already used for the regional
+    # site-picker map, see build_regional_map_image()), so it's pixel-aligned
+    # with its satellite sibling and the viewer can toggle between them
+    # without recomputing anything (same viewBox, same site_px). Some sites
+    # (e.g. Hutto) have no real terrain features to avoid, where the
+    # satellite imagery is closer to visual noise than useful signal --
+    # this gives an alternative that isn't.
+    detail_road_png = raw_dir / "detail_road.png"
+    detail_road_size, _ = fetch_satellite(detail_bounds, detail_zoom, detail_road_png, mark_site=(lat, lon), service="World_Street_Map")
+    _make_web_jpg(detail_road_png, site_dir / "detail_road_web.jpg", DETAIL_WEB_LONG_EDGE)
+
+    wide_road_png = raw_dir / "wide_road.png"
+    wide_road_size, _ = fetch_satellite(wide_bounds, wide_zoom, wide_road_png, mark_site=None, service="World_Street_Map")
+    _make_web_jpg(wide_road_png, site_dir / "wide_road_web.jpg", WIDE_WEB_LONG_EDGE)
+
     meta = {
         "site_lat": lat, "site_lon": lon,
         "detail": {"bounds": detail_bounds, "image_size_px": list(detail_size), "site_px": list(detail_site_px), "zoom": detail_zoom},
         "wide": {"bounds": wide_bounds, "image_size_px": list(wide_size), "zoom": wide_zoom},
         "source": "ArcGIS World Imagery (server.arcgisonline.com)",
+        "road_source": "ArcGIS World Street Map (server.arcgisonline.com)",
         "fetched_at": time.strftime("%Y-%m-%d"),
     }
     out_path = site_dir / "site.json"

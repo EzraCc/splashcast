@@ -41,7 +41,7 @@ import logging
 import math
 import re
 import warnings
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
 from time import sleep as _sleep
 
@@ -93,7 +93,13 @@ def _hourly_variables(model_key: str, site_id: str) -> list[str]:
 
 
 def fetch_model(model_key: str, target_date: date, site_id: str = "hutto", attempts: int = 2) -> dict:
-    today = date.today()
+    # Explicit UTC (not date.today(), which resolves against whatever the
+    # local system clock/timezone happens to be -- ambiguous on a machine
+    # you don't control, like a GitHub Actions runner). User's call
+    # 2026-07-18: use UTC everywhere except the one place local time
+    # actually matters (the per-site launch-day pull cutoff, config.py) --
+    # the models' own refresh cycles are UTC-anchored anyway.
+    today = datetime.now(timezone.utc).date()
     days_ahead = (target_date - today).days
     if days_ahead < 0:
         raise ValueError(
@@ -284,7 +290,15 @@ def fetch_burn_ban(attempts: int = 2) -> dict:
 
 
 def run(target_date: date, site_id: str = "hutto") -> tuple[pd.DataFrame, dict | None, date]:
-    capture_date = date.today()
+    # UTC, not date.today() -- see fetch_model()'s comment above. This is
+    # the actual storage-correctness fix (2026-07-18): capture_date is the
+    # key every downstream file is named/deduped by (save_capture(),
+    # available_captures(), points_history.json's per-day entries), so it
+    # has to be unambiguous regardless of what machine/timezone runs this.
+    # A same-UTC-day re-pull (the T-3..T-0 6-hourly window) still overwrites
+    # the same capture_date's file -- that's intentional, one retained data
+    # point per day (user's call), not a bug.
+    capture_date = datetime.now(timezone.utc).date()
     frames = []
     for model_key in config.LIVE_MODELS:
         try:

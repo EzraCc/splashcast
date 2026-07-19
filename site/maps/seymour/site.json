@@ -20,10 +20,10 @@
   },
   "wide": {
     "bounds": {
-      "lat_n": 33.678457047882674,
-      "lat_s": 33.32361695211732,
-      "lon_w": -99.55148754732937,
-      "lon_e": -99.12595645267064
+      "lat_n": 33.67845704788268,
+      "lat_s": 33.32361695211731,
+      "lon_w": -99.55148754732939,
+      "lon_e": -99.12595645267062
     },
     "image_size_px": [
       2479,
@@ -32,5 +32,6 @@
     "zoom": 13
   },
   "source": "ArcGIS World Imagery (server.arcgisonline.com)",
-  "fetched_at": "2026-07-17"
+  "road_source": "ArcGIS World Street Map (server.arcgisonline.com)",
+  "fetched_at": "2026-07-18"
 }

@@ -125,6 +125,19 @@
   .zoom-btns button:hover { background: var(--surface-2); }
   .zoom-hint { position: absolute; left: 10px; bottom: 10px; font-size: 0.72rem; color: var(--text-muted); background: var(--surface-1); padding: 3px 8px; border-radius: 6px; border: 1px solid var(--border); opacity: 0.85; }
 
+  .layer-toggle {
+    position: absolute; left: 10px; top: 10px; z-index: 5;
+    display: flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.15);
+  }
+  .layer-toggle button {
+    border: none; background: var(--surface-1); color: var(--text-secondary);
+    padding: 5px 10px; font-size: 0.75rem; cursor: pointer; border-right: 1px solid var(--border);
+  }
+  .layer-toggle button:last-child { border-right: none; }
+  .layer-toggle button.active { background: var(--accent); color: #fff; font-weight: 600; }
+  .layer-toggle button:hover:not(.active) { background: var(--surface-2); }
+
   .zone-buffer { stroke: none; pointer-events: none; }
   .zone-core { stroke-width: 3; pointer-events: none; }
   /* fill is set per-point in JS (by model) -- deliberately not declared here,

@@ -32,5 +32,6 @@
     "zoom": 14
   },
   "source": "ArcGIS World Imagery (server.arcgisonline.com)",
-  "fetched_at": "2026-07-17"
+  "road_source": "ArcGIS World Street Map (server.arcgisonline.com)",
+  "fetched_at": "2026-07-18"
 }
