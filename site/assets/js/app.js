@@ -1042,6 +1042,39 @@ function renderHistory() {
   const activeModel = state.isolatedModel ?? state.pinnedModel;
   const activeCapture = state.isolatedCapture ?? state.pinnedCapture;
 
+  // Splash polygon for the hovered/pinned forecast age (added 2026-07-18,
+  // user's call): same buffer+core hull treatment drawZone() uses for the
+  // main view, but built from that one capture date's points across models
+  // (or just the isolated model, if one's also active -- same composable
+  // filtering the accuracy table already does) -- lets the actual star be
+  // read against "how big was the projected area that day," not just its
+  // distance to each individual point.
+  if (activeCapture) {
+    const dayPoints = (HISTORY.points_by_key[key] || []).filter(pt => {
+      if (pt.capture_date !== activeCapture) return false;
+      if (activeModel && pt.model !== activeModel) return false;
+      return true;
+    });
+    if (dayPoints.length) {
+      const buf = document.createElementNS(ns, 'polygon');
+      buf.setAttribute('points', polyPoints(computeBufferHullPx(dayPoints, boostAngleDeg, state.compareAlt)));
+      buf.setAttribute('class', 'zone-buffer');
+      buf.setAttribute('fill', zoneBaseColor);
+      buf.setAttribute('fill-opacity', '0.30');
+      svg.appendChild(buf);
+
+      const corePx = convexHull(dayPoints.map(p => [p.x_ft, p.y_ft])).map(([x, y]) => ftToPx(x, y));
+      const core = document.createElementNS(ns, 'polygon');
+      core.setAttribute('points', polyPoints(corePx));
+      core.setAttribute('class', 'zone-core');
+      core.setAttribute('fill', zoneBaseColor);
+      core.setAttribute('fill-opacity', '0.42');
+      core.setAttribute('stroke', zoneBaseColor);
+      core.setAttribute('stroke-opacity', '0.85');
+      svg.appendChild(core);
+    }
+  }
+
   Object.entries(seriesByModel).forEach(([model, series]) => {
     if (activeModel && model !== activeModel) return;
     let sorted = [...series].sort((a, b) => new Date(a.capture_date) - new Date(b.capture_date));
