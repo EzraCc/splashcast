@@ -1,9 +1,6 @@
 """Satellite-map fetching for a launch site, from ArcGIS World Imagery (free, no key).
 
-Generalizes the script that produced the original maps/hutto_launch_site.*
-(which was, like splash_zones.py's precursor, a one-off run by hand -- see
-docs/spec.md §8's call for this to become "a repeatable per-site procedure,
-not a one-off script") so it can be re-run for any entry in config.SITES.
+Re-runnable for any entry in config.SITES (see docs/spec.md §8).
 
 Writes into config.SITE_DIR / "maps" -- the deployable site/ tree, not
 pipeline/ -- since map images are always public, unlike the raw wind-capture
@@ -302,15 +299,13 @@ def build_site_maps(site_key: str) -> Path:
     wide_size, _ = fetch_satellite(wide_bounds, wide_zoom, wide_png, mark_site=None)
     _make_web_jpg(wide_png, site_dir / "wide_sat_web.jpg", WIDE_WEB_LONG_EDGE)
 
-    # Road/street layer (added 2026-07-18, user's call) -- same bounds/zoom as
-    # the satellite crops above, just World_Street_Map instead of
-    # World_Imagery (the same ArcGIS service already used for the regional
-    # site-picker map, see build_regional_map_image()), so it's pixel-aligned
-    # with its satellite sibling and the viewer can toggle between them
-    # without recomputing anything (same viewBox, same site_px). Some sites
-    # (e.g. Hutto) have no real terrain features to avoid, where the
-    # satellite imagery is closer to visual noise than useful signal --
-    # this gives an alternative that isn't.
+    # Road/street layer: same bounds/zoom as the satellite crops above, just
+    # World_Street_Map instead of World_Imagery (same ArcGIS service the
+    # regional site-picker map uses, see build_regional_map_image()), so it's
+    # pixel-aligned with its satellite sibling and the viewer can toggle
+    # between them without recomputing anything (same viewBox, same site_px).
+    # Some sites (e.g. Hutto) have no real terrain features to avoid, where
+    # satellite imagery is closer to visual noise than useful signal.
     detail_road_png = raw_dir / "detail_road.png"
     detail_road_size, _ = fetch_satellite(detail_bounds, detail_zoom, detail_road_png, mark_site=(lat, lon), service="World_Street_Map")
     _make_web_jpg(detail_road_png, site_dir / "detail_road_web.jpg", DETAIL_WEB_LONG_EDGE)

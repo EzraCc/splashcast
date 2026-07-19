@@ -3,15 +3,10 @@
 Encodes which site(s) actually need a pull_live_forecast.py/splash_zones.py
 run on a given day, per club, so a daily driver can figure out "what's coming
 up" without a human re-deriving nth-weekday-of-month math every time. Rules
-gathered 2026-07-17 directly from each club (AARG/Hearne/TNT) or their
-published calendar (KLOUDBusters); re-verify before trusting a season this
-schedule hasn't been checked against yet -- clubs change their own schedules
-without this file knowing. SD Rocket Jockies' rule (added 2026-07-18) came
-from the user directly, not the club's own calendar -- same caveat applies.
-Tripoli Houston South Site's rule (also added 2026-07-18) is a known-rough
-placeholder -- 4th Saturday every month, but the club's own materials
-mention a Feb-Aug season similar to TNT Seymour's; deliberately left as
-every month until the user narrows it down (see tripoli_houston_south_events()).
+are sourced directly from each club (AARG/Hearne/TNT) or their published
+calendar (KLOUDBusters) except where a per-rule comment below says otherwise;
+re-verify before trusting a season this schedule hasn't been checked against
+-- clubs change their own schedules without this file knowing.
 
 Every site here must already exist in config.SITES.
 
@@ -99,16 +94,14 @@ def hearne_events(year: int) -> list[LaunchEvent]:
 
 
 # --- Rule 1: DARS @ Gunter -- 3rd Saturday every month ---------------------
-# Confirmed 2026-07-18 directly from dars.org: "Gunter launches are normally
-# held on the third Saturday."
+# Per dars.org: "Gunter launches are normally held on the third Saturday."
 def gunter_events(year: int) -> list[LaunchEvent]:
     return [LaunchEvent(nth_weekday(year, m, SAT, 3), "gunter", "DARS") for m in range(1, 13)]
 
 
 # --- Rule 1: Tripoli Houston @ South Site -- 4th Saturday every month ------
-# Placeholder as all-year (user's call 2026-07-18: known to actually be a
-# limited season -- club materials found so far say Feb-Aug -- but left as
-# every month until that's confirmed and narrowed down).
+# Placeholder as all-year -- club materials mention a Feb-Aug season similar
+# to TNT Seymour's, but left as every month until that's confirmed/narrowed.
 def tripoli_houston_south_events(year: int) -> list[LaunchEvent]:
     return [LaunchEvent(nth_weekday(year, m, SAT, 4), "tripoli_houston_south", "Tripoli Houston South") for m in range(1, 13)]
 
@@ -124,7 +117,7 @@ TNT_SEYMOUR_MONTHLY_MONTHS = range(1, 6)  # January(1)..May(5)
 
 def tnt_seymour_events(year: int) -> list[LaunchEvent]:
     # 4th Saturday's regular monthly launch runs into the Sunday directly
-    # after it too (user's call 2026-07-18), not a Saturday-only event.
+    # after it too, not a Saturday-only event.
     out = []
     for m in TNT_SEYMOUR_MONTHLY_MONTHS:
         sat = nth_weekday(year, m, SAT, 4)
@@ -139,9 +132,8 @@ def tnt_seymour_events(year: int) -> list[LaunchEvent]:
 
 
 # --- Rule 1: SD Rocket Jockies -- 1st Saturday, April-October ---------------
-# Given directly by the user 2026-07-18, not sourced from the club's own
-# calendar like the rules above -- re-verify before trusting a season this
-# hasn't been checked against.
+# Given directly by the user, not sourced from the club's own calendar like
+# the rules above -- re-verify before trusting this season.
 SD_ROCKET_JOCKIES_MONTHS = range(4, 11)  # April(4)..October(10) inclusive
 
 
@@ -151,16 +143,14 @@ def sd_rocket_jockies_events(year: int) -> list[LaunchEvent]:
 
 
 # --- Rule 4: KLOUDBusters @ Argonia -- no fixed weekday-of-month rule ------
-# Confirmed 2026-07-17 against KLOUDBusters' own published 2026 schedule PDF
-# (kloudbusters.org, "2026 Launch Schedule"): unlike every other club here,
-# their monthly "Fun Fly" isn't pinned to a specific nth-weekday -- it moves
-# between Saturday and Sunday per month at the club's discretion, and several
-# months get *no* launch at all ("Break for Wheat", mid-April through June,
-# to stay off the landowner's winter wheat before harvest). No formula
-# reproduces this -- hand-entered per year from their PDF, and this dict
-# needs a new year added before relying on it (nothing here extrapolates
-# past what's actually published). "April Rail Cleaning" (a work day, not a
-# launch) is deliberately excluded.
+# Per KLOUDBusters' own published 2026 schedule PDF (kloudbusters.org):
+# unlike every other club here, their monthly "Fun Fly" isn't pinned to a
+# specific nth-weekday -- it moves between Saturday and Sunday at the club's
+# discretion, and several months get *no* launch ("Break for Wheat",
+# mid-April through June, to stay off the landowner's winter wheat before
+# harvest). No formula reproduces this -- hand-entered per year from their
+# PDF, and needs a new year added before relying on it past what's published.
+# "April Rail Cleaning" (a work day, not a launch) is deliberately excluded.
 KLOUDBUSTERS_2026 = [
     (date(2026, 1, 10), "January Fun Fly"),
     (date(2026, 2, 15), "February Fun Fly"),
@@ -219,10 +209,9 @@ def run_pulls_for(target_date: date, dry_run: bool = False, only_sites: set[str]
     pull_live_forecast.py's design), so re-running today's date just adds
     today's capture to that target's forecast-drift history.
 
-    only_sites (added 2026-07-18, for run_live_pulls()'s per-site cron-cutoff
-    gating below): if given, sites with an event on target_date but not in
-    this set are silently skipped -- lets a caller drop just the sites that
-    are past their own cutoff without touching the others sharing this date.
+    only_sites: if given, sites with an event on target_date but not in this
+    set are silently skipped -- lets run_live_pulls() drop just the sites
+    past their own cron cutoff without touching others sharing this date.
     """
     events = [e for e in all_events(target_date.year) if e.event_date == target_date]
     if not events:
@@ -259,18 +248,13 @@ def run_live_pulls(today: date = None, dry_run: bool = False) -> None:
     """The Open-Meteo "leading up to launch" cron job: pulls the current
     forecast for every site with a launch T-0..T-(config.LEAD_DAYS max) days
     out, building that day's forecast-drift snapshot. Meant to run several
-    times a day (see the workflow's cron schedule) -- matches Open-Meteo's
-    own ~6-hourly model refresh cadence, not because more than one pull a
-    day is otherwise needed: capture_date dedup (UTC day, in
-    pull_live_forecast.py's run()) already keeps only one stored point per
-    model per day no matter how often this fires.
+    times a day (see .github/workflows/cron-pulls.yml) -- capture_date dedup
+    (UTC day, in pull_live_forecast.py's run()) keeps only one stored point
+    per model per day regardless of how often this fires.
 
-    UTC throughout (today defaults to UTC-now, not date.today()) -- same
-    reasoning as the rest of this pipeline: unambiguous regardless of what
-    timezone the runner happens to be in. The one per-site local-time
+    UTC throughout (today defaults to UTC-now). The one per-site local-time
     exception is config.SITES[...]["cron_cutoff_hour_utc"]: once a launch
-    day (lead 0) is past that stored UTC hour, stop pulling for it -- the
-    forecast's usefulness is over once the window it was for has passed.
+    day (lead 0) is past that stored UTC hour, stop pulling for it.
     """
     today = today or datetime.now(timezone.utc).date()
     max_lead = max(config.LEAD_DAYS)

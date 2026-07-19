@@ -4,23 +4,35 @@ name: Scheduled data pulls
 # (a workflow_dispatch run defaults to firing both, or pick one via the `job`
 # input):
 #   - open-meteo-live: the "leading up to launch" forecast pull. Runs every 6h
-#     (matches Open-Meteo's own model-refresh cadence) for every site with a
-#     launch T-0..T-7 days out (pipeline/launch_schedule.py's run_live_pulls()
-#     -- per-site config.SITES[...]["cron_cutoff_hour_utc"] stops same-day
-#     pulls once a launch day is functionally over). Only ever produces one
-#     stored point per model per UTC day regardless of how often this fires.
+#     for every site with a launch T-0..T-7 days out
+#     (pipeline/launch_schedule.py's run_live_pulls() -- per-site
+#     config.SITES[...]["cron_cutoff_hour_utc"] stops same-day pulls once a
+#     launch day is functionally over). Only ever produces one stored point
+#     per model per UTC day regardless of how often this fires.
+#
+#     Fires at :15 past 0/6/12/18 UTC, not exactly on the boundary -- a buffer
+#     for Open-Meteo's own documented "eventually consistent" server sync
+#     (they recommend waiting 10min after a run's availability time). This is
+#     NOT an attempt to catch each model's own freshest run: real per-model
+#     publish lag (checked via api.open-meteo.com/data/<model>/static/
+#     meta.json) ranges ~80min (HRRR/NBM) to ~7h (ECMWF, longer than its own
+#     6h cycle) -- no single fixed offset can target that for every model in
+#     one request, since the live endpoint always serves whatever's currently
+#     freshest rather than a pinned run. GEM's live feed was observed several
+#     weeks stale, consistent with pull_historical.py's "GEM unreliable" note.
 #   - noaa-actuals: the day-after HRRR-analysis "actual" pull
 #     (run_actual_pulls()) for whichever site(s) launched yesterday (UTC).
 #     Deliberately not same-day -- HRRR's own AWS archive needs a full day to
-#     finish publishing.
+#     finish publishing. Pulled directly from NOAA's AWS archive via Herbie,
+#     not through Open-Meteo -- the sync-race note above doesn't apply here.
 # Both commit pipeline/data + site/data + site/maps back to master when
 # they've actually changed something -- required for the data to survive past
 # this ephemeral runner, and it's what triggers pages.yml's deploy.
 
 on:
   schedule:
-    - cron: "0 0,6,12,18 * * *"  # open-meteo-live, 4x daily
-    - cron: "0 11 * * *"         # noaa-actuals, once daily
+    - cron: "15 0,6,12,18 * * *"  # open-meteo-live, 4x daily
+    - cron: "0 11 * * *"          # noaa-actuals, once daily
   workflow_dispatch:
     inputs:
       job:
@@ -35,7 +47,7 @@ permissions:
 jobs:
   open-meteo-live:
     if: >
-      (github.event_name == 'schedule' && github.event.schedule == '0 0,6,12,18 * * *') ||
+      (github.event_name == 'schedule' && github.event.schedule == '15 0,6,12,18 * * *') ||
       (github.event_name == 'workflow_dispatch' && github.event.inputs.job != 'actuals')
     runs-on: ubuntu-latest
     concurrency:

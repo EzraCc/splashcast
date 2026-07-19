@@ -1,38 +1,30 @@
-"""Live multi-model forecast pull for the Hutto launch-day weather window.
+"""Live multi-model forecast pull for a site's launch-day weather window.
 
 Pulls the *current* forecast (not historical/archived data -- see
-pull_historical.py for that) from Open-Meteo's free endpoints -- NOAA's GFS/
-HRRR/NAM/NBM plus, added 2026-07-17, four other national agencies' models
-(ECMWF, DWD ICON, Meteo-France ARPEGE, Environment Canada GEM), each on its
-own endpoint (config.LIVE_MODELS[key]["url"]) rather than one shared URL:
-  - surface wind (10m) for all 8 models, and pressure-level wind up to each
-    site's own waiver altitude (config.levels_mb_for_site(), added 2026-07-18
-    -- previously one fixed ~12,000ft bracket for every site regardless of
-    waiver) for the 6 in config.LIVE_PROFILE_MODELS -- NAM (live-side only)
-    and NBM have no pressure-level profile here, so they're limited to
-    surface/near-surface (config.LIVE_NBM_HEIGHTS_M for NBM specifically),
-    same limitation as the historical pull for NBM, but a live-API-specific
-    gap for NAM (its historical/GRIB2 data does have it).
-  - cloud cover by layer (low/mid/high) -- the safety-code-relevant field,
-    since no model exposes a working cloud-base/ceiling altitude here.
-  - precipitation (total/rain/showers/probability), temperature, and CAPE
-    (a convective/lightning-risk proxy -- there's no direct lightning
-    forecast field available).
-Also checks Williamson County's burn-ban status against the Texas A&M Forest
-Service's live feed (a separate, non-Open-Meteo source).
+pull_historical.py for that) from Open-Meteo's free endpoints: NOAA's GFS/
+HRRR/NAM/NBM plus ECMWF/DWD ICON/Meteo-France ARPEGE/Environment Canada GEM,
+each on its own endpoint (config.LIVE_MODELS[key]["url"]) rather than one
+shared URL. Pulls surface wind (10m) for all 8 models, and pressure-level
+wind up to each site's own waiver altitude (config.levels_mb_for_site()) for
+the 6 in config.LIVE_PROFILE_MODELS -- NAM (live-side only) and NBM have no
+pressure-level profile here, so they're limited to near-surface heights
+(config.LIVE_NBM_HEIGHTS_M for NBM). Also pulls cloud cover by layer
+(low/mid/high -- the safety-code-relevant field, since no model exposes a
+working cloud-base altitude here), precipitation, temperature, and CAPE (a
+convective/lightning-risk proxy). Also checks Williamson County's burn-ban
+status against the Texas A&M Forest Service's live feed (non-Open-Meteo).
 
 Each run is checkpointed as its own dated "capture" under
-data/live/{target_date}/captured_{capture_date}.parquet (+ a burn-ban JSON
-sidecar) rather than one file per target_date -- running this daily against
-the same upcoming launch is the point (building a T-7..T-0 forecast-drift
-record per model), so each day's snapshot has to survive the next day's run
-instead of being overwritten by it. If a prior capture exists for the same
-target, a delta report against the most recent one is printed automatically.
+data/<site>/live/{target_date}/captured_{capture_date}.parquet (+ a burn-ban
+JSON sidecar), not one file per target_date -- running this daily against the
+same upcoming launch builds a T-7..T-0 forecast-drift record per model, so
+each day's snapshot has to survive the next day's run. If a prior capture
+exists for the same target, a delta report against the most recent one is
+printed automatically.
 
 Data-pull only, per the expansion spec: no go/no-go thresholds or
-landing-zone math yet -- those come later once a launch director defines the
-actual cutoffs. Default target date is the coming Saturday; pass an explicit
-YYYY-MM-DD to override (launches sometimes move to Sunday for weather).
+landing-zone math yet. Default target date is the coming Saturday; pass an
+explicit YYYY-MM-DD to override (launches sometimes move to Sunday).
 """
 
 import itertools
@@ -84,21 +76,17 @@ def _hourly_variables(model_key: str, site_id: str) -> list[str]:
         for h in config.LIVE_NBM_HEIGHTS_M:
             variables += [f"wind_speed_{h}m", f"wind_direction_{h}m"]
     else:
-        # Per-site since 2026-07-18 (config.levels_mb_for_site()) -- sized to
-        # reach this site's own waiver instead of one fixed bracket for
-        # every site regardless of how tall its waiver actually is.
+        # Sized per site to reach its own waiver (config.levels_mb_for_site()),
+        # not one fixed bracket for every site.
         for lvl in config.levels_mb_for_site(site_id):
             variables += [f"wind_speed_{lvl}hPa", f"wind_direction_{lvl}hPa", f"geopotential_height_{lvl}hPa"]
     return variables
 
 
 def fetch_model(model_key: str, target_date: date, site_id: str = "hutto", attempts: int = 2) -> dict:
-    # Explicit UTC (not date.today(), which resolves against whatever the
-    # local system clock/timezone happens to be -- ambiguous on a machine
-    # you don't control, like a GitHub Actions runner). User's call
-    # 2026-07-18: use UTC everywhere except the one place local time
-    # actually matters (the per-site launch-day pull cutoff, config.py) --
-    # the models' own refresh cycles are UTC-anchored anyway.
+    # UTC throughout, not date.today() -- unambiguous regardless of the
+    # runner's local timezone. The one place local time matters is the
+    # per-site pull cutoff (config.py's cron_cutoff_hour_utc).
     today = datetime.now(timezone.utc).date()
     days_ahead = (target_date - today).days
     if days_ahead < 0:
@@ -116,14 +104,11 @@ def fetch_model(model_key: str, target_date: date, site_id: str = "hutto", attem
         "timezone": config.SITE_TZ,
         # +2, not +1: Open-Meteo appears to anchor forecast_days' countdown to
         # its own resolved "today" in the requested `timezone` (Central), not
-        # our UTC `today` above -- during the ~7pm-midnight Central window
-        # where the UTC calendar date has already rolled to tomorrow but
-        # Central's hasn't, that's a 1-day skew, and a bare `days_ahead + 1`
-        # silently returns a horizon that ends *before* target_date, with the
-        # launch window landing entirely outside the response (found
-        # 2026-07-19 testing the T-6 cron pull -- 0 rows in every model's
-        # window despite the request succeeding). +1 extra day of margin is
-        # cheap and costs nothing on the days it isn't needed.
+        # our UTC `today` above. During the ~7pm-midnight Central window where
+        # the UTC date has already rolled over but Central's hasn't, a bare
+        # `days_ahead + 1` returns a horizon ending *before* target_date (the
+        # launch window then lands entirely outside the response even though
+        # the request succeeds). The extra day of margin is cheap insurance.
         "forecast_days": days_ahead + 2,
         "wind_speed_unit": "mph",
         "temperature_unit": "fahrenheit",
@@ -151,34 +136,28 @@ def fetch_model(model_key: str, target_date: date, site_id: str = "hutto", attem
     raise last_exc
 
 
-# --- Historical backfill (added 2026-07-18) --------------------------------
+# --- Historical backfill -----------------------------------------------------
 # Separate from fetch_model() above -- hits Open-Meteo's Single Runs API
-# (single-runs-api.open-meteo.com, free tier despite what its own pricing
-# page's summarized text initially suggested; verified against the raw
-# pricing table directly) instead of the live-forecast endpoints, letting us
-# pull a SPECIFIC past model run (run=<cycle time>) rather than only "the
-# current forecast." Returns that run's full ~7-day forecast horizon from
-# its init time forward (no start_date/end_date param -- not accepted by
-# this endpoint), so backfill_capture() below filters down to just the
-# target date after parsing.
+# (free tier, despite its pricing page's summary text suggesting otherwise)
+# instead of the live-forecast endpoints, letting us pull a SPECIFIC past
+# model run (run=<cycle time>) rather than only "the current forecast."
+# Returns that run's full ~7-day horizon from its init time forward (no
+# start_date/end_date param accepted), so backfill_capture() filters down to
+# the target date after parsing.
 #
-# Archive floor is 2026-04-02 for most models (checked empirically, not just
-# from docs -- the same docs-vs-live-API mismatch already found for ECMWF's
-# level ceiling). GEM specifically errors on every run tested here (a raw
-# "modelRunUnavailable" failure, not the clean JSON `error` shape the other
-# models return) -- unclear if that's an archive gap or an API quirk
-# specific to this model; treated as "unavailable," same tolerance as any
-# other model missing from a given capture, not investigated further.
+# Archive floor is ~2026-04-02 for most models (checked empirically -- docs
+# have been wrong here before). GEM errors on every run tested (raw
+# "modelRunUnavailable" failure, unlike other models' clean JSON `error`
+# shape) -- treated as "unavailable" like any other missing model, not
+# root-caused further.
 #
-# precipitation_probability is dropped from the variable list entirely here
-# (unlike the live pull, which keeps it) -- found 2026-07-18 that requesting
-# it against this endpoint fails the WHOLE request with "model run not
-# available... Model: ncep_gefs05" even when every other variable is fine.
-# It's an ensemble-derived field (needs spread across members, not a single
-# deterministic run) that this endpoint silently tries to route to GEFS
-# internally and fails, rather than nulling just that one field the way the
-# live-forecast endpoints do for an unsupported variable. Confirmed via
-# direct curl isolation, not guessed.
+# precipitation_probability is dropped from the variable list here (unlike
+# the live pull, which keeps it) -- requesting it against this endpoint fails
+# the WHOLE request ("model run not available... Model: ncep_gefs05"), even
+# with every other variable fine. It's ensemble-derived (needs spread across
+# members) and this endpoint silently tries to route it to GEFS internally
+# and fails, rather than nulling just that field the way live-forecast
+# endpoints do for an unsupported variable.
 SINGLE_RUNS_URL = "https://single-runs-api.open-meteo.com/v1/forecast"
 
 
@@ -300,14 +279,13 @@ def fetch_burn_ban(attempts: int = 2) -> dict:
 
 
 def run(target_date: date, site_id: str = "hutto") -> tuple[pd.DataFrame, dict | None, date]:
-    # UTC, not date.today() -- see fetch_model()'s comment above. This is
-    # the actual storage-correctness fix (2026-07-18): capture_date is the
-    # key every downstream file is named/deduped by (save_capture(),
-    # available_captures(), points_history.json's per-day entries), so it
-    # has to be unambiguous regardless of what machine/timezone runs this.
-    # A same-UTC-day re-pull (the T-3..T-0 6-hourly window) still overwrites
-    # the same capture_date's file -- that's intentional, one retained data
-    # point per day (user's call), not a bug.
+    # UTC, not date.today() -- see fetch_model()'s comment above. capture_date
+    # is the key every downstream file is named/deduped by (save_capture(),
+    # available_captures(), points_history.json's per-day entries), so it has
+    # to be unambiguous regardless of what machine runs this. A same-UTC-day
+    # re-pull (the T-3..T-0 cron window firing more than once) intentionally
+    # overwrites the same capture_date's file -- one retained data point per
+    # day, not a bug.
     capture_date = datetime.now(timezone.utc).date()
     frames = []
     for model_key in config.LIVE_MODELS:
@@ -443,18 +421,12 @@ def _split_consensus(readings: dict[str, tuple[float, float]]) -> tuple[list[str
     """readings: {model: (speed_mph, direction_deg)}. Returns (consensus_models, outlier_models).
 
     Finds the largest subset of models that are all *mutually* within
-    config.WIND_SPEED_AGREEMENT_MPH / WIND_DIR_AGREEMENT_DEG of each other
-    (a clique in the pairwise-agreement graph), not the models closest to a
-    single shared mean. That distinction matters once there are more than a
-    couple of models: with only 2-4 models and one clear outlier, "distance
-    from the group mean" and "mutual agreement" pick the same group. But with
-    6 models split into two genuine clusters (e.g. 2 models near 16 mph, 2
-    near 25 mph, 2 in between), a mean-based approach can fragment into two
-    near-even "everyone's an outlier" groups, since the mean sits in the gap
-    between clusters and pulls every model far enough away to get excluded.
-    A mutual-agreement clique instead finds whichever real cluster is
-    actually largest. Brute-force over subsets is fine here -- model counts
-    are small (<=8), so worst case is a few hundred combinations.
+    config.WIND_SPEED_AGREEMENT_MPH / WIND_DIR_AGREEMENT_DEG of each other (a
+    clique in the pairwise-agreement graph), not the models closest to a
+    single shared mean -- a mean-based approach can fragment two genuine
+    clusters (e.g. 2 models near 16mph, 2 near 25mph) into "everyone's an
+    outlier" groups, since the mean sits in the gap between them. Brute-force
+    over subsets is fine at this scale (<=8 models).
     """
     models = list(readings)
     if len(models) <= 1:
@@ -483,19 +455,13 @@ def _split_consensus(readings: dict[str, tuple[float, float]]) -> tuple[list[str
 def hourly_wind_table(df: pd.DataFrame, target_date: date) -> str:
     """Hour-by-hour ground wind across the window: a consensus range for the
     models that roughly agree, with only the divergent model(s) called out by
-    name -- not a full column per model.
-
-    The day-wide max/min in window_stats() can hide a pattern like "calm at
-    10am, gusty by 2pm" -- wind is the one hard numeric safety threshold
-    (20 mph) where that intraday shape is exactly what matters, so it gets
-    its own table rather than being collapsed into a single aggregate.
-
-    Direction is shown alongside speed -- at Hutto specifically, direction
-    changes which speeds are actually a concern: southerly winds drift away
-    from the road, northerly winds drift toward it, so "12 mph" reads very
-    differently depending on which way it's blowing. No safe/hazard
-    classification is applied (data-pull only, per the expansion spec) --
-    this just surfaces both numbers for a launch director to judge.
+    name -- not a full column per model. The day-wide max/min in
+    window_stats() can hide a pattern like "calm at 10am, gusty by 2pm," so
+    this gets its own table. Direction is shown alongside speed since it
+    changes which speeds are actually a concern (e.g. at Hutto, southerly
+    winds drift away from the road, northerly toward it). No safe/hazard
+    classification applied -- this just surfaces both numbers for a launch
+    director to judge.
     """
     window_start = datetime.combine(target_date, time(config.LAUNCH_WINDOW_START_HOUR_LOCAL, 0))
     window_end = datetime.combine(target_date, time(config.LAUNCH_WINDOW_END_HOUR_LOCAL, 0))

@@ -217,8 +217,8 @@
   }
   #pad-reset-btn:hover { background: var(--surface-2); }
 
-  /* Distance-from-actual accuracy table (added 2026-07-18, History mode
-     only). Cell backgrounds use the four fixed status-scale colors (not a
+  /* Distance-from-actual accuracy table (History mode only). Cell
+     backgrounds use the four fixed status-scale colors (not a
      plain sequential ramp) since the color here literally means good/bad
      accuracy, not just "big number" -- dark ink (#1a1a19) clears >=3:1 text
      contrast against all four (verified: good 5.19, warning 9.49, serious
@@ -262,8 +262,7 @@
     }
   }
 
-  /* --- launch-site picker: plain <select> (was a clickable regional map
-     with markers in a modal; replaced 2026-07-17 per user direction). --- */
+  /* --- launch-site picker: plain <select> --- */
   .site-empty-state {
     padding: 40px 24px; text-align: center; color: var(--text-secondary);
     background: var(--surface-2); border-radius: 10px; border: 1px solid var(--border);

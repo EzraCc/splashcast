@@ -4,8 +4,7 @@ For each Saturday in range, pulls:
   - the HRRR f00 analysis (the model's own data-assimilation output, not a
     forecast) at every hour in config.SPLASH_HOURS_LOCAL -- the "actual"/
     best-estimate proxy per the spec, labeled hrrr_f00_analysis, never
-    "actual" outright. Multi-hour since 2026-07-18 (was just
-    TARGET_VALID_HOUR_LOCAL/10am) so splash_zones.py's compute_actual_points()
+    "actual" outright. Multi-hour so splash_zones.py's compute_actual_points()
     can populate points_history.json's actuals for whichever hour a viewer
     has selected, not just one fixed hour.
   - each profile model's (GFS/HRRR/RAP/NAM) forecast for that same valid time,
@@ -13,16 +12,12 @@ For each Saturday in range, pulls:
   - NBM's near-surface (10/30/80m) forecast for the same lead times, kept
     separate since NBM has no isobaric wind profile to compare at altitude
 
-Made multi-site 2026-07-18 (was Hutto-only, config.SITE_ID/SITE_LAT/SITE_LON
-hardcoded throughout) -- every function now takes site_id, matching the
---site pattern pull_live_forecast.py/splash_zones.py already use.
-
-Checkpointed per (site, date, kind) parquet file under
-data/<site_id>/raw/ so an interrupted run can resume without re-pulling
-what's already on disk. Left gitignored (pipeline/data/*/raw/) like the rest
-of this script's output -- regeneratable, and it's the *simulated* actual
-points (published via splash_zones.py into points_history.json) that matter
-for the site, not this raw intermediate.
+Checkpointed per (site, date, kind) parquet file under data/<site_id>/raw/ so
+an interrupted run can resume without re-pulling what's already on disk. Left
+gitignored (pipeline/data/*/raw/) like the rest of this script's output --
+regeneratable, and it's the *simulated* actual points (published via
+splash_zones.py into points_history.json) that matter for the site, not this
+raw intermediate.
 """
 
 import logging
@@ -155,14 +150,13 @@ def extract_profile(H: Herbie, model: str, source_type: str, run_init_time: date
     ]
 
 
-# Added 2026-07-18, for pull_actual() -- extract_profile() only pulls
-# pressure-level UGRD/VGRD, no near-surface point, so the "actual" profile
-# was missing the same 10m anchor build_profile_single() gives every live/
-# forecast profile. pressure_level_hpa is left NaN here (vs. a real level
-# value) so downstream code (splash_zones.py's build_actual_profile()) can
-# tell this row apart from a real pressure level -- same convention
-# build_profile_single() uses (0.0 AGL, no pressure level) for its own
-# surface point.
+# For pull_actual() -- extract_profile() only pulls pressure-level UGRD/VGRD,
+# no near-surface point, so the "actual" profile needs this to get the same
+# 10m anchor every other live/forecast profile has. pressure_level_hpa is
+# left NaN (not a real level value) so downstream code
+# (splash_zones.py's build_actual_profile()) can tell this row apart from a
+# real pressure level -- same convention build_profile_single() uses for its
+# own surface point.
 def extract_surface(H: Herbie, model: str, source_type: str, run_init_time: datetime, lead_time_hours: int, site_id: str) -> pd.DataFrame:
     ds = H.xarray(":(UGRD|VGRD):10 m above ground", remove_grib=True)
     picked = ds.herbie.pick_points(_point_df(site_id), method="nearest")
@@ -225,15 +219,12 @@ def extract_nbm(H: Herbie, source_type: str, run_init_time: datetime, lead_time_
 def pull_actual(saturday: date, site_id: str = "hutto") -> pd.DataFrame | None:
     """HRRR's own f00 analysis (its data-assimilation output, not a forecast)
     at every hour in config.SPLASH_HOURS_LOCAL, plus a 10m surface point per
-    hour (extract_surface(), added 2026-07-18 -- extract_profile() alone
-    left the actual profile without the same surface anchor every other
-    profile in this project has).
+    hour (extract_surface()).
 
-    Meant to be run the day AFTER `saturday` (user's call 2026-07-18) --
-    not because the data itself is from the next day (every point here is
-    still valid during `saturday`), but so HRRR's own archive on AWS has
-    had a full day to finish publishing that day's cycles before we come
-    looking for them.
+    Meant to be run the day AFTER `saturday` -- not because the data itself
+    is from the next day (every point here is still valid during `saturday`),
+    but so HRRR's own archive on AWS has had a full day to finish publishing
+    that day's cycles before we come looking for them.
     """
     out_path = raw_dir(site_id) / f"{saturday}_actual.parquet"
     if out_path.exists():

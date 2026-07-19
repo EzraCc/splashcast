@@ -1,32 +1,23 @@
 """Wind capture -> splash-zone viewer data, for index.html.
 
-Formalizes what was, until now, a one-off analysis script run ad-hoc against
-a single capture (see docs/spec.md §9) into a real, reusable
-pipeline that can be re-run per target date -- needed once the viewer has to
-support more than one launch date (see the manifest-driven date selector in
-index.html).
-
-Two stages, matching the original script's structure exactly (same formulas,
-same constants -- just named now, see config.py):
+Two stages (see config.py for the shared constants):
   1. compute_splash_points(): wind capture parquet -> per-model/hour/altitude/
      deploy/rate drift points (apogee-to-ground descent integration).
   2. build_zone_data(): drift points -> convex-hull zones in map-pixel space
      (core hull + boost-angle-buffered hull), the exact JSON schema the
-     viewer's render()/drawZone() already expect.
+     viewer's render()/drawZone() expect.
 
-CLI: `python splash_zones.py <target_date> [--site site_id]` (site_id defaults
-to "hutto", the only site with a real pull so far) finds that target's latest
-capture under pipeline/data/<site_id>/live/, runs both stages, and publishes
-the results into the deployable site/ tree: the zone JSON + a
+CLI: `python splash_zones.py <target_date> [--site site_id]` finds that
+target's latest capture under pipeline/data/<site_id>/live/, runs both
+stages, and publishes into the deployable site/ tree: the zone JSON + a
 points_history.json (see build_points_history() -- every capture's splash
 points for this target date, not just the latest, for the viewer's History
 mode) + a regenerated site/data/<site_id>/manifest.json (so the viewer's
-date selector picks up both automatically), plus a refresh of the regional
-site-picker's has_data flags (see fetch_site_maps.refresh_regional_sites_metadata())
--- this is "the list of available sites and dates gets regenerated when a
-pull happens." Intermediate artifacts (the splash-points parquet per
-capture) stay in pipeline/data/, never published -- only the zone JSON and
-points_history are public.
+date selector picks up both) + a refresh of the regional site-picker's
+has_data flags (fetch_site_maps.refresh_regional_sites_metadata()).
+Intermediate artifacts (the splash-points parquet per capture) stay in
+pipeline/data/, never published -- only the zone JSON and points_history are
+public.
 """
 
 import json
@@ -67,10 +58,9 @@ _ICAO_RHO_RATIO_AT_TROPOPAUSE = (1 - _ICAO_LAPSE_K_PER_M * _ICAO_TROP_TOP_M / _I
 
 
 def std_atm_ft(hpa: float) -> float:
-    """Standard-atmosphere height (ft MSL) for a pressure level (hPa).
-    Extended 2026-07-18 from a troposphere-only formula (valid only to
-    ~36,089ft) to the two-layer model above, once per-site pressure brackets
-    (config.levels_mb_for_site()) started reaching well above that for the
+    """Standard-atmosphere height (ft MSL) for a pressure level (hPa). Uses
+    the two-layer model above (not a troposphere-only formula, valid only to
+    ~36,089ft) since per-site pressure brackets reach well above that for
     taller-waiver sites."""
     if hpa >= _ICAO_P11_HPA:
         theta = (hpa / _ICAO_P0_HPA) ** (1 / _ICAO_TROP_EXP)
@@ -79,18 +69,15 @@ def std_atm_ft(hpa: float) -> float:
     return h_m * 3.28084
 
 
-# --- Air-density-scaled descent rate (added 2026-07-18) --------------------
+# --- Air-density-scaled descent rate ----------------------------------------
 # Terminal velocity under a fixed drogue/canopy scales as 1/sqrt(air density)
 # -- at terminal velocity, drag (0.5*rho*v^2*Cd*A) equals weight, and Cd*A is
 # roughly constant for a given rig, so v ~ 1/sqrt(rho). SINGLE_DEPLOY_RATES_FPS/
 # DUAL_DEPLOY_RATES_FPS are treated as the rate AT THIS SITE'S OWN GROUND LEVEL
 # (AGL=0 -- the number you'd see on a low-altitude test drop), scaled up for
-# thinner air higher via the density-ratio formula above.
-#
-# Both descent_rate_at() and build_profile_single() below take site_elev_ft
-# as a parameter -- per-site (config.elev_ft_for_site()) since 2026-07-18,
-# previously a single Hutto-only module global (SITE_ELEV_FT) applied to
-# every site regardless of its real elevation.
+# thinner air higher via the density-ratio formula above. descent_rate_at()
+# and build_profile_single() below both take site_elev_ft per-site
+# (config.elev_ft_for_site()), since a site's real elevation changes this.
 def air_density_ratio(alt_m_msl: float) -> float:
     """Air density relative to sea-level standard (ICAO atmosphere)."""
     if alt_m_msl <= _ICAO_TROP_TOP_M:
@@ -201,14 +188,11 @@ def compute_splash_points(df: pd.DataFrame, target_date: date, site_id: str = "h
 
     Altitudes are per-site (config.altitudes_for_site()), not one fixed list
     for every site -- a 10,000ft-waiver site and a 50,000ft-waiver site need
-    very different apogees simulated (user's call 2026-07-17). Pressure
-    levels sampled for the wind profile are likewise per-site
-    (config.levels_mb_for_site()), sized to actually reach each site's own
-    waiver instead of one fixed bracket for every site (user's call
-    2026-07-18). Single-deploy points are skipped above
-    config.SINGLE_DEPLOY_MAX_ALT_FT -- not a realistic recovery
-    configuration at higher altitude (user's call 2026-07-18; see the
-    constant's own comment in config.py for why).
+    very different apogees simulated. Pressure levels sampled for the wind
+    profile are likewise per-site (config.levels_mb_for_site()), sized to
+    reach each site's own waiver. Single-deploy points are skipped above
+    config.SINGLE_DEPLOY_MAX_ALT_FT -- not a realistic recovery configuration
+    at higher altitude (see that constant's own comment in config.py).
     """
     site_elev_ft = config.elev_ft_for_site(site_id)
     levels_mb = config.levels_mb_for_site(site_id)
@@ -231,7 +215,7 @@ def compute_splash_points(df: pd.DataFrame, target_date: date, site_id: str = "h
     return pd.DataFrame(all_points, columns=["hour", "deploy", "rate", "altitude", "model", "x_ft", "y_ft"])
 
 
-# --- "Actual" splash points from HRRR's own analysis (added 2026-07-18) ----
+# --- "Actual" splash points from HRRR's own analysis ------------------------
 # pull_historical.py's pull_actual() fetches HRRR's f00 (its own data-
 # assimilation output, not a forecast) at every SPLASH_HOURS_LOCAL hour for
 # a past target date -- the closest this project has to "what actually
@@ -451,13 +435,11 @@ def _all_captures(target_dir: Path) -> list[date]:
 
 # --- History view (per-model splash point across every capture date, not
 # just the latest) -- called "History" in the viewer, deliberately not
-# "drift", which already names the wind-drift calc this whole tool descends
-# from (Driftcast) and would be confusing reused as this feature's name too
-# (user's call 2026-07-17). Simplified relative to the main hull/zone view
-# per the same 2026-07-17 direction: one point per model per capture date --
-# no wind speed/direction-by-altitude, no hull/buffer, just where each
-# model's splash point for one fixed hour/deploy/rate/altitude landed, and
-# how that moved capture to capture. -----------------------------------
+# "drift" (which already names the wind-drift calc this tool descends from,
+# Driftcast). Simplified relative to the main hull/zone view: one point per
+# model per capture date -- no wind speed/direction-by-altitude, no
+# hull/buffer, just where each model's splash point for one fixed
+# hour/deploy/rate/altitude landed, and how that moved capture to capture.
 
 def build_points_history(target_dir: Path, target_date: date, site_id: str = "hutto") -> dict:
     """Backfills splash_points_captured_<date>.parquet for any capture under
@@ -497,12 +479,11 @@ def build_points_history(target_dir: Path, target_date: date, site_id: str = "hu
         "target_date": str(target_date),
         "captures": [str(c) for c in captures],
         "points_by_key": points_by_key,
-        # HRRR-analysis-based best-guess (compute_actual_points(), added
-        # 2026-07-18) if pull_historical.py has backfilled this site/date --
-        # {} otherwise (most target dates won't have it; it's a separate,
-        # manually-run pull, not part of the daily live-pull path). Real
-        # post-flight GPS (spec.md Phase 3, not built) would replace this
-        # under the same key scheme once that lands, not need a second one.
+        # HRRR-analysis-based best-guess (compute_actual_points()) if
+        # pull_historical.py has backfilled this site/date -- {} otherwise
+        # (most target dates won't have it yet). Real post-flight GPS
+        # (spec.md Phase 3, not built) would replace this under the same key
+        # scheme once that lands, not need a second one.
         "actuals": compute_actual_points(site_id, target_date),
     }
 

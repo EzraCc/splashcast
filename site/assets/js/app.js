@@ -2,21 +2,17 @@ let DATA = null;
 // points_history.json for the current target date -- every capture's splash
 // point per hour/deploy/rate/altitude, for the "History" view mode (see
 // renderHistory()). Loaded alongside DATA; null if this target has no
-// history file yet (shouldn't happen post-2026-07-17, but a target
-// processed before this feature existed wouldn't have one).
+// history file yet (a target processed before this feature existed).
 let HISTORY = null;
 
 // No single fixed hue reads well against every site: violet (the original
 // ramp) washed out against Hearne's dark tree cover, and rose/magenta (the
-// next attempt) fades into Hutto's light tan dirt (user's calls, both
-// 2026-07-17) -- satellite terrain swings across too much of the hue wheel
-// (greens, browns/tans, yellows, all season-dependent) for one hardcoded
-// choice to survive every site/season combination. So the hue is now a
-// user pick (see zoneColorPicker below); computeAltRamp() derives the 5
-// altitude shades from it by walking lightness in OKLab (monotone, one hue,
-// gamut-clamped chroma at the extremes) -- same shape the old validated
-// ramp had, just built from whatever base color the user chooses instead of
-// a single baked-in hex set.
+// next attempt) faded into Hutto's light tan dirt -- satellite terrain swings
+// across too much of the hue wheel (greens, browns/tans, yellows, all
+// season-dependent) for one hardcoded choice to survive every site/season
+// combination. So the hue is a user pick (see zoneColorPicker below);
+// computeAltRamp() derives the altitude shades from it by walking lightness
+// in OKLab (monotone, one hue, gamut-clamped chroma at the extremes).
 function hexToRgb01(hex) {
   const n = parseInt(hex.replace('#', ''), 16);
   return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255];
@@ -62,10 +58,9 @@ function clampChroma(L, C, H) {
 }
 // Lightest at the low end, darkest at the high end -- matches the shape of
 // every ramp used here before this became user-adjustable. `keys` drives the
-// step count directly (not a fixed 5) since altitude lists now vary in
-// length per site (1,000ft up to that site's own waiver, 5-9 points --
-// user's call 2026-07-17): a site with 8 altitudes needs 8 shades, not a
-// lookup into a 5-entry table.
+// step count directly (not a fixed 5) since altitude lists vary in length
+// per site (1,000ft up to that site's own waiver, 5-9 points): a site with 8
+// altitudes needs 8 shades, not a lookup into a 5-entry table.
 function computeSequentialRamp(baseHex, keys) {
   const [L0, C0, H0] = oklabToOklch(rgbToOklab(hexToRgb01(baseHex)));
   const n = keys.length;
@@ -83,48 +78,40 @@ let zoneBaseColor = localStorage.getItem(ZONE_COLOR_STORAGE_KEY) || DEFAULT_ZONE
 // Placeholder 5-key default until real data loads and ALT_COLORS_HEX gets
 // recomputed against this site's actual altitude list (see initFromData()).
 let ALT_COLORS_HEX = computeSequentialRamp(zoneBaseColor, [1000, 3000, 5000, 7000, 9000]);
-// Orange used to be hardcoded (not independently validated the way the old
-// blue altitude ramp was) -- same user-adjustable treatment as altitude now
-// (user's call 2026-07-17): a fixed hue can't read well against every site's
-// imagery any more here than it could for the zone fill.
+// Same user-adjustable treatment as the altitude ramp -- a fixed hue can't
+// read well against every site's imagery any more here than for the zone fill.
 const DEFAULT_TIME_BASE_COLOR = '#eb6834';
 const TIME_COLOR_STORAGE_KEY = 'splashcast_time_base_color';
 let timeBaseColor = localStorage.getItem(TIME_COLOR_STORAGE_KEY) || DEFAULT_TIME_BASE_COLOR;
 let TIME_COLORS_HEX = computeSequentialRamp(timeBaseColor, [9, 11, 13, 15]);
 
-// Satellite vs. road/street map layer (added 2026-07-18) -- some sites (e.g.
-// Hutto) have no real terrain features to avoid, where satellite imagery is
-// closer to visual noise than useful signal; road tiles (fetch_site_maps.py's
-// World_Street_Map pull, same bounds/zoom as its satellite sibling so no
-// other geometry needs to change) are the alternative. Persisted across
-// reloads/sites like the color pickers, not part of a shareable permalink --
-// it's a standing display preference, not "which scenario."
+// Satellite vs. road/street map layer -- some sites (e.g. Hutto) have no real
+// terrain features to avoid, where satellite imagery is closer to visual
+// noise than useful signal; road tiles (fetch_site_maps.py's World_Street_Map
+// pull, same bounds/zoom as its satellite sibling) are the alternative.
+// Persisted across reloads/sites like the color pickers, not part of a
+// shareable permalink -- it's a standing display preference, not "which
+// scenario."
 const MAP_LAYER_STORAGE_KEY = 'splashcast_map_layer';
 let mapLayer = localStorage.getItem(MAP_LAYER_STORAGE_KEY) === 'road' ? 'road' : 'sat';
 const HOUR_LABELS = { 9: '9am', 11: '11am', 13: '1pm', 15: '3pm' };
 const DEPLOY_LABELS = { single: 'Single', dual: 'Dual' };
 const MODEL_LABELS = { gfs: 'GFS', hrrr: 'HRRR', ecmwf: 'ECMWF', icon: 'ICON', arpege: 'ARPEGE', gem: 'GEM' };
 // "History" not "Drift" -- Driftcast (the tool this project extends) already
-// owns that word for the wind-drift calc itself; reusing it for this view
-// too would be confusing even though it'd otherwise fit (user's call
-// 2026-07-17).
+// owns that word for the wind-drift calc itself; reusing it here would be
+// confusing even though it'd otherwise fit.
 const MODE_LABELS = { byAltitude: 'By altitude', byTime: 'By time of day', byHistory: 'History' };
 // Reference categorical palette in its validated fixed order, minus the two
-// hues claimed by the zone fills (orange=time, magenta/rose=altitude as of
-// 2026-07-17 -- was violet). ECMWF moved off the categorical "magenta" slot
-// (#e87ba4) to the now-free "violet" slot (#4a3aa7, altitude's old color) --
-// otherwise ECMWF's dot would sit close in hue to the new altitude ramp
-// under it, the same legibility problem the ramp change was fixing.
-// HRRR (green) and ARPEGE (aqua) are still in the same terrain-risky
-// green family the altitude ramp just moved away from -- not changed here
-// since only the zone-fill ramp was actually flagged, but flagged in
-// conversation as a likely follow-up (small outlined point markers are far
-// more forgiving than a big fill, so this is lower-priority, not ignored).
-// CVD separation on the current 6-hex set (blue/violet/yellow/aqua/orange../
-// green/red -- recheck after any further swap) lands in the 6-8 floor band
-// for the weakest pair, legal only with secondary encoding, which this page
-// already has (model name in every tooltip, text-labeled legend, white/dark
-// stroke outline on every marker).
+// hues claimed by the zone fills (orange=time, magenta/rose=altitude). ECMWF
+// sits at the "violet" slot (#4a3aa7, altitude's old color before its ramp
+// moved to magenta/rose) rather than the categorical "magenta" slot, to stay
+// out of the altitude ramp's hue. HRRR (green) and ARPEGE (aqua) are still in
+// the same terrain-risky green family the altitude ramp moved away from --
+// a likely follow-up, lower priority since small outlined point markers are
+// far more forgiving than a big fill. CVD separation on the current 6-hex
+// set lands in the 6-8 floor band for the weakest pair, legal only with
+// secondary encoding, which this page already has (model name in every
+// tooltip, text-labeled legend, white/dark stroke outline on every marker).
 const MODEL_COLORS_HEX = {
   gfs: '#2a78d6', hrrr: '#008300', ecmwf: '#4a3aa7',
   icon: '#eda100', arpege: '#1baf7a', gem: '#e34948',
@@ -141,16 +128,14 @@ const MODEL_COLORS_HEX = {
 const MODEL_LEGEND_ORDER = ['gfs', 'ecmwf', 'gem', 'icon', 'arpege', 'hrrr'];
 
 // History view: model identity is color (same MODEL_COLORS_HEX as every
-// other view -- "the colored dots from the splash are easy to see," user's
-// call 2026-07-18, reversing the original design where History repurposed
-// color for recency and used shape alone for model identity) AND shape,
-// redundantly -- shape is the colorblind-safe fallback so identity never
-// depends on color perception alone. Recency (which capture date a point is
-// from) moved to its own selectable "Forecast age" filter (buildTimeLegend()
-// in History mode) instead of a visual color/opacity gradient, so it no
-// longer needs a channel of its own here. "star" is deliberately not
-// assigned to any model -- reserved for the actual-landing marker (see
-// renderHistory()) so it's never ambiguous with a model's projection.
+// other view -- colored dots read better than a black/shape-only marker) AND
+// shape, redundantly -- shape is the colorblind-safe fallback so identity
+// never depends on color perception alone. Recency (which capture date a
+// point is from) is its own selectable "Forecast age" filter
+// (buildTimeLegend() in History mode) rather than a color/opacity gradient,
+// so it doesn't need a channel here. "star" is deliberately not assigned to
+// any model -- reserved for the actual-landing marker (see renderHistory())
+// so it's never ambiguous with a model's projection.
 const MODEL_SHAPES = { gfs: 'circle', ecmwf: 'square', gem: 'triangle-up', icon: 'diamond', arpege: 'triangle-down', hrrr: 'plus' };
 // Circle = the faster rate, square = the slower one, so fast/slow reads at a
 // glance without needing to hover -- covers both naming schemes (single
@@ -187,36 +172,34 @@ let boostAngleDeg = null;
 // Permalink support: site/date/mode/hour/deploy/rate/alt/compare read from
 // the URL on first load, written back out on every render so a bookmark or a
 // pasted link reproduces "what you were looking at" -- no login/accounts,
-// just the querystring (user's call 2026-07-17: a club sends out a link to a
-// launch date, or a flier bookmarks their home site + a fast/slow-only
-// view). Read once into a snapshot rather than re-reading location.search
-// live -- freshState() consumes it exactly once (see urlStateApplied) so a
-// later manual site/mode switch starts from real defaults, not a stale URL
-// value from whatever page load first parsed.
+// just the querystring. Read once into a snapshot rather than re-reading
+// location.search live -- freshState() consumes it exactly once (see
+// urlStateApplied) so a later manual site/mode switch starts from real
+// defaults, not a stale URL value from whatever page load first parsed.
 const URL_PARAMS = new URLSearchParams(location.search);
 let urlStateApplied = false;
 
 // The launch date is deliberately NOT live-synced into the URL by default --
 // a target date is inherently perishable (today's "latest" becomes stale the
 // moment a newer capture is pulled), so a plain bookmark or a long-lived tab
-// should keep tracking "whatever's current," not silently freeze on whatever
-// date happened to be selected at the time (user's call 2026-07-17). Date
-// only gets written in once the user does one of two explicit things: picks
-// a date from the dropdown themselves (see dateSelect's 'change' handler), or
-// clicks "Copy link" (an unambiguous "give me a durable link to exactly
-// this" ask) -- or if they arrived via a link that already had ?date= on it,
-// which is itself evidence someone already did one of those two things.
+// should keep tracking "whatever's current" rather than freeze on whatever
+// date happened to be selected at the time. Date only gets written in once
+// the user does one of two explicit things: picks a date from the dropdown
+// themselves (see dateSelect's 'change' handler), or clicks "Copy link" (an
+// unambiguous "give me a durable link to exactly this" ask) -- or if they
+// arrived via a link that already had ?date= on it, which is itself evidence
+// someone already did one of those two things.
 let dateExplicitlyChosen = URL_PARAMS.has('date');
 
-// Hour and deploy get the same treatment (user's call 2026-07-17, same day):
-// their *default* is a fixed constant (DATA.hours[0]/DATA.deploys[0]) rather
-// than a moving target like "latest date" is, so there's no staleness risk
-// in leaving them out -- but a plain click around the map shouldn't start
-// pinning "9am" or "Dual" into the address bar either, only a deliberate
-// toggle click should (see the hour-toggle/deploy-toggle onChange callbacks
-// in initFromData()). Unlike date, Copy Link does NOT force these in --
-// since their default reproduces identically on any later visit, there's
-// nothing for Copy Link to protect against by forcing them.
+// Hour and deploy get the same treatment: their *default* is a fixed
+// constant (DATA.hours[0]/DATA.deploys[0]) rather than a moving target like
+// "latest date" is, so there's no staleness risk in leaving them out -- but a
+// plain click around the map shouldn't start pinning "9am" or "Dual" into
+// the address bar either, only a deliberate toggle click should (see the
+// hour-toggle/deploy-toggle onChange callbacks in initFromData()). Unlike
+// date, Copy Link does NOT force these in -- their default reproduces
+// identically on any later visit, so there's nothing for it to protect
+// against by forcing them.
 let hourExplicitlyChosen = URL_PARAMS.has('hour');
 let deployExplicitlyChosen = URL_PARAMS.has('deploy');
 
@@ -307,10 +290,9 @@ function setMode(mode) {
   // silently filtering them to "fast only" until the user notices and
   // manually clears it.
   state.isolatedRate = null; state.pinnedRate = null;
-  // History always shows exactly one rate (user's call 2026-07-17 -- showing
-  // both would double the model x capture-date marker count for little
-  // benefit); default to fast the first time this mode is entered, then
-  // leave whatever the user picked alone on later visits.
+  // History always shows exactly one rate -- showing both would double the
+  // model x capture-date marker count for little benefit. Default to fast
+  // the first time this mode is entered, then leave the user's pick alone.
   if (mode === 'byHistory' && !state.pinnedRate) state.pinnedRate = 'fast';
   applyModeUI(mode);
   buildAltList();
@@ -444,11 +426,10 @@ function buildTimeLegend() {
   el.innerHTML = '';
   if (state.mode === 'byHistory') {
     if (!HISTORY) return;
-    // Selectable like every other legend here (user's call 2026-07-18) --
-    // was static/reference-only. Swatch still uses the grayscale recency
-    // ramp (recencyColor()) as a visual "how far back" cue on the row
-    // itself; the markers it filters on the map use model color instead
-    // (see MODEL_SHAPES's comment) now that recency has its own channel.
+    // Selectable like every other legend here. Swatch uses the grayscale
+    // recency ramp (recencyColor()) as a visual "how far back" cue on the
+    // row itself; the markers it filters on the map use model color instead
+    // (see MODEL_SHAPES's comment) since recency has its own channel here.
     [...HISTORY.captures].sort().forEach(captureDate => {
       const leadDays = Math.round((new Date(HISTORY.target_date) - new Date(captureDate)) / 86400000);
       const row = document.createElement('div');
@@ -632,18 +613,15 @@ function endPadDrag() { draggingPad = false; wrap.classList.remove('dragging-pad
 window.addEventListener('pointerup', endPadDrag);
 window.addEventListener('pointercancel', endPadDrag);
 
-// Regression found + fixed 2026-07-18: every button living inside #map-wrap
-// (zoom controls, the layer toggle below) stopped responding to real clicks
-// once the touch pan/zoom work added wrap's own pointerdown handler
-// (setPointerCapture() + drag tracking, above) -- that handler has no
-// evt.target check, so a pointerdown on any of these buttons bubbles up and
-// gets captured by wrap before the browser's click synthesis on the button
-// completes. Confirmed via a real Playwright click (not a synthetic
-// .click() call, which bypasses the pointer pipeline and misleadingly
-// "worked"): viewBox never changed on a real #zoom-in click. Same fix as
-// the pad marker already uses (stopPropagation() on its own pointerdown) --
+// Any button living inside #map-wrap (zoom controls, the layer toggle below)
+// silently stops responding to clicks without this: wrap's own pointerdown
+// handler (setPointerCapture() + drag tracking, above) has no evt.target
+// check, so a pointerdown on a child button bubbles up and gets captured by
+// wrap before the browser's click synthesis on the button completes. Same
+// fix the pad marker uses (stopPropagation() on its own pointerdown) --
 // applied here at the container level so every button inside inherits it
-// without needing its own listener.
+// without needing its own listener. Any *new* button added inside #map-wrap
+// needs to be covered by this selector or the same bug recurs.
 document.querySelectorAll('.zoom-btns, .layer-toggle').forEach(el => {
   el.addEventListener('pointerdown', evt => evt.stopPropagation());
 });
@@ -678,9 +656,9 @@ updateLayerToggleUI();
 // --- permalink copy button: the URL bar is kept live-synced for
 // site/mode/hour/deploy/rate/alt (see syncUrl()), but NOT the launch date by
 // default -- clicking this button is itself the explicit "give me a durable
-// link to exactly this" ask (user's call 2026-07-17), so it always includes
-// the currently-selected date regardless, and flips dateExplicitlyChosen so
-// the address bar starts keeping it too from here on. ---
+// link to exactly this" ask, so it always includes the currently-selected
+// date regardless, and flips dateExplicitlyChosen so the address bar starts
+// keeping it too from here on. ---
 const copyLinkBtn = document.getElementById('copy-link-btn');
 copyLinkBtn.addEventListener('click', () => {
   dateExplicitlyChosen = true;
@@ -877,18 +855,15 @@ function bufferedPointsFt(pointsFt, radiusFt, n = 12) {
 }
 
 // Draggable launch pad: capped at 2,000 ft from the surveyed GPS point --
-// (a) every model here is on a grid coarser than that (HRRR, the finest,
-// is ~3km/~9,800ft; GFS/ECMWF/etc. much coarser), so nothing within this
-// radius could ever pull a different forecast value regardless of exact
-// pad placement -- the cap can't accidentally imply "a different location's
-// weather" the way a multi-mile move could; (b) it's generous enough for a
-// real "set up on the other side of the field" adjustment without
-// pretending to model an actually different site; (c) it stays inside even
-// the smallest site's detail-map crop (Apache Pass's ~3,800 ft half-width),
-// so the pad marker can never drag off the visible imagery. User's call
-// 2026-07-17 to add this at all; this number is Claude's estimate of where
-// "same field" stops being a reasonable description, not a club-specified
-// figure -- revisit if a club says otherwise.
+// (a) every model here is on a grid coarser than that (HRRR, the finest, is
+// ~3km/~9,800ft), so nothing within this radius could ever pull a different
+// forecast value regardless of exact pad placement; (b) it's generous enough
+// for a real "set up on the other side of the field" adjustment without
+// modeling an actually different site; (c) it stays inside even the
+// smallest site's detail-map crop (Apache Pass's ~3,800 ft half-width), so
+// the pad marker can never drag off the visible imagery. Not a
+// club-specified figure -- an estimate of where "same field" stops being a
+// reasonable description; revisit if a club says otherwise.
 const MAX_PAD_MOVE_FT = 2000;
 // Not part of `state` -- like boostAngleDeg, this is a standing "what if"
 // exploration setting, not a "which zone am I looking at" selection. Reset
@@ -905,9 +880,9 @@ function ftToPx(x_ft, y_ft) {
 
 // Caller passes whichever points should currently count -- drawZone() passes
 // the rate-filtered set so isolating Fast/Slow actually shrinks the buffer,
-// not the unfiltered zone.points (see drawZone()'s comment on why that
-// changed 2026-07-17: a static both-rates outline around filtered-down dots
-// read as broken, not as "the buffer means something different").
+// not the unfiltered zone.points (a static both-rates outline around
+// filtered-down dots reads as broken, not as "the buffer means something
+// different").
 function computeBufferHullPx(zonePoints, boostAngleDeg, altitudeFt) {
   const radiusFt = altitudeFt * Math.tan(boostAngleDeg * Math.PI / 180);
   const ptsFt = zonePoints.map(p => [p.x_ft, p.y_ft]);
@@ -916,11 +891,10 @@ function computeBufferHullPx(zonePoints, boostAngleDeg, altitudeFt) {
 }
 
 // --- History view: one splash point per model per capture date ------------
-// (see docstring at MODE_LABELS/MODEL_SHAPES for why it's "History" not
-// "Drift"). Deliberately simplified relative to the main view per the
-// 2026-07-17 direction that started this: no wind speed/direction, no
-// hull/buffer, just where each model's point landed and how that moved
-// capture to capture, for one fixed hour/deploy/rate/altitude.
+// (see the comment at MODE_LABELS for why it's "History" not "Drift").
+// Deliberately simplified relative to the main view: no wind speed/
+// direction, no hull/buffer, just where each model's point landed and how
+// that moved capture to capture, for one fixed hour/deploy/rate/altitude.
 
 // Grayscale, not another hue -- avoids relitigating which of the six
 // categorical hues (already spoken for: violet=altitude, orange=time,
@@ -1042,13 +1016,12 @@ function renderHistory() {
   const activeModel = state.isolatedModel ?? state.pinnedModel;
   const activeCapture = state.isolatedCapture ?? state.pinnedCapture;
 
-  // Splash polygon for the hovered/pinned forecast age (added 2026-07-18,
-  // user's call): same buffer+core hull treatment drawZone() uses for the
-  // main view, but built from that one capture date's points across models
-  // (or just the isolated model, if one's also active -- same composable
-  // filtering the accuracy table already does) -- lets the actual star be
-  // read against "how big was the projected area that day," not just its
-  // distance to each individual point.
+  // Splash polygon for the hovered/pinned forecast age: same buffer+core
+  // hull treatment drawZone() uses for the main view, but built from that
+  // one capture date's points across models (or just the isolated model, if
+  // one's also active -- same composable filtering the accuracy table
+  // already does) -- lets the actual star be read against "how big was the
+  // projected area that day," not just its distance to each individual point.
   if (activeCapture) {
     const dayPoints = (HISTORY.points_by_key[key] || []).filter(pt => {
       if (pt.capture_date !== activeCapture) return false;
@@ -1111,7 +1084,7 @@ function renderHistory() {
   }
 }
 
-// --- Accuracy-vs-actual table (History mode only, added 2026-07-18) --------
+// --- Accuracy-vs-actual table (History mode only) ---------------------------
 // Cell color uses the fixed 4-step status scale (good/warning/serious/
 // critical), not a plain sequential ramp -- the color here literally means
 // "how accurate," not just "big number" (dataviz skill's own carve-out for
@@ -1506,8 +1479,7 @@ async function loadDataset(entry) {
   const resp = await fetch(entry.data_path);
   DATA = await resp.json();
   // history_path is null for a target processed before this feature existed
-  // (shouldn't happen post-2026-07-17, but handled rather than assumed) --
-  // HISTORY just stays null and the History view mode shows its own
+  // -- HISTORY just stays null and the History view mode shows its own
   // "nothing published yet" state (see renderHistory()) instead of erroring.
   HISTORY = entry.history_path ? await (await fetch(entry.history_path)).json() : null;
   initFromData();
@@ -1562,15 +1534,14 @@ function loadSiteManifest(manifestPath) {
 }
 
 // --- launch-site picker: a plain <select> over maps/regional/sites.json
-// (built by fetch_site_maps.py --regional) -- was a clickable regional map
-// with markers, replaced 2026-07-17 per user direction back to a simple
-// dropdown. Still reads the same sites.json (name/club/has_data), just no
-// longer needs its px/image_size_px marker-position fields. Only Hutto has
-// a real pull_live_forecast.py/splash_zones.py pipeline run against it so
-// far -- has_data per site comes from fetch_site_maps.py's
+// (built by fetch_site_maps.py --regional; still reads the same
+// name/club/has_data fields it would if this were a clickable regional map
+// instead of a dropdown, just not the px/image_size_px marker-position
+// ones). has_data per site comes from fetch_site_maps.py's
 // refresh_regional_sites_metadata() (a real check against that site's
-// manifest, not a hardcoded list); sites without one are still selectable
-// but show an honest "no data yet" state rather than a broken fetch.
+// manifest, not a hardcoded list); a site with no pull yet is still
+// selectable but shows an honest "no data yet" state rather than a broken
+// fetch.
 const siteEmptyState = document.getElementById('site-empty-state');
 const mainLayout = document.getElementById('main-layout');
 const siteDataControls = document.getElementById('site-data-controls');
