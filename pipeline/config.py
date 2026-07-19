@@ -70,12 +70,17 @@ SITES = {
         "lat": 37.17028, "lon": -97.73667, "waiver_ft": 50000, "elev_m": 384.0, "cron_cutoff_hour_utc": 20,
     },
     "gunter": {
-        # Dallas Area Rocket Society (DARS). Coordinates from dars.org
-        # (Site-Gunter-Modroc.html). waiver_ft is the club's actual practical
-        # ceiling (6,000ft), not the FAA waiver number every other site here
-        # stores.
+        # Dallas Area Rocket Society (DARS). waiver_ft is the club's actual
+        # practical ceiling (6,000ft), not the FAA waiver number every other
+        # site here stores.
+        #
+        # Coordinates moved ~2,000ft (user's own direct knowledge of the
+        # field) from dars.org's figure, which is the gate, to the middle of
+        # the field where setup actually happens -- the gate coordinate ate
+        # nearly the entire MAX_PAD_MOVE_FT drag budget (app.js) on its own,
+        # leaving no real room to try a different spot within the field.
         "name": "Gunter, TX", "club": "DARS",
-        "lat": 33.438004, "lon": -96.803632, "waiver_ft": 6000, "elev_m": 217.0, "cron_cutoff_hour_utc": 20,
+        "lat": 33.435039, "lon": -96.8091009, "waiver_ft": 6000, "elev_m": 213.0, "cron_cutoff_hour_utc": 20,
     },
     "sd_rocket_jockies": {
         # Coordinates and waiver given directly by the user, not independently
