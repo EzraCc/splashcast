@@ -756,6 +756,7 @@ timeColorReset.addEventListener('click', () => {
 // --- pad-move reset/readout (dragging itself is wired in drawPadMarker()) ---
 const padReadout = document.getElementById('pad-readout');
 const padResetBtn = document.getElementById('pad-reset-btn');
+const padHint = document.getElementById('pad-hint');
 padResetBtn.addEventListener('click', () => {
   padOffsetFt = { x: 0, y: 0 };
   render();
@@ -862,17 +863,19 @@ function bufferedPointsFt(pointsFt, radiusFt, n = 12) {
   return out;
 }
 
-// Draggable launch pad: capped at 2,000 ft from the surveyed GPS point --
-// (a) every model here is on a grid coarser than that (HRRR, the finest, is
-// ~3km/~9,800ft), so nothing within this radius could ever pull a different
-// forecast value regardless of exact pad placement; (b) it's generous enough
-// for a real "set up on the other side of the field" adjustment without
-// modeling an actually different site; (c) it stays inside even the
-// smallest site's detail-map crop (Apache Pass's ~3,800 ft half-width), so
-// the pad marker can never drag off the visible imagery. Not a
-// club-specified figure -- an estimate of where "same field" stops being a
-// reasonable description; revisit if a club says otherwise.
-const MAX_PAD_MOVE_FT = 2000;
+// Draggable launch pad: capped at DATA.max_pad_move_ft from the surveyed GPS
+// point -- per-site (config.SITES[...]["max_pad_move_ft"] server-side, see
+// its own comment there), since a club's real alternate pads aren't the
+// same distance out everywhere. Defaults to 2000ft: every model here is on a
+// grid coarser than that anyway (HRRR, the finest, is ~3km/~9,800ft), so
+// nothing within it could ever pull a different forecast value regardless
+// of exact placement, and it's generous enough for a real "set up on the
+// other side of the field" adjustment without modeling an actually
+// different site. Set per-dataset in initFromData(), not just on first
+// load like boostAngleDeg -- this is a physical fact about whichever site
+// is currently selected, not a standing user preference that should
+// survive a site switch unchanged.
+let MAX_PAD_MOVE_FT = 2000;
 // Not part of `state` -- like boostAngleDeg, this is a standing "what if"
 // exploration setting, not a "which zone am I looking at" selection. Reset
 // on site switch (selectSite()) since a different site's pad is a genuinely
@@ -1500,6 +1503,9 @@ function initFromData() {
   if (boostAngleDeg === null) boostAngleDeg = DATA.boost_angle_deg; // first load only -- see its declaration
   boostAngleSlider.value = boostAngleDeg;
   boostAngleReadout.textContent = `${boostAngleDeg}°`;
+  // Every load, not just first -- see MAX_PAD_MOVE_FT's own declaration.
+  MAX_PAD_MOVE_FT = DATA.max_pad_move_ft ?? 2000;
+  padHint.textContent = `Drag the crosshair on the map to try a nearby setup spot (capped at ${MAX_PAD_MOVE_FT.toLocaleString()} ft from the surveyed point -- everything shifts with it).`;
 
   buildToggle('mode-toggle', ['byAltitude', 'byTime', 'byHistory'], MODE_LABELS, 'mode', () => setMode(state.mode));
   buildToggle('hour-toggle', DATA.hours, HOUR_LABELS, 'hour', () => { hourExplicitlyChosen = true; });

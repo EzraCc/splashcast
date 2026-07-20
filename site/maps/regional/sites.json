@@ -64,12 +64,12 @@
     "argonia": {
       "name": "Argonia, KS (The Rocket Pasture)",
       "club": "KLOUDBusters",
-      "lat": 37.17028,
-      "lon": -97.73667,
+      "lat": 37.166623,
+      "lon": -97.738819,
       "waiver_ft": 50000,
       "px": [
-        365.9,
-        216.9
+        365.5,
+        217.7
       ],
       "has_data": true
     },

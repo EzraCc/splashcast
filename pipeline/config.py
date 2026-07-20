@@ -37,14 +37,24 @@ SITE_LON = -97.496454  # west-negative; convert to 0-360 for grid lookups
 # biased to the later of CDT/CST's UTC-equivalent of "2pm local" (19:00/20:00
 # UTC -> stored as 20) so a real last-pull opportunity is never missed -- the
 # tradeoff is pulling slightly past 2pm local during CDT months.
+#
+# max_pad_move_ft: how far the viewer's draggable pad marker can move from
+# the surveyed point (app.js's MAX_PAD_MOVE_FT, sent to the client via
+# build_zone_data()'s output). 2000 by default -- generous enough for a real
+# "set up on the other side of the field" adjustment without pretending to
+# model an actually different site, while every model here is on a grid
+# coarser than that anyway (HRRR, the finest, is ~3km/~9,800ft), so nothing
+# within it could ever pull a different forecast value regardless of exact
+# placement. Raised per-site only where a club's own real alternate pads
+# (not just "try a nearby spot") sit further out than that.
 SITES = {
     "hutto": {
         "name": "Hutto", "club": "AARG", "lat": SITE_LAT, "lon": SITE_LON,
-        "waiver_ft": 10000, "elev_m": 197.0, "cron_cutoff_hour_utc": 20,
+        "waiver_ft": 10000, "elev_m": 197.0, "cron_cutoff_hour_utc": 20, "max_pad_move_ft": 2000,
     },
     "seymour": {
         "name": "Seymour, TX (Rocket Ranch)", "club": "TNT",
-        "lat": 33.501037, "lon": -99.338722, "waiver_ft": 45000, "elev_m": 417.0, "cron_cutoff_hour_utc": 20,
+        "lat": 33.501037, "lon": -99.338722, "waiver_ft": 45000, "elev_m": 417.0, "cron_cutoff_hour_utc": 20, "max_pad_move_ft": 2000,
         # waiver_ft: 45,000ft AGL, 4 NM radius, per TNT's own site.
     },
     "apache_pass": {
@@ -52,13 +62,13 @@ SITES = {
         # launch_schedule.py) -- kept as "AARG" so the two group together in
         # the site-picker by club.
         "name": "Apache Pass", "club": "AARG",
-        "lat": 30.680694, "lon": -97.142621, "waiver_ft": 10000, "elev_m": 123.0, "cron_cutoff_hour_utc": 20,
+        "lat": 30.680694, "lon": -97.142621, "waiver_ft": 10000, "elev_m": 123.0, "cron_cutoff_hour_utc": 20, "max_pad_move_ft": 2000,
     },
     "hearne": {
         # Club-provided coordinate for the actual launch point on the runway,
         # not KLHB's official airport reference point (~1.2km away).
         "name": "Hearne, TX (Hearne Municipal Airport / KLHB)", "club": "Tripoli Houston",
-        "lat": 30.861145710845943, "lon": -96.6225689682861, "waiver_ft": 12000, "elev_m": 82.0, "cron_cutoff_hour_utc": 20,
+        "lat": 30.861145710845943, "lon": -96.6225689682861, "waiver_ft": 12000, "elev_m": 82.0, "cron_cutoff_hour_utc": 20, "max_pad_move_ft": 2000,
     },
     "tripoli_houston_south": {
         # waiver_ft: 17,500 AGL, per tripolihouston.com's homepage.
@@ -66,11 +76,15 @@ SITES = {
         # "Tripoli Houston", and siteLabel() in app.js joins them as
         # "{club} - {name}"; the longer form doubled up on "Houston" there.
         "name": "South Site", "club": "Tripoli Houston",
-        "lat": 29.22320, "lon": -95.09726, "waiver_ft": 17500, "elev_m": 1.0, "cron_cutoff_hour_utc": 20,
+        "lat": 29.22320, "lon": -95.09726, "waiver_ft": 17500, "elev_m": 1.0, "cron_cutoff_hour_utc": 20, "max_pad_move_ft": 2000,
     },
     "argonia": {
+        # Coordinate is the middle of the field, not the original figure --
+        # the club runs "away" and "far away" pads that can sit up to
+        # ~2,500ft east of it, so max_pad_move_ft is raised past the default
+        # to actually reach them (with a little headroom).
         "name": "Argonia, KS (The Rocket Pasture)", "club": "KLOUDBusters",
-        "lat": 37.17028, "lon": -97.73667, "waiver_ft": 50000, "elev_m": 384.0, "cron_cutoff_hour_utc": 20,
+        "lat": 37.166623, "lon": -97.738819, "waiver_ft": 50000, "elev_m": 382.0, "cron_cutoff_hour_utc": 20, "max_pad_move_ft": 3000,
     },
     "gunter": {
         # Dallas Area Rocket Society (DARS). waiver_ft is the club's actual
@@ -80,17 +94,17 @@ SITES = {
         # Coordinates moved ~2,000ft (user's own direct knowledge of the
         # field) from dars.org's figure, which is the gate, to the middle of
         # the field where setup actually happens -- the gate coordinate ate
-        # nearly the entire MAX_PAD_MOVE_FT drag budget (app.js) on its own,
+        # nearly the entire default max_pad_move_ft budget on its own,
         # leaving no real room to try a different spot within the field.
         "name": "Gunter, TX", "club": "DARS",
-        "lat": 33.435039, "lon": -96.8091009, "waiver_ft": 6000, "elev_m": 213.0, "cron_cutoff_hour_utc": 20,
+        "lat": 33.435039, "lon": -96.8091009, "waiver_ft": 6000, "elev_m": 213.0, "cron_cutoff_hour_utc": 20, "max_pad_move_ft": 2000,
     },
     "sd_rocket_jockies": {
         # Coordinates and waiver given directly by the user, not independently
         # verified against the club. Spelled "Jockies" (vs. NAR's official
         # "Jockeys") per explicit instruction on display naming.
         "name": "SD Rocket Jockies", "club": "SD Rocket Jockies",
-        "lat": 44.5149338, "lon": -96.8551149, "waiver_ft": 14000, "elev_m": 499.0, "cron_cutoff_hour_utc": 20,
+        "lat": 44.5149338, "lon": -96.8551149, "waiver_ft": 14000, "elev_m": 499.0, "cron_cutoff_hour_utc": 20, "max_pad_move_ft": 2000,
     },
 }
 

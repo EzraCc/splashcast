@@ -2,6 +2,12 @@
 
 Dated, terse log of notable changes. For the full design rationale and decision history, see [docs/spec.md](docs/spec.md).
 
+## 2026-07-20
+
+**Argonia/KLOUDBusters GPS corrected; pad-drag range now per-site**
+- Coordinate corrected to the middle of the field (was off by ~1,475ft). Maps re-fetched, both existing target dates' published zone data regenerated.
+- The pad-drag cap (`MAX_PAD_MOVE_FT`) was a single global 2000ft for every site -- too small for Argonia, where the club runs "away" and "far away" pads up to ~2,500ft out. It's now per-site (`config.SITES[...]["max_pad_move_ft"]`, sent to the client via the zone JSON), 2000ft everywhere except Argonia (3000ft, with room to spare -- its detail map crop is comfortably larger than that). The on-page pad-drag hint text now reflects each site's actual cap instead of a hardcoded number.
+
 ## 2026-07-19
 
 **Hutto GPS moved to get the rails off the road**

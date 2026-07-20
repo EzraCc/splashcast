@@ -306,7 +306,7 @@ def buffered_points(points_xy: list[tuple[float, float]], radius_ft: float, n: i
     return out
 
 
-def build_zone_data(pts: pd.DataFrame, site_meta: dict) -> dict:
+def build_zone_data(pts: pd.DataFrame, site_meta: dict, site_id: str) -> dict:
     """Drift points -> the exact JSON schema index.html's DATA expects."""
     detail = site_meta["detail"]
     wide = site_meta["wide"]
@@ -359,6 +359,7 @@ def build_zone_data(pts: pd.DataFrame, site_meta: dict) -> dict:
         "wide_view_box": wide_view_box,
         "ft_to_px_scale": {"x": round(px_per_ft_x, 6), "y": round(px_per_ft_y, 6)},
         "boost_angle_deg": config.BOOST_ANGLE_OFF_VERTICAL_DEG,
+        "max_pad_move_ft": config.SITES[site_id]["max_pad_move_ft"],
         "data": {},
     }
 
@@ -546,7 +547,7 @@ def run(target_date: date, site_id: str = "hutto") -> None:
 
     with open(config.SITE_DIR / "maps" / site_id / "site.json") as f:
         site_meta = json.load(f)
-    zone_data = build_zone_data(pts, site_meta)
+    zone_data = build_zone_data(pts, site_meta, site_id)
 
     published_live_dir = config.SITE_DIR / "data" / site_id / "live" / str(target_date)
     published_live_dir.mkdir(parents=True, exist_ok=True)
