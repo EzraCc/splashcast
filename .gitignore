@@ -19,3 +19,10 @@ __pycache__/
 pipeline/data/maps_raw/
 pipeline/data/raw/
 pipeline/data/*/raw/
+
+# Real GPS-tracker flight logs (raw per-second telemetry CSVs, used for
+# real-flight-vs-prediction analysis) -- large, and potentially identifying
+# of a specific flier/flight; only the derived summary (apogee, descent
+# rates, landing coords, delta from predictions) gets published, never the
+# raw track itself.
+pipeline/data/actuals/

@@ -1,0 +1,219 @@
+{
+  "site_id": "hearne",
+  "target_date": "2026-07-11",
+  "deploy": "dual",
+  "closest_hour": 13,
+  "launch": {
+    "time_local": "12:12:18.483",
+    "offset_from_pad_ft": {
+      "x": 68.6,
+      "y": 5.2,
+      "dist": 68.8
+    }
+  },
+  "apogee": {
+    "time_local": "12:12:39.363",
+    "altitude_agl_ft": 10476.4,
+    "offset_from_pad_ft": {
+      "x": -194.7,
+      "y": 312.0,
+      "dist": 367.8
+    },
+    "boost_angle_from_vertical_deg": 2.01,
+    "configured_boost_angle_deg": 10
+  },
+  "main_deploy": {
+    "time_local": "12:15:11.196",
+    "altitude_agl_ft": 629.7
+  },
+  "descent_rates_ground_equivalent_fps": {
+    "drogue": {
+      "mean": 60.1,
+      "range": [
+        25.7,
+        115.7
+      ]
+    },
+    "main": {
+      "mean": 27.1,
+      "range": [
+        20.1,
+        32.6
+      ]
+    },
+    "configured_dual_deploy_fps": {
+      "slow": [
+        80.0,
+        10.0
+      ],
+      "fast": [
+        100.0,
+        20.0
+      ]
+    }
+  },
+  "density_scaling_check": {
+    "early_drogue": {
+      "mean_ground_equivalent_fps": 62.0,
+      "range": [
+        50.6,
+        74.7
+      ],
+      "altitude_range_agl_ft": [
+        8181,
+        10104
+      ],
+      "n_samples": 28
+    },
+    "late_drogue": {
+      "mean_ground_equivalent_fps": 62.7,
+      "range": [
+        59.6,
+        64.8
+      ],
+      "altitude_range_agl_ft": [
+        933,
+        2866
+      ],
+      "n_samples": 30
+    },
+    "pct_difference": 1.1
+  },
+  "landing": {
+    "lat": 30.871294,
+    "lon": -96.622845,
+    "offset_from_pad_ft": {
+      "x": -86.5,
+      "y": 3706.4,
+      "dist": 3707.4
+    },
+    "note": "extrapolated 1.3s past the last real GPS fix (110ft on the tracker's own AGL scale, vs a measured ~76ft ground-level baseline on that same scale) using its own heading/horizontal speed"
+  },
+  "predicted_landing_offset_from_pad_ft": {
+    "x": 120.2,
+    "y": 3719.2
+  },
+  "delta_from_predictions": {
+    "self_simulated_descent_only": {
+      "ft": 500.6,
+      "pct_of_actual_drift": 13.5
+    },
+    "self_simulated_boost_adjusted": {
+      "ft": 207.1,
+      "pct_of_actual_drift": 5.6
+    },
+    "altitude_bucket_used_ft": 10000,
+    "t0_model_forecasts": {
+      "11_dual_fast_10000": {
+        "gfs": {
+          "ft": 1339.3,
+          "pct_of_actual_drift": 36.1
+        },
+        "hrrr": {
+          "ft": 1367.8,
+          "pct_of_actual_drift": 36.9
+        },
+        "ecmwf": {
+          "ft": 1264.9,
+          "pct_of_actual_drift": 34.1
+        },
+        "icon": {
+          "ft": 2325.0,
+          "pct_of_actual_drift": 62.7
+        },
+        "arpege": {
+          "ft": 2372.7,
+          "pct_of_actual_drift": 64.0
+        }
+      },
+      "11_dual_slow_10000": {
+        "gfs": {
+          "ft": 709.6,
+          "pct_of_actual_drift": 19.1
+        },
+        "hrrr": {
+          "ft": 353.1,
+          "pct_of_actual_drift": 9.5
+        },
+        "ecmwf": {
+          "ft": 405.4,
+          "pct_of_actual_drift": 10.9
+        },
+        "icon": {
+          "ft": 1682.1,
+          "pct_of_actual_drift": 45.4
+        },
+        "arpege": {
+          "ft": 1789.1,
+          "pct_of_actual_drift": 48.3
+        }
+      },
+      "13_dual_fast_10000": {
+        "gfs": {
+          "ft": 1087.0,
+          "pct_of_actual_drift": 29.3
+        },
+        "hrrr": {
+          "ft": 1058.2,
+          "pct_of_actual_drift": 28.5
+        },
+        "ecmwf": {
+          "ft": 1797.2,
+          "pct_of_actual_drift": 48.5
+        },
+        "icon": {
+          "ft": 2291.7,
+          "pct_of_actual_drift": 61.8
+        },
+        "arpege": {
+          "ft": 2660.1,
+          "pct_of_actual_drift": 71.8
+        }
+      },
+      "13_dual_slow_10000": {
+        "gfs": {
+          "ft": 721.6,
+          "pct_of_actual_drift": 19.5
+        },
+        "hrrr": {
+          "ft": 669.8,
+          "pct_of_actual_drift": 18.1
+        },
+        "ecmwf": {
+          "ft": 922.5,
+          "pct_of_actual_drift": 24.9
+        },
+        "icon": {
+          "ft": 1775.0,
+          "pct_of_actual_drift": 47.9
+        },
+        "arpege": {
+          "ft": 2197.8,
+          "pct_of_actual_drift": 59.3
+        }
+      }
+    },
+    "hrrr_analysis_actual_proxy": {
+      "11_dual_fast_10000": {
+        "ft": 1789.5,
+        "pct_of_actual_drift": 48.3
+      },
+      "11_dual_slow_10000": {
+        "ft": 997.3,
+        "pct_of_actual_drift": 26.9
+      },
+      "13_dual_fast_10000": {
+        "ft": 1093.1,
+        "pct_of_actual_drift": 29.5
+      },
+      "13_dual_slow_10000": {
+        "ft": 99.3,
+        "pct_of_actual_drift": 2.7
+      }
+    },
+    "within_published_core_hull": {
+      "11": false,
+      "13": false
+    }
+  }
+}

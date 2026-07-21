@@ -15,6 +15,7 @@ Built for the author's own Texas/Kansas/South Dakota rocketry clubs, but the pip
 - [Project layout](#project-layout)
 - [Running it yourself](#running-it-yourself)
 - [Adding a site](#adding-a-site)
+- [Comparing a real flight against predictions](#comparing-a-real-flight-against-predictions)
 - [Further reading](#further-reading)
 
 ## What it does
@@ -70,6 +71,7 @@ pipeline/                Python: pulls data, runs the simulation, publishes JSON
   pull_historical.py         NOAA HRRR-analysis "actual" pull + a separate multi-week backfill mode.
   splash_zones.py            Wind capture -> drift simulation -> convex-hull zone JSON for the viewer.
   fetch_site_maps.py         Satellite/road map imagery fetch, per site.
+  analyze_real_flight.py     Real GPS-tracked flight vs. this pipeline's own forecasts/actuals (see below).
   data/                      Working data (gitignored raw pulls; live captures ARE tracked, see .gitignore).
 site/                     The deployable static app -- no backend, no build step.
   index.html, assets/        Markup, CSS, and the viewer's JS (rendering, interaction, permalinks).
@@ -108,6 +110,14 @@ Everything reads site config from `config.SITES` and takes `--site <site_id>` wh
 Short version: add an entry to `config.SITES`, add a recurring-launch rule to `launch_schedule.py`, run `fetch_site_maps.py` once, then let the cron jobs take it from there.
 
 Full step-by-step guide: **[docs/adding-a-site.md](docs/adding-a-site.md)**.
+
+## Comparing a real flight against predictions
+
+`pipeline/analyze_real_flight.py` takes a real GPS-tracker log and scores it against everything this pipeline already published for that site/date: derives real apogee (and the real boost-phase angle off vertical, measured from GPS rather than assumed), drogue/main descent rates, launch time, and landing point from the raw track; re-simulates using the real apogee + real rates + a real (HRRR-analysis) wind profile interpolated to the actual launch time; and reports the delta (both in feet and as a % of that day's actual drift distance, since 500ft reads very differently at a 3,500ft drift than at a 500ft one) against that self-simulation, every model's own same-day forecast, and whether the real landing fell inside the published splash zone.
+
+The reusable comparison logic (flight segmentation, descent-rate derivation, wind-time blending, re-simulation, scoring) is source-format-agnostic. Turning a specific tracker's raw export into the plain sample list it consumes is not -- that's an intentionally small, separate loader function (`load_deluxe_tracker_csv()` is the one example so far) that's expected to be replaced or added to as more tracker formats show up, until there's a standard one to write a single general parser against.
+
+Raw tracker logs are never committed (`pipeline/data/actuals/` is gitignored -- per-second GPS tracks can be large and identify a specific flier); only the derived summary JSON (apogee, rates, landing coordinates, deltas from predictions) is published, under `site/data/<site_id>/real_flights/`. When one exists for the currently-viewed target date, the History view plots it as its own marker (distinct from every model's shape and from the "actual" star) -- hover for a quick look, click to pin the info box open (click anywhere else to close it; on touch, where there's no hover, the first tap does the same job as a click). Clicking it also snaps the viewer's draggable "pad" crosshair to this flight's real launch-rail GPS offset, so the model/zone projections line up against where the rocket actually flew without dragging it there by hand -- released back to wherever it was on a normal close, though moving the pad yourself (drag, or its Reset button) closes the comparison instead of fighting your own placement.
 
 ## Further reading
 

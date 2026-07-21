@@ -1,6 +1,6 @@
 {
   "site_id": "seymour",
-  "generated_at": "2026-07-19T15:16:29",
+  "generated_at": "2026-07-20T19:27:09",
   "launch_dates": [
     {
       "target_date": "2026-07-25",
@@ -8,7 +8,8 @@
       "lead_days": 7,
       "label": "Sat, Jul 25 (T-7)",
       "data_path": "data/seymour/live/2026-07-25/splash_zones_captured_2026-07-18.json",
-      "history_path": "data/seymour/live/2026-07-25/points_history.json"
+      "history_path": "data/seymour/live/2026-07-25/points_history.json",
+      "real_flight_path": null
     },
     {
       "target_date": "2026-05-25",
@@ -16,7 +17,8 @@
       "lead_days": 0,
       "label": "Mon, May 25 (T-0)",
       "data_path": "data/seymour/live/2026-05-25/splash_zones_captured_2026-05-25.json",
-      "history_path": "data/seymour/live/2026-05-25/points_history.json"
+      "history_path": "data/seymour/live/2026-05-25/points_history.json",
+      "real_flight_path": null
     }
   ]
 }

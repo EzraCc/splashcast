@@ -109,9 +109,9 @@
 
     <div class="accuracy-section" id="accuracy-section" style="display:none;">
       <div class="alt-list-title">
-        Accuracy vs. actual <button class="info-btn" type="button" data-hint="accuracy-hint" title="Show details">i</button>
+        Accuracy vs. final projection <button class="info-btn" type="button" data-hint="accuracy-hint" title="Show details">i</button>
       </div>
-      <div class="alt-hint" id="accuracy-hint">Distance from each model's forecast point to the "actual" point (HRRR's own analysis, not a forecast -- see the History legend) for the currently-selected hour/deploy/rate/altitude. Format is total distance, then the (east, north) breakdown in feet. Color means the same thing across every launch, not just within this one table: a miss under 200ft is always green, and beyond that it's graded against how far the wind actually carried the rocket that day, so the same foot-error reads worse on a calm, short flight than a long, windy one.</div>
+      <div class="alt-hint" id="accuracy-hint">Distance from each model's forecast point to the "final projection" point (HRRR's own post-launch analysis, not a forecast, run through this same descent sim -- see the History legend; not a real GPS landing, see "Real flight" if one's been recorded) for the currently-selected hour/deploy/rate/altitude. Format is total distance, then the (east, north) breakdown in feet. Color means the same thing across every launch, not just within this one table: a miss under 200ft is always green, and beyond that it's graded against how far the wind actually carried the rocket that day, so the same foot-error reads worse on a calm, short flight than a long, windy one.</div>
       <div class="accuracy-legend" id="accuracy-legend"></div>
       <div class="accuracy-table-wrap">
         <table class="accuracy-table" id="accuracy-table"></table>
@@ -124,6 +124,7 @@
   </p>
 
   <div class="tooltip" id="tooltip"></div>
+  <div class="real-flight-box" id="real-flight-box"></div>
 </div>
 
 <script src="assets/js/app.js"></script>

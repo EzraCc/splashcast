@@ -256,6 +256,28 @@
   .tooltip .tt-row + .tt-row { margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--border, #dedcd6); }
   .tooltip b { color: var(--accent, #2a78d6); }
 
+  /* Real-flight info box: same fixed/positioned-at-cursor mechanism as
+     .tooltip, but stays open once pinned (see realFlightPinned in app.js) --
+     multi-line and doesn't collapse to nowrap the way the compact per-point
+     tooltip does, and gets a colored left edge matching the marker itself
+     so it's visually tied to what was clicked/hovered. */
+  .real-flight-box {
+    position: fixed;
+    background-color: var(--surface-2, #f2f1ee);
+    border: 1px solid var(--border, #dedcd6);
+    border-left: 3px solid var(--real-flight-color, #e91e8c);
+    border-radius: 8px;
+    padding: 8px 12px;
+    font-size: 0.8rem;
+    color: var(--text-primary, #0b0b0b);
+    box-shadow: 0 4px 20px rgba(0,0,0,0.35);
+    display: none;
+    z-index: 21;
+    line-height: 1.5;
+    max-width: 260px;
+  }
+  .real-flight-box .rf-title { font-weight: 700; color: var(--real-flight-color, #e91e8c); margin-bottom: 2px; }
+
   .footnote { margin-top: 18px; font-size: 0.78rem; color: var(--text-muted); line-height: 1.6; }
   .footnote code { background: var(--surface-2); padding: 1px 5px; border-radius: 4px; }
 
