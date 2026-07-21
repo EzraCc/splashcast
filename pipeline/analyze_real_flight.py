@@ -363,6 +363,12 @@ def analyze(site_id: str, target_date: date, samples: list[FlightSample], ground
             "offset_from_pad_ft": {"x": round(apogee_x_ft, 1), "y": round(apogee_y_ft, 1), "dist": round(apogee_dist_ft, 1)},
             "boost_angle_from_vertical_deg": round(boost_angle_deg, 2),
             "configured_boost_angle_deg": config.BOOST_ANGLE_OFF_VERTICAL_DEG,
+            # Distinguishes this from analyze_no_gps()'s apogee position,
+            # which is *inferred* (from the real landing point + an assumed-
+            # accurate wind sim), not measured -- see that function's own
+            # docstring. Real per-sample GPS here, same as the rest of this
+            # flight's track.
+            "position_source": "gps_measured",
         },
         "main_deploy": {"time_local": main_deploy.t.strftime("%H:%M:%S.%f")[:-3], "altitude_agl_ft": round(main_deploy.agl_ft, 1)},
         "descent_rates_ground_equivalent_fps": {
@@ -391,6 +397,159 @@ def analyze(site_id: str, target_date: date, samples: list[FlightSample], ground
         "delta_from_predictions": {
             "self_simulated_descent_only": descent_only_delta,
             "self_simulated_boost_adjusted": boost_adjusted_delta,
+            "altitude_bucket_used_ft": altitude_bucket,
+            **comparison,
+        },
+    }
+
+
+def analyze_no_gps(site_id: str, target_date: date, samples: list[FlightSample],
+                    rail_lat: float, rail_lon: float, landing_lat: float, landing_lon: float,
+                    wind_hour_a: int = 11, wind_hour_b: int = 13, altitude_bucket: int | None = None) -> dict:
+    """Same reusable core as analyze() -- segmentation, ground-referenced
+    descent-rate derivation, wind-time blending, re-simulation, scoring --
+    for altimeters with no GPS at all (e.g. a BlueRaven; see
+    load_blueraven_lr_csv()). `samples` carry real barometric altitude/time
+    only -- lat/lon are unused placeholders, since find_apogee_index()/
+    find_liftoff_index()/find_main_deploy_index()/implied_ground_rate()/
+    check_density_scaling() only ever touch .t/.agl_ft. Real launch-rail and
+    landing positions come from hand-recorded GPS pins passed in directly
+    (a phone/handheld reading at the pad and at the recovery site), since
+    there's no track to derive them from.
+
+    Without a real apogee GPS fix, boost-phase drift can't be *measured* --
+    it's *estimated* here, by assuming the wind-only descent simulation
+    (real apogee altitude + real derived rates + the real wind profile for
+    the actual flight time) is accurate, and backing the difference out of
+    the real recorded landing point. This holds regardless of where apogee
+    actually was, because the wind model varies only with altitude, not
+    horizontal position -- descent drift is ~translation-invariant. That
+    estimate is clearly flagged (apogee.position_source) and drives both the
+    map's apogee marker AND predicted_landing_offset_from_pad_ft (estimated
+    apogee + the same descent sim) -- which means, by construction,
+    predicted_landing_offset_from_pad_ft always lands exactly on the real
+    recorded landing point. That's intentional: it's a self-consistency
+    check on the reconstructed picture (rail -> estimated apogee -> real
+    wind descent -> landing), not an independent prediction, so there's no
+    self_simulated_* accuracy figure in delta_from_predictions for this kind
+    of flight -- publishing one here would just be circular, not a real
+    accuracy check. The T-0 model-forecast comparisons (compare_to_pipeline())
+    remain fully independent and are the only real scoring available."""
+    site = config.SITES[site_id]
+    site_elev_ft = config.elev_ft_for_site(site_id)
+    pad_lat, pad_lon = site["lat"], site["lon"]
+
+    apogee_idx = find_apogee_index(samples)
+    apogee = samples[apogee_idx]
+    liftoff = samples[find_liftoff_index(samples, 0.0, apogee_idx)]
+    main_deploy_idx = find_main_deploy_index(samples, apogee_idx)
+    if main_deploy_idx is None:
+        raise ValueError("couldn't find a main-deploy changepoint -- inspect the flight data manually")
+    main_deploy = samples[main_deploy_idx]
+
+    # Real hand-recorded GPS, both relative to the *configured* site pad --
+    # same convention analyze() uses for launch/landing, so this stays
+    # comparable against every published model point/hull (all anchored to
+    # that same configured pad, not wherever this specific rail really was).
+    rail_x_ft, rail_y_ft = latlon_to_ft(rail_lat, rail_lon, pad_lat, pad_lon)
+    rail_dist_ft = math.hypot(rail_x_ft, rail_y_ft)
+    real_x_ft, real_y_ft = latlon_to_ft(landing_lat, landing_lon, pad_lat, pad_lon)
+    real_dist_ft = math.hypot(real_x_ft, real_y_ft)
+
+    drogue_segment = samples[apogee_idx:main_deploy_idx + 1]
+    drogue_rate, dg_lo, dg_hi = implied_ground_rate(drogue_segment, site_elev_ft)
+    main_rate, mg_lo, mg_hi = implied_ground_rate(samples[main_deploy_idx:], site_elev_ft)
+    density_scaling_check = check_density_scaling(drogue_segment, main_deploy.agl_ft, site_elev_ft)
+
+    # Real wind profile, blended between the two bracketing HRRR-analysis
+    # hours to the real apogee time -- same as analyze().
+    raw_path = Path(config.DATA_DIR) / site_id / "raw" / f"{target_date}_actual.parquet"
+    raw = pd.read_parquet(raw_path)
+    hdt_a = sz.datetime.combine(target_date, sz.dtime(wind_hour_a, 0), tzinfo=sz._SITE_TZ).astimezone(sz.timezone.utc).replace(tzinfo=None)
+    hdt_b = sz.datetime.combine(target_date, sz.dtime(wind_hour_b, 0), tzinfo=sz._SITE_TZ).astimezone(sz.timezone.utc).replace(tzinfo=None)
+    profile_a = sz.build_actual_profile(raw[raw["valid_time"] == hdt_a], site_elev_ft)
+    profile_b = sz.build_actual_profile(raw[raw["valid_time"] == hdt_b], site_elev_ft)
+    span_s = (datetime.combine(date.min, sz.dtime(wind_hour_b, 0)) - datetime.combine(date.min, sz.dtime(wind_hour_a, 0))).total_seconds()
+    launch_offset_s = (apogee.t - datetime.combine(apogee.t.date(), sz.dtime(wind_hour_a, 0))).total_seconds()
+    weight_b = max(0.0, min(1.0, launch_offset_s / span_s))
+    blended_profile = blend_wind_profiles(profile_a, profile_b, weight_b)
+
+    phases = [(drogue_rate, apogee.agl_ft, main_deploy.agl_ft), (main_rate, main_deploy.agl_ft, 0)]
+    sim_x, sim_y = sz.simulate(blended_profile, apogee.agl_ft, phases, site_elev_ft)
+
+    # Estimated apogee position, relative to the configured pad -- built from
+    # the real rail GPS, the real BlueRaven data through apogee (real apogee
+    # altitude + real derived descent rates, which is everything sim_x/sim_y
+    # depends on), and the real recorded landing point. Solving
+    # rail_offset + boost_drift + sim = real_landing for boost_drift and
+    # adding it back to rail_offset is algebraically identical to just
+    # real_landing - sim (rail_offset cancels out of that sum) -- so this
+    # already incorporates the rail GPS correctly without needing to
+    # reference it explicitly here.
+    est_x, est_y = float(real_x_ft - sim_x), float(real_y_ft - sim_y)
+    est_dist_ft = math.hypot(est_x, est_y)
+    estimated_boost_angle_deg = math.degrees(math.atan2(est_dist_ft, apogee.agl_ft))
+
+    # Predicted landing = estimated apogee + the same wind-only descent sim
+    # used to derive that estimate -- by construction this lands exactly on
+    # the real landing point (est_x/est_y was solved specifically to make it
+    # do so), so it's a self-consistency check on the reconstructed picture
+    # (rail -> estimated apogee -> real wind descent -> landing), not an
+    # independent accuracy score. See delta_from_predictions below -- there's
+    # deliberately no self_simulated_* accuracy figure for this reason; the
+    # T-0 model-forecast comparisons remain the only real scoring here.
+    pred_x, pred_y = float(est_x + sim_x), float(est_y + sim_y)
+
+    if altitude_bucket is None:
+        altitudes = config.altitudes_for_site(site_id)
+        altitude_bucket = min(altitudes, key=lambda a: abs(a - apogee.agl_ft))
+    comparison = compare_to_pipeline(site_id, target_date, real_x_ft, real_y_ft, real_dist_ft, altitude_bucket, (wind_hour_a, wind_hour_b))
+    closest_hour = wind_hour_a if weight_b < 0.5 else wind_hour_b
+
+    return {
+        "site_id": site_id,
+        "target_date": str(target_date),
+        "deploy": "dual",
+        "closest_hour": closest_hour,
+        "launch": {
+            "time_local": liftoff.t.strftime("%H:%M:%S.%f")[:-3],
+            "offset_from_pad_ft": {"x": round(rail_x_ft, 1), "y": round(rail_y_ft, 1), "dist": round(rail_dist_ft, 1)},
+        },
+        "apogee": {
+            "time_local": apogee.t.strftime("%H:%M:%S.%f")[:-3],
+            "altitude_agl_ft": round(apogee.agl_ft, 1),
+            "offset_from_pad_ft": {"x": round(est_x, 1), "y": round(est_y, 1), "dist": round(est_dist_ft, 1)},
+            "boost_angle_from_vertical_deg": round(estimated_boost_angle_deg, 2),
+            "configured_boost_angle_deg": config.BOOST_ANGLE_OFF_VERTICAL_DEG,
+            "position_source": "estimated_from_landing_and_wind_model",
+            "position_estimation_note": (
+                "No GPS on this altimeter -- this position is *inferred*, not measured: it "
+                "assumes the descent-only wind simulation (real apogee altitude + real derived "
+                "descent rates + the real wind profile for this flight's actual time of day) is "
+                "accurate, then backs the boost-phase offset out of the difference between that "
+                "simulation and the real recorded landing point. predicted_landing_offset_from_pad_ft "
+                "is this same estimated apogee plus that same descent sim, so it lands exactly on the "
+                "real landing point by construction -- a self-consistency check on the reconstructed "
+                "flight, not an independent prediction (see delta_from_predictions, which has no "
+                "self-simulated accuracy figure for this flight for the same reason)."
+            ),
+        },
+        "main_deploy": {"time_local": main_deploy.t.strftime("%H:%M:%S.%f")[:-3], "altitude_agl_ft": round(main_deploy.agl_ft, 1)},
+        "descent_rates_ground_equivalent_fps": {
+            "drogue": {"mean": round(drogue_rate, 1), "range": [round(dg_lo, 1), round(dg_hi, 1)]},
+            "main": {"mean": round(main_rate, 1), "range": [round(mg_lo, 1), round(mg_hi, 1)]},
+            "configured_dual_deploy_fps": config.DUAL_DEPLOY_RATES_FPS,
+        },
+        "density_scaling_check": density_scaling_check,
+        "landing": {
+            "lat": round(landing_lat, 6), "lon": round(landing_lon, 6),
+            "offset_from_pad_ft": {"x": round(real_x_ft, 1), "y": round(real_y_ft, 1), "dist": round(real_dist_ft, 1)},
+            "note": "Hand-recorded GPS pin at the recovery site (this altimeter has no onboard GPS) -- not extrapolated from a track.",
+        },
+        # Estimated apogee + descent sim -- lands exactly on the real
+        # landing point by construction. See the docstring above.
+        "predicted_landing_offset_from_pad_ft": {"x": round(pred_x, 1), "y": round(pred_y, 1)},
+        "delta_from_predictions": {
             "altitude_bucket_used_ft": altitude_bucket,
             **comparison,
         },
@@ -445,24 +604,105 @@ def load_deluxe_tracker_csv(path: str, flight_start_after: str, ground_baseline_
     return samples, ground_agl_baseline
 
 
+def load_blueraven_lr_csv(path: str) -> list[FlightSample]:
+    """A BlueRaven altimeter's low-rate ("LR") export -- no GPS at all (see
+    analyze_no_gps(), which this feeds instead of analyze()). agl_ft comes
+    straight from the onboard barometer (Baro_Altitude_AGL_(feet)), already
+    zeroed to the pad on power-up -- unlike the Deluxe tracker's own AGL
+    scale, no separate ground-baseline window is needed to find true zero.
+    lat/lon are 0.0 placeholders: analyze_no_gps() never reads them (real
+    launch-rail/landing positions come from hand-recorded GPS pins passed in
+    separately, not derived from a track).
+
+    Deliberately does NOT touch this format's own onboard inertial-
+    navigation fields (Inertial_Altitude/Inertial_DR_Position/
+    Inertial_CR_position/Velocity_Up) -- BlueRaven's own user manual
+    documents that these lose accuracy once the rocket's rotation rate
+    exceeds the gyro's +-2000 deg/sec measurement range (common right around
+    apogee/deployment), and it's not just a documented risk: checked
+    directly against a real flight's raw high-rate gyro data, confirmed
+    exactly that failure at apogee, and confirmed the corruption cascades
+    into Velocity_Up too (BlueRaven's own summary-reported descent rates are
+    downstream of that same channel) -- so this loader relies on the
+    barometer alone throughout, same as it's used for the reliable altitude
+    profile in every other tracker format this module supports.
+
+    Decimated to ~1 sample/sec: the LR export itself runs much faster (50Hz
+    on the flight this loader was built against), but find_main_deploy_index()'s
+    windowing (a 6-sample trailing baseline, 3-sample confirmation, +7-sample
+    post-apogee skip) is tuned against the Deluxe tracker's own roughly-1Hz
+    cadence -- run against it undecimated, apogee's near-zero-crossing
+    vertical-velocity noise (amplified right at apogee here specifically by
+    the same attitude/tumble instability documented above) false-triggered a
+    "main deploy" a fraction of a second after apogee instead of the real
+    one two minutes later. Decimating instead of reworking those windows to
+    be rate-aware keeps every tracker format feeding the shared core the
+    same implicit sample-rate contract, rather than risking a change to
+    logic the GPS-tracked path also depends on."""
+    import csv
+
+    rows = list(csv.DictReader(open(path)))
+    samples = [
+        FlightSample(
+            t=datetime.strptime(f"{r['Year']}-{r['Month']}-{r['Day']} {r['Time']}", "%Y-%m-%d %H:%M:%S.%f"),
+            agl_ft=float(r["Baro_Altitude_AGL_(feet)"]),
+            lat=0.0, lon=0.0,
+        )
+        for r in rows
+    ]
+    sample_interval_s = (samples[1].t - samples[0].t).total_seconds()
+    step = max(1, round(1.0 / sample_interval_s))
+    return samples[::step]
+
+
 if __name__ == "__main__":
     import argparse
 
+    def out_path_for(site, target_date, explicit):
+        return explicit or str(config.SITE_DIR / "data" / site / "real_flights" / f"{target_date}_summary.json")
+
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("csv_path")
-    parser.add_argument("--site", required=True, choices=list(config.SITES))
-    parser.add_argument("--date", required=True, type=date.fromisoformat)
-    parser.add_argument("--flight-start-after", required=True, help="HH:MM or HH:MM:SS -- skip the pre-launch idle period in the raw log")
-    parser.add_argument("--baseline-window", nargs=2, required=True, metavar=("START", "END"), help="HH:MM:SS HH:MM:SS -- window right before liftoff to measure the tracker's own ground-level AGL reading")
-    parser.add_argument("--out", default=None, help="defaults to site/data/<site>/real_flights/<date>_summary.json -- the published/servable tree, since this summary is meant for the viewer, not just a local record")
+    sub = parser.add_subparsers(dest="tracker", required=True)
+
+    p_deluxe = sub.add_parser("deluxe", help="GPS-tracked flight (Deluxe-format CSV) -- full boost+descent reconstruction")
+    p_deluxe.add_argument("csv_path")
+    p_deluxe.add_argument("--site", required=True, choices=list(config.SITES))
+    p_deluxe.add_argument("--date", required=True, type=date.fromisoformat)
+    p_deluxe.add_argument("--flight-start-after", required=True, help="HH:MM or HH:MM:SS -- skip the pre-launch idle period in the raw log")
+    p_deluxe.add_argument("--baseline-window", nargs=2, required=True, metavar=("START", "END"), help="HH:MM:SS HH:MM:SS -- window right before liftoff to measure the tracker's own ground-level AGL reading")
+    p_deluxe.add_argument("--out", default=None)
+
+    p_br = sub.add_parser("blueraven", help="No-GPS altimeter (BlueRaven LR export) -- apogee/rates only, real launch/landing come from hand-recorded GPS pins")
+    p_br.add_argument("lr_csv_path")
+    p_br.add_argument("--site", required=True, choices=list(config.SITES))
+    p_br.add_argument("--date", required=True, type=date.fromisoformat)
+    p_br.add_argument("--rail-lat", required=True, type=float)
+    p_br.add_argument("--rail-lon", required=True, type=float)
+    p_br.add_argument("--landing-lat", required=True, type=float)
+    p_br.add_argument("--landing-lon", required=True, type=float)
+    p_br.add_argument("--out", default=None)
+
     args = parser.parse_args()
 
-    samples, ground_baseline = load_deluxe_tracker_csv(args.csv_path, args.flight_start_after, tuple(args.baseline_window))
-    summary = analyze(args.site, args.date, samples, ground_baseline)
-    out_path = args.out or str(config.SITE_DIR / "data" / args.site / "real_flights" / f"{args.date}_summary.json")
-    write_summary(out_path, summary)
-    boost_adjusted = summary["delta_from_predictions"]["self_simulated_boost_adjusted"]
-    print(f"apogee {summary['apogee']['altitude_agl_ft']}ft, "
-          f"landing {summary['landing']['offset_from_pad_ft']['dist']}ft from pad, "
-          f"boost-adjusted error {boost_adjusted['ft']}ft ({boost_adjusted['pct_of_actual_drift']}% of actual drift)")
+    out_path = out_path_for(args.site, args.date, args.out)
+
+    if args.tracker == "deluxe":
+        samples, ground_baseline = load_deluxe_tracker_csv(args.csv_path, args.flight_start_after, tuple(args.baseline_window))
+        summary = analyze(args.site, args.date, samples, ground_baseline)
+        write_summary(out_path, summary)
+        headline = summary["delta_from_predictions"]["self_simulated_boost_adjusted"]
+        print(f"apogee {summary['apogee']['altitude_agl_ft']}ft, "
+              f"landing {summary['landing']['offset_from_pad_ft']['dist']}ft from pad, "
+              f"boost-adjusted error {headline['ft']}ft ({headline['pct_of_actual_drift']}% of actual drift)")
+    else:
+        samples = load_blueraven_lr_csv(args.lr_csv_path)
+        summary = analyze_no_gps(args.site, args.date, samples, args.rail_lat, args.rail_lon, args.landing_lat, args.landing_lon)
+        write_summary(out_path, summary)
+        apogee = summary["apogee"]
+        print(f"apogee {summary['apogee']['altitude_agl_ft']}ft, "
+              f"landing {summary['landing']['offset_from_pad_ft']['dist']}ft from pad, "
+              f"estimated boost angle {apogee['boost_angle_from_vertical_deg']} deg off vertical "
+              f"(estimated apogee offset {apogee['offset_from_pad_ft']['dist']}ft -- no GPS on this flight, "
+              f"see apogee.position_estimation_note; no self-simulated accuracy figure, "
+              f"see delta_from_predictions -- only the T-0 model-forecast comparisons are independent scoring here)")
     print(f"-> {out_path}")

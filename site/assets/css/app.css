@@ -277,6 +277,7 @@
     max-width: 260px;
   }
   .real-flight-box .rf-title { font-weight: 700; color: var(--real-flight-color, #e91e8c); margin-bottom: 2px; }
+  .real-flight-box .rf-note { margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--border, #dedcd6); font-size: 0.85em; color: var(--text-muted); line-height: 1.4; }
 
   .footnote { margin-top: 18px; font-size: 0.78rem; color: var(--text-muted); line-height: 1.6; }
   .footnote code { background: var(--surface-2); padding: 1px 5px; border-radius: 4px; }

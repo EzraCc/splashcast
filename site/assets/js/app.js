@@ -24,13 +24,16 @@ let realFlightHovering = false;
 // pad, so there's nothing to revert.
 let padOffsetBeforeRealFlightSnap = null;
 // Current render's "Final projection" (fast/slow preset) star, per-flight
-// "predicted landing" (this flight's own real apogee/rates) star, and real
-// launch-rail marker -- re-set every renderHistory() call, referenced by
-// setRealFlightComparing()/drawRealFlightMarker() to swap which ones are
-// visible without a full re-render on every hover.
+// "predicted landing" (this flight's own real apogee/rates) star, real
+// launch-rail marker, and real (or, for a no-GPS flight, estimated --
+// see REAL_FLIGHT.apogee.position_source) apogee marker -- re-set every
+// renderHistory() call, referenced by setRealFlightComparing()/
+// drawRealFlightMarker() to swap which ones are visible without a full
+// re-render on every hover.
 let projectionStarEl = null;
 let predictedLandingStarEl = null;
 let launchRailEl = null;
+let apogeeMarkerEl = null;
 
 // No single fixed hue reads well against every site: violet (the original
 // ramp) washed out against Hearne's dark tree cover, and rose/magenta (the
@@ -905,14 +908,20 @@ const realFlightBox = document.getElementById('real-flight-box');
 
 function realFlightBoxHTML() {
   const rf = REAL_FLIGHT;
-  // The comparison shown here is this flight's own predicted landing (real
-  // apogee + real derived rates + real wind -- see
-  // predicted_landing_offset_from_pad_ft/self_simulated_boost_adjusted),
-  // matching whichever star is actually on the map while this box is open
-  // (setRealFlightComparing() swaps the generic "Final projection" star out
-  // for this one) -- not the fast/slow preset figure, which stops being a
-  // meaningful comparison once a real flight's own numbers are known.
-  const d = rf.delta_from_predictions.self_simulated_boost_adjusted;
+  // GPS-tracked flights (analyze_real_flight.py's analyze()) score against
+  // self_simulated_boost_adjusted -- a real measured apogee position makes
+  // it a genuine accuracy check. No-GPS flights (analyze_no_gps(), see
+  // apogee.position_source below) have neither self_simulated_boost_adjusted
+  // nor self_simulated_descent_only: predicted_landing there is estimated
+  // apogee + the same descent sim used to derive that estimate, so it
+  // lands exactly on the real landing point by construction -- a self-
+  // simulated delta would just be reporting back the zero it was solved to
+  // produce, not a real accuracy check, so the pipeline omits it entirely.
+  const boostAdjusted = rf.delta_from_predictions.self_simulated_boost_adjusted;
+  const descentOnly = rf.delta_from_predictions.self_simulated_descent_only;
+  const d = boostAdjusted || descentOnly;
+  const deltaLabel = boostAdjusted ? 'delta from predicted landing' : 'delta from wind-only prediction (no boost data)';
+  const deltaLine = d ? `${deltaLabel}: ${d.ft.toFixed(0)} ft (${d.pct_of_actual_drift}% of actual drift)<br>` : '';
   // Against the pad's *current* position (configured + any drag offset) --
   // not the fixed figure baked into the summary JSON at pipeline-run time.
   // No need to also show a "rail N ft from pad" readout here: clicking the
@@ -922,6 +931,14 @@ function realFlightBoxHTML() {
   // box is actually visible -- that number would only ever read ~0.
   const land = rf.landing.offset_from_pad_ft;
   const landFt = Math.hypot(land.x - padOffsetFt.x, land.y - padOffsetFt.y);
+  // Only no-GPS flights (analyze_no_gps()) carry this -- see this function's
+  // own docstring and apogee.position_estimation_note in the summary JSON.
+  // Also explains why there's no delta line above, and why the predicted-
+  // landing star sits right on top of the real-landing marker (not a bug --
+  // predicted landing is estimated apogee + descent sim, solved to match).
+  const apogeeNote = rf.apogee.position_source && rf.apogee.position_source !== 'gps_measured'
+    ? `<div class="rf-note">No GPS on this flight -- apogee position (and the launch-angle direction) is calculated from wind models for this time of day, not measured. The predicted-landing star is that same estimate re-simulated, so it matches the real landing by construction -- a self-consistency check, not an independent prediction.</div>`
+    : '';
   return `
     <div class="rf-title">Real flight</div>
     launch ${rf.launch.time_local.split('.')[0]}<br>
@@ -930,7 +947,7 @@ function realFlightBoxHTML() {
     main deploy ${rf.main_deploy.altitude_agl_ft.toLocaleString()} ft<br>
     main rate ~${rf.descent_rates_ground_equivalent_fps.main.mean.toFixed(0)} fps<br>
     landing ${landFt.toFixed(0)} ft from pad<br>
-    delta from predicted landing: ${d.ft.toFixed(0)} ft (${d.pct_of_actual_drift}% of actual drift)`;
+    ${deltaLine}${apogeeNote}`;
 }
 
 // SVG user-space (viewBox) coordinates -> actual screen pixels, accounting
@@ -953,7 +970,7 @@ function svgToScreen(px, py) {
 // varies with content) -- generous on purpose, since overshooting a little
 // is a much smaller problem than the overlap this exists to prevent.
 function positionBoxAvoiding(evt, avoidScreenPoints) {
-  const boxW = 260, boxH = 180, pad = 14, margin = 10;
+  const boxW = 260, boxH = 220, pad = 14, margin = 10;
   const candidates = [
     [evt.clientX + pad, evt.clientY + pad],
     [evt.clientX - boxW - pad, evt.clientY + pad],
@@ -986,10 +1003,11 @@ function hideRealFlightBox() {
 // landing point in a way the fast/slow presets no longer are) -- active
 // whenever the real-flight marker is hovered or pinned.
 function setRealFlightComparing(active) {
-  if (!projectionStarEl || !predictedLandingStarEl || !launchRailEl) return;
+  if (!projectionStarEl || !predictedLandingStarEl || !launchRailEl || !apogeeMarkerEl) return;
   projectionStarEl.style.display = active ? 'none' : '';
   predictedLandingStarEl.style.display = active ? '' : 'none';
   launchRailEl.style.display = active ? '' : 'none';
+  apogeeMarkerEl.style.display = active ? '' : 'none';
 }
 
 // Closes the pinned box (and reverts the star swap) on any click elsewhere.
@@ -1156,6 +1174,12 @@ const REAL_FLIGHT_COLOR = '#e91e8c';
 // that star, not just a variant of it.
 const PREDICTED_LANDING_COLOR = '#06b6d4';
 const PREDICTED_LANDING_STROKE = '#1a1a19';
+// This flight's own apogee -- real (GPS-measured) or, for a no-GPS
+// altimeter, estimated (see REAL_FLIGHT.apogee.position_source and the
+// info box's own note) -- shown alongside the other real-flight markers
+// while comparing. Distinct from every other color already in use here.
+const APOGEE_MARKER_COLOR = '#84cc16';
+const APOGEE_MARKER_STROKE = '#1a1a19';
 
 // Unified marker drawer for both model-shape points (History mode) and the
 // star-shaped actual-landing marker -- one place that knows how to render
@@ -1274,7 +1298,7 @@ function shapeSwatchSVG(shape, color) {
 // pinned box needs its own way to close again on a device that can't hover
 // off it to do so implicitly.
 function drawRealFlightMarker() {
-  if (!REAL_FLIGHT) { predictedLandingStarEl = null; launchRailEl = null; return; }
+  if (!REAL_FLIGHT) { predictedLandingStarEl = null; launchRailEl = null; apogeeMarkerEl = null; return; }
 
   // Real launch-rail GPS position -- separate from the pad's *configured*
   // lat/lon (a surveyed/estimated point, not necessarily exactly where this
@@ -1300,6 +1324,17 @@ function drawRealFlightMarker() {
   predictedLandingStarEl = drawMarker(svg, 'star', predPx, predPy, 13, PREDICTED_LANDING_COLOR, PREDICTED_LANDING_STROKE);
   predictedLandingStarEl.style.display = 'none';
 
+  // This flight's own apogee -- real if apogee.position_source is
+  // 'gps_measured', otherwise estimated (see analyze_no_gps() and the info
+  // box's own note, which explains the difference to the viewer). Same
+  // treatment either way here: not interactive, revealed alongside the
+  // other real-flight markers while comparing.
+  const apogeeOffset = REAL_FLIGHT.apogee.offset_from_pad_ft;
+  const [apogeePx, apogeePy] = ftToPxAbsolute(apogeeOffset.x, apogeeOffset.y);
+  apogeeMarkerEl = drawMarker(svg, 'triangle-up', apogeePx, apogeePy, 9, APOGEE_MARKER_COLOR, APOGEE_MARKER_STROKE);
+  apogeeMarkerEl.style.display = 'none';
+  apogeeMarkerEl.style.pointerEvents = 'none';
+
   const { x, y } = REAL_FLIGHT.landing.offset_from_pad_ft;
   const [px, py] = ftToPxAbsolute(x, y);
   const marker = drawMarker(svg, 'target', px, py, 11, REAL_FLIGHT_COLOR, REAL_FLIGHT_COLOR);
@@ -1307,7 +1342,7 @@ function drawRealFlightMarker() {
 
   // Screen-space positions of every point the info box needs to dodge --
   // computed fresh per event since pan/zoom can move them between renders.
-  const avoidPoints = () => [svgToScreen(px, py), svgToScreen(predPx, predPy), svgToScreen(railPx, railPy)];
+  const avoidPoints = () => [svgToScreen(px, py), svgToScreen(predPx, predPy), svgToScreen(railPx, railPy), svgToScreen(apogeePx, apogeePy)];
 
   marker.addEventListener('pointerdown', evt => evt.stopPropagation()); // don't let #map-wrap's pan handler eat this click
   marker.addEventListener('mousemove', evt => {

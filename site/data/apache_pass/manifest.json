@@ -1,6 +1,6 @@
 {
   "site_id": "apache_pass",
-  "generated_at": "2026-07-20T19:27:11",
+  "generated_at": "2026-07-21T12:55:27",
   "launch_dates": [
     {
       "target_date": "2026-07-25",
@@ -18,7 +18,7 @@
       "label": "Sat, Jul 4 (T-0)",
       "data_path": "data/apache_pass/live/2026-07-04/splash_zones_captured_2026-07-04.json",
       "history_path": "data/apache_pass/live/2026-07-04/points_history.json",
-      "real_flight_path": null
+      "real_flight_path": "data/apache_pass/real_flights/2026-07-04_summary.json"
     }
   ]
 }

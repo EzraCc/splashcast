@@ -20,9 +20,9 @@ pipeline/data/maps_raw/
 pipeline/data/raw/
 pipeline/data/*/raw/
 
-# Real GPS-tracker flight logs (raw per-second telemetry CSVs, used for
-# real-flight-vs-prediction analysis) -- large, and potentially identifying
-# of a specific flier/flight; only the derived summary (apogee, descent
-# rates, landing coords, delta from predictions) gets published, never the
-# raw track itself.
+# Raw real-flight telemetry (GPS trackers and GPS-less altimeter exports
+# alike, used for real-flight-vs-prediction analysis, see
+# pipeline/analyze_real_flight.py) -- large, and potentially identifying of a
+# specific flier/flight; only the derived summary (apogee, descent rates,
+# landing coords, delta from predictions) gets published, never the raw logs.
 pipeline/data/actuals/
