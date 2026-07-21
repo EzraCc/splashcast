@@ -237,6 +237,11 @@ let dateExplicitlyChosen = URL_PARAMS.has('date');
 // against by forcing them.
 let hourExplicitlyChosen = URL_PARAMS.has('hour');
 let deployExplicitlyChosen = URL_PARAMS.has('deploy');
+// Same treatment as hour/deploy above -- boostAngleDeg's default (10°,
+// below) reproduces identically on any later visit, so it only goes in the
+// URL once the slider's actually been touched (initFromData()'s own read of
+// this flag) or arrived via a link that already had ?boost= on it.
+let boostAngleExplicitlyChosen = URL_PARAMS.has('boost');
 
 function freshState() {
   const base = {
@@ -263,6 +268,8 @@ function freshState() {
     if (DATA.altitudes.includes(alt)) base.pinnedAlt = alt;
     const compare = Number(URL_PARAMS.get('compare'));
     if (DATA.altitudes.includes(compare)) base.compareAlt = compare;
+    const capture = URL_PARAMS.get('capture');
+    if (HISTORY && HISTORY.captures.includes(capture)) base.pinnedCapture = capture;
     if (base.mode === 'byHistory' && !base.pinnedRate) base.pinnedRate = 'fast';
   }
   return base;
@@ -758,6 +765,7 @@ const boostAngleReadout = document.getElementById('boost-angle-readout');
 boostAngleSlider.addEventListener('input', () => {
   boostAngleDeg = Number(boostAngleSlider.value);
   boostAngleReadout.textContent = `${boostAngleDeg}°`;
+  boostAngleExplicitlyChosen = true; // render() -> applyIsolation() -> syncUrl() picks this up
   render();
 });
 
@@ -1672,14 +1680,14 @@ function drawZone(zone, color, hour) {
 }
 
 // Only the durable, "what am I looking at" choices go in the URL -- not
-// isolatedX (pure hover, cleared on mouseleave) or boostAngleDeg/padOffsetFt/
-// the color pickers (personal display preferences already persisted via
-// localStorage, not part of a shareable launch scenario). `layer` is the
-// exception among the localStorage-backed prefs -- see mapLayer's own
-// comment for why it's also shareable. `date`/`hour`/`deploy` are further
-// gated behind an explicit user action each -- see
-// dateExplicitlyChosen/hourExplicitlyChosen/deployExplicitlyChosen's
-// declarations for why.
+// isolatedX (pure hover, cleared on mouseleave) or padOffsetFt/the color
+// pickers (personal display preferences already persisted via localStorage,
+// not part of a shareable launch scenario). `layer` is the exception among
+// the localStorage-backed prefs -- see mapLayer's own comment for why it's
+// also shareable. `date`/`hour`/`deploy`/`boost` are further gated behind an
+// explicit user action each -- see
+// dateExplicitlyChosen/hourExplicitlyChosen/deployExplicitlyChosen/
+// boostAngleExplicitlyChosen's declarations for why.
 function buildPermalinkParams(includeDate) {
   const p = new URLSearchParams();
   p.set('site', currentSiteId);
@@ -1688,9 +1696,16 @@ function buildPermalinkParams(includeDate) {
   p.set('layer', mapLayer);
   if (hourExplicitlyChosen) p.set('hour', state.hour);
   if (deployExplicitlyChosen) p.set('deploy', state.deploy);
+  if (boostAngleExplicitlyChosen) p.set('boost', boostAngleDeg);
   if (state.pinnedRate) p.set('rate', state.pinnedRate);
+  // Altitude is a URL param on every view -- just under a different state
+  // field/param name depending which one that view actually uses: byAltitude's
+  // pin/isolate selection (pinnedAlt) via `alt`, or the "which altitude to
+  // compare across hours" selection byTime and byHistory both use
+  // (compareAlt, see buildAltList()) via `compare`.
   if (state.mode === 'byAltitude' && state.pinnedAlt !== null) p.set('alt', state.pinnedAlt);
-  if (state.mode === 'byTime') p.set('compare', state.compareAlt);
+  if (state.mode === 'byTime' || state.mode === 'byHistory') p.set('compare', state.compareAlt);
+  if (state.mode === 'byHistory' && state.pinnedCapture !== null) p.set('capture', state.pinnedCapture);
   return p;
 }
 
@@ -1845,7 +1860,16 @@ function initFromData() {
   view = { x: IMG_VB[0], y: IMG_VB[1], w: IMG_VB[2], h: IMG_VB[3] };
   MIN_SPAN = IMG_VB[2] * 0.15;
   MAX_SPAN = Math.max(BASE_VB[2], BASE_VB[3]) * 1.4;
-  if (boostAngleDeg === null) boostAngleDeg = DATA.boost_angle_deg; // first load only -- see its declaration
+  if (boostAngleDeg === null) {
+    // first load only -- see its declaration. URL wins over the dataset's
+    // own default when the link was explicitly built with one (see
+    // boostAngleExplicitlyChosen), clamped to the slider's own range since
+    // a hand-edited URL could carry anything.
+    const urlBoost = Number(URL_PARAMS.get('boost'));
+    boostAngleDeg = (boostAngleExplicitlyChosen && !Number.isNaN(urlBoost))
+      ? Math.min(Number(boostAngleSlider.max), Math.max(Number(boostAngleSlider.min), urlBoost))
+      : DATA.boost_angle_deg;
+  }
   boostAngleSlider.value = boostAngleDeg;
   boostAngleReadout.textContent = `${boostAngleDeg}°`;
   // Every load, not just first -- see MAX_PAD_MOVE_FT's own declaration.
