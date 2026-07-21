@@ -931,6 +931,15 @@ function realFlightBoxHTML() {
   // box is actually visible -- that number would only ever read ~0.
   const land = rf.landing.offset_from_pad_ft;
   const landFt = Math.hypot(land.x - padOffsetFt.x, land.y - padOffsetFt.y);
+  // Same "distance from the pad's current position" basis as landFt above --
+  // once the pad's snapped to the rail (clicking the marker does this), this
+  // reads as distance/angle from where the flight actually launched, not
+  // just the configured survey point. Angle recomputed from that same live
+  // distance rather than trusting the baked-in boost_angle_from_vertical_deg,
+  // for the same reason.
+  const apogeeOff = rf.apogee.offset_from_pad_ft;
+  const apogeeFt = Math.hypot(apogeeOff.x - padOffsetFt.x, apogeeOff.y - padOffsetFt.y);
+  const apogeeAngleDeg = Math.atan2(apogeeFt, rf.apogee.altitude_agl_ft) * 180 / Math.PI;
   // Only no-GPS flights (analyze_no_gps()) carry this -- see this function's
   // own docstring and apogee.position_estimation_note in the summary JSON.
   // Also explains why there's no delta line above, and why the predicted-
@@ -942,7 +951,7 @@ function realFlightBoxHTML() {
   return `
     <div class="rf-title">Real flight</div>
     launch ${rf.launch.time_local.split('.')[0]}<br>
-    apogee ${rf.apogee.altitude_agl_ft.toLocaleString()} ft<br>
+    apogee ${rf.apogee.altitude_agl_ft.toLocaleString()} ft (${apogeeFt.toFixed(0)} ft from pad, ${apogeeAngleDeg.toFixed(1)}&deg; off vertical)<br>
     drogue rate ~${rf.descent_rates_ground_equivalent_fps.drogue.mean.toFixed(0)} fps<br>
     main deploy ${rf.main_deploy.altitude_agl_ft.toLocaleString()} ft<br>
     main rate ~${rf.descent_rates_ground_equivalent_fps.main.mean.toFixed(0)} fps<br>
@@ -970,7 +979,7 @@ function svgToScreen(px, py) {
 // varies with content) -- generous on purpose, since overshooting a little
 // is a much smaller problem than the overlap this exists to prevent.
 function positionBoxAvoiding(evt, avoidScreenPoints) {
-  const boxW = 260, boxH = 220, pad = 14, margin = 10;
+  const boxW = 260, boxH = 240, pad = 14, margin = 10;
   const candidates = [
     [evt.clientX + pad, evt.clientY + pad],
     [evt.clientX - boxW - pad, evt.clientY + pad],
