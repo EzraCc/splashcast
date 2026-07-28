@@ -236,19 +236,31 @@ def _delta(x_ft: float, y_ft: float, real_x_ft: float, real_y_ft: float, real_di
 def compare_to_pipeline(site_id: str, target_date: date, real_x_ft: float, real_y_ft: float, real_dist_ft: float, altitude_bucket: int, hour_buckets: tuple[int, ...] = (11, 13)) -> dict:
     """Distances (both absolute ft and as a % of the real drift distance --
     500ft reads very differently at a 3,500ft actual drift than at a 500ft
-    one) from the real GPS landing point to: each model's own T-0 forecast
-    (what would have actually been available before/during the flight), the
-    HRRR-analysis "actual" proxy (retrospective-only -- it needs a day for
-    HRRR's own archive to finish publishing, so it was never a real-time
-    predictor), and whether the real point falls inside the published core
-    hull (all models/both rates, the default combined view) at the closest
-    altitude bucket."""
-    hist_path = config.SITE_DIR / "data" / site_id / "live" / str(target_date) / "points_history.json"
-    zone_path = config.SITE_DIR / "data" / site_id / "live" / str(target_date) / f"splash_zones_captured_{target_date}.json"
+    one) from the real GPS landing point to: each model's own latest-available
+    forecast (what would have actually been available before/during the
+    flight -- normally a real T-0 capture, but see forecast_capture_date_used
+    below), the HRRR-analysis "actual" proxy (retrospective-only -- it needs a
+    day for HRRR's own archive to finish publishing, so it was never a
+    real-time predictor), and whether the real point falls inside the
+    published core hull (all models/both rates, the default combined view) at
+    the closest altitude bucket.
+
+    forecast_capture_date_used is normally target_date itself (the cron pulls
+    a fresh T-0 capture every launch morning) -- but the automated daily pull
+    can silently stop running days before a launch (confirmed happening for
+    tripoli_houston_south's 2026-07-25 flights: the last capture on record is
+    T-4/2026-07-21, four days short), so this falls back to the latest
+    capture actually on disk rather than hard-failing. Check this field
+    before treating model_forecasts as a true T-0 comparison."""
+    live_dir = config.SITE_DIR / "data" / site_id / "live" / str(target_date)
+    hist_path = live_dir / "points_history.json"
+    zone_paths = sorted(live_dir.glob("splash_zones_captured_*.json"))
+    capture_date = max(date.fromisoformat(p.stem.removeprefix("splash_zones_captured_")) for p in zone_paths)
+    zone_path = live_dir / f"splash_zones_captured_{capture_date}.json"
     hist = json.loads(hist_path.read_text())
     zone_data = json.loads(zone_path.read_text())
 
-    result = {"t0_model_forecasts": {}, "hrrr_analysis_actual_proxy": {}, "within_published_core_hull": {}}
+    result = {"forecast_capture_date_used": str(capture_date), "model_forecasts": {}, "hrrr_analysis_actual_proxy": {}, "within_published_core_hull": {}}
     for hb in hour_buckets:
         zones = zone_data["data"].get(f"{hb}_dual", [])
         zone = next((z for z in zones if z["altitude"] == altitude_bucket), None)
@@ -260,10 +272,10 @@ def compare_to_pipeline(site_id: str, target_date: date, real_x_ft: float, real_
             per_model = {
                 pt["model"]: _delta(pt["x_ft"], pt["y_ft"], real_x_ft, real_y_ft, real_dist_ft)
                 for pt in hist["points_by_key"].get(key, [])
-                if pt["capture_date"] == str(target_date)
+                if pt["capture_date"] == str(capture_date)
             }
             if per_model:
-                result["t0_model_forecasts"][key] = per_model
+                result["model_forecasts"][key] = per_model
             actual_pt = hist["actuals"].get(key)
             if actual_pt:
                 result["hrrr_analysis_actual_proxy"][key] = _delta(actual_pt["x_ft"], actual_pt["y_ft"], real_x_ft, real_y_ft, real_dist_ft)
@@ -558,6 +570,60 @@ def analyze_no_gps(site_id: str, target_date: date, samples: list[FlightSample],
 
 # --- Tracker-specific loaders (expect more of these / replacements later) ---
 
+def load_aim_xtra_csv(path: str) -> tuple[list[FlightSample], float]:
+    """An AIM XTRA altimeter's simplified 20Hz CSV export (clock/time/lat/lon/
+    alt (m)/altitude AGL (ft)/vertical speed (ft/min)/speed (m/s)/g force/
+    state) -- full GPS throughout, including touchdown itself (altitude AGL
+    settles to ~0, even slightly negative, rather than needing
+    extrapolate_touchdown() to project past the last fix the way the Deluxe
+    tracker's format does). altitude AGL (ft) is already zeroed to the pad at
+    power-up (same convention as the BlueRaven loader's barometer), so the
+    ground-level baseline is just the flight's own first sample rather than a
+    separately-specified averaging window. vertical speed (ft/min) is used
+    directly as vertv_fps rather than deriving it from altitude deltas (both
+    should closely agree, but the device's own reading avoids the last-sample
+    noise deltas amplify); horzv_fps/heading_deg are left at 0.0 -- unlike the
+    Deluxe tracker, extrapolate_touchdown() barely moves anything here since
+    the last real fix already sits within a few feet of the ground baseline,
+    so there's nothing meaningful left for them to project.
+
+    The device's own "state" column (Pad/Boost/Coast/Decent) lags the real
+    liftoff moment by a fraction of a second (still reads "Pad" a full second
+    in, already climbing under several G by then) -- not used here for
+    anything; find_liftoff_index()'s own altitude-threshold approach finds the
+    approximate liftoff moment the same way it does for every other tracker
+    format.
+
+    Decimated to ~1 sample/sec, same reasoning as load_blueraven_lr_csv():
+    find_main_deploy_index()'s windowing (6-sample trailing baseline,
+    3-sample confirmation, +7-sample post-apogee skip) is tuned against
+    roughly-1Hz data. Run against this format's native 20Hz undecimated,
+    apogee's own near-zero-crossing vertical-velocity noise false-triggered a
+    "main deploy" 8 seconds after apogee (at 2127ft, barely below the 2478ft
+    apogee) instead of the real one ~44 seconds later (~500ft, where the
+    vertical-speed regime visibly and sustainedly changes from ~2000-3700
+    ft/min to ~1000-1300 ft/min) -- confirmed directly against this loader's
+    own first real flight.
+    """
+    import csv
+
+    rows = list(csv.DictReader(open(path)))
+    samples = [
+        FlightSample(
+            t=datetime.strptime(r["clock (text)"], "%H:%M:%S.%f"),
+            agl_ft=float(r["altitude AGL (ft)"]),
+            lat=float(r["lat (deg)"]), lon=float(r["lon (deg)"]),
+            vertv_fps=float(r["vertical speed (ft/min)"]) / 60.0,
+        )
+        for r in rows
+    ]
+    sample_interval_s = (samples[1].t - samples[0].t).total_seconds()
+    step = max(1, round(1.0 / sample_interval_s))
+    samples = samples[::step]
+    return samples, samples[0].agl_ft
+
+
+
 def load_deluxe_tracker_csv(path: str, flight_start_after: str, ground_baseline_window: tuple[str, str]) -> tuple[list[FlightSample], float]:
     """One specific tracker export's CSV schema (TRACKER/DATE/TIME, GS Lat/
     Lon, TRACKER Lat/Lon/Alt asl, FIX, HORZV, VERTV, HEAD, Alt AGL (ft), ...)
@@ -658,8 +724,11 @@ def load_blueraven_lr_csv(path: str) -> list[FlightSample]:
 if __name__ == "__main__":
     import argparse
 
-    def out_path_for(site, target_date, explicit):
-        return explicit or str(config.SITE_DIR / "data" / site / "real_flights" / f"{target_date}_summary.json")
+    def out_path_for(site, target_date, explicit, label=None):
+        if explicit:
+            return explicit
+        stem = f"{target_date}_{label}_summary.json" if label else f"{target_date}_summary.json"
+        return str(config.SITE_DIR / "data" / site / "real_flights" / stem)
 
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="tracker", required=True)
@@ -682,12 +751,27 @@ if __name__ == "__main__":
     p_br.add_argument("--landing-lon", required=True, type=float)
     p_br.add_argument("--out", default=None)
 
+    p_aim = sub.add_parser("aim_xtra", help="GPS-tracked flight (AIM XTRA simplified CSV) -- full boost+descent reconstruction, GPS through touchdown")
+    p_aim.add_argument("csv_path")
+    p_aim.add_argument("--site", required=True, choices=list(config.SITES))
+    p_aim.add_argument("--date", required=True, type=date.fromisoformat)
+    p_aim.add_argument("--label", default=None, help="distinguishes multiple same-day flights in the output filename, e.g. a motor designation like J270")
+    p_aim.add_argument("--out", default=None)
+
     args = parser.parse_args()
 
-    out_path = out_path_for(args.site, args.date, args.out)
+    out_path = out_path_for(args.site, args.date, args.out, getattr(args, "label", None))
 
     if args.tracker == "deluxe":
         samples, ground_baseline = load_deluxe_tracker_csv(args.csv_path, args.flight_start_after, tuple(args.baseline_window))
+        summary = analyze(args.site, args.date, samples, ground_baseline)
+        write_summary(out_path, summary)
+        headline = summary["delta_from_predictions"]["self_simulated_boost_adjusted"]
+        print(f"apogee {summary['apogee']['altitude_agl_ft']}ft, "
+              f"landing {summary['landing']['offset_from_pad_ft']['dist']}ft from pad, "
+              f"boost-adjusted error {headline['ft']}ft ({headline['pct_of_actual_drift']}% of actual drift)")
+    elif args.tracker == "aim_xtra":
+        samples, ground_baseline = load_aim_xtra_csv(args.csv_path)
         summary = analyze(args.site, args.date, samples, ground_baseline)
         write_summary(out_path, summary)
         headline = summary["delta_from_predictions"]["self_simulated_boost_adjusted"]

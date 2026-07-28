@@ -513,7 +513,11 @@ def regenerate_manifest(site_id: str, published_live_dir: Path) -> Path:
             continue
         capture_date = max(date.fromisoformat(p.stem.removeprefix("splash_zones_captured_")) for p in zone_paths)
         history_path = target_dir / "points_history.json"
-        real_flight_path = published_live_dir.parent / "real_flights" / f"{target_date}_summary.json"
+        # Usually zero or one real flight per date, but a site can fly more
+        # than one rocket the same day (see tripoli_houston_south's
+        # 2026-07-25) -- glob rather than assume a single fixed filename.
+        # Sorted for a deterministic marker order in the viewer.
+        real_flight_paths = sorted((published_live_dir.parent / "real_flights").glob(f"{target_date}*_summary.json"))
         entries.append({
             "target_date": str(target_date),
             "capture_date": str(capture_date),
@@ -521,7 +525,7 @@ def regenerate_manifest(site_id: str, published_live_dir: Path) -> Path:
             "label": _format_label(target_date, capture_date),
             "data_path": f"data/{site_id}/live/{target_date}/splash_zones_captured_{capture_date}.json",
             "history_path": f"data/{site_id}/live/{target_date}/points_history.json" if history_path.exists() else None,
-            "real_flight_path": f"data/{site_id}/real_flights/{target_date}_summary.json" if real_flight_path.exists() else None,
+            "real_flight_paths": [f"data/{site_id}/real_flights/{p.name}" for p in real_flight_paths],
         })
     # Descending -- the viewer's date <select> lists these in this order and
     # defaults to entries[0] (see loadSiteManifest() in app.js), so this is

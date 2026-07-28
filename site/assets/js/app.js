@@ -5,35 +5,57 @@ let DATA = null;
 // history file yet (a target processed before this feature existed).
 let HISTORY = null;
 
-// A real GPS-tracked flight's summary (see analyze_real_flight.py), for the
-// same target date -- null for almost every target, since this only exists
-// where someone's fed in real tracker data. Reset (with realFlightPinned)
-// on every dataset load in loadDataset(), same as HISTORY.
-let REAL_FLIGHT = null;
-let realFlightPinned = false;
-// Separate from realFlightPinned -- hover alone (no click yet) also swaps
-// the map into "comparing this one flight" mode (see drawRealFlightMarker()),
-// it just doesn't survive the mouse leaving the way a pinned click does.
-let realFlightHovering = false;
+// Real GPS-tracked flights' summaries (see analyze_real_flight.py), for the
+// same target date -- empty for almost every target, since this only exists
+// where someone's fed in real tracker data. Usually 0 or 1 entries, but a
+// site can fly more than one rocket the same day. Reset (with
+// pinnedRealFlightIndex/hoveredRealFlightIndex) on every dataset load in
+// loadDataset(), same as HISTORY.
+let REAL_FLIGHTS = [];
+// Which REAL_FLIGHTS entry is click-pinned/mouse-hovered right now -- null
+// when neither. Kept separate (not one combined "active" flag) because a
+// pin on one flight and a hover over a different flight's marker can be
+// true at the same time; activeRealFlight() below resolves which one wins
+// (hover takes precedence while it lasts, same pattern as
+// state.isolatedModel ?? state.pinnedModel elsewhere in this file).
+let pinnedRealFlightIndex = null;
+let hoveredRealFlightIndex = null;
 // The pad offset in effect right before pinning a real flight snapped it to
 // the rail -- null whenever nothing's snapped. Restored on a normal close
 // (unpin via the marker itself, or the click-away listener) so exploring one
 // real flight doesn't strand the pad there once you're done looking; NOT
 // restored if the pad itself gets dragged by hand while pinned (see the
 // pad-drag handler) -- that drag already expresses where the user wants the
-// pad, so there's nothing to revert.
+// pad, so there's nothing to revert. Only ever set on the *first* snap in a
+// pin/switch/pin sequence (see drawRealFlightMarker()'s click handler) --
+// switching the pin between two different flights re-snaps the pad without
+// clobbering the original pre-snap position underneath.
 let padOffsetBeforeRealFlightSnap = null;
-// Current render's "Final projection" (fast/slow preset) star, per-flight
-// "predicted landing" (this flight's own real apogee/rates) star, real
-// launch-rail marker, and real (or, for a no-GPS flight, estimated --
-// see REAL_FLIGHT.apogee.position_source) apogee marker -- re-set every
-// renderHistory() call, referenced by setRealFlightComparing()/
-// drawRealFlightMarker() to swap which ones are visible without a full
-// re-render on every hover.
+// Current render's "Final projection" (fast/slow preset) star. Per-flight
+// overlay -- "predicted landing" (its own real apogee/rates) star, real
+// launch-rail marker, and real (or, for a no-GPS flight, estimated -- see
+// apogee.position_source) apogee marker -- describes whichever flight
+// activeRealFlight() currently resolves to; rebuilt by
+// updateActiveRealFlightOverlay() rather than repositioned in place, since a
+// 'target'-shape marker is a multi-element group. Re-set every
+// renderHistory() call, referenced by setRealFlightComparing() to swap which
+// ones are visible without a full re-render on every hover.
 let projectionStarEl = null;
 let predictedLandingStarEl = null;
 let launchRailEl = null;
 let apogeeMarkerEl = null;
+// SVG-space [x, y] pairs for the overlay elements above (rail, predicted
+// landing, apogee) -- kept alongside them so each landing marker's
+// avoidPoints() (drawRealFlightMarker()) can find fresh screen positions for
+// whichever flight is currently active without recomputing them itself.
+let activeOverlaySvgPoints = [];
+
+// Resolves which REAL_FLIGHTS entry (if any) the shared comparison overlay
+// (rail/predicted-landing/apogee markers + info box) currently describes.
+function activeRealFlight() {
+  const idx = hoveredRealFlightIndex ?? pinnedRealFlightIndex;
+  return idx === null ? null : REAL_FLIGHTS[idx];
+}
 
 // No single fixed hue reads well against every site: violet (the original
 // ramp) washed out against Hearne's dark tree cover, and rose/magenta (the
@@ -369,9 +391,12 @@ function buildAltList() {
       if (state.pinnedAlt === alt) row.classList.add('pinned');
     } else {
       row.addEventListener('click', () => {
-        state.compareAlt = alt;
+        // Toggle, same as byAltitude's pinnedAlt above -- clicking the
+        // already-selected altitude again clears it rather than being stuck
+        // permanently selected.
+        state.compareAlt = (state.compareAlt === alt) ? null : alt;
         [...el.children].forEach(r => r.classList.remove('pinned'));
-        row.classList.add('pinned');
+        if (state.compareAlt === alt) row.classList.add('pinned');
         render();
       });
       if (state.compareAlt === alt) row.classList.add('pinned');
@@ -495,10 +520,11 @@ function buildTimeLegend() {
     projectionRow.className = 'alt-row static';
     projectionRow.innerHTML = `${shapeSwatchSVG('star', PROJECTION_MARKER_COLOR)}<span>Final projection (once recorded)</span>`;
     el.appendChild(projectionRow);
-    if (REAL_FLIGHT) {
+    if (REAL_FLIGHTS.length) {
+      const label = REAL_FLIGHTS.length > 1 ? `Real flights (${REAL_FLIGHTS.length}, hover or click for details)` : 'Real flight (hover or click for details)';
       const realFlightRow = document.createElement('div');
       realFlightRow.className = 'alt-row static';
-      realFlightRow.innerHTML = `${shapeSwatchSVG('target', REAL_FLIGHT_COLOR)}<span>Real flight (hover or click for details)</span>`;
+      realFlightRow.innerHTML = `${shapeSwatchSVG('target', REAL_FLIGHT_COLOR)}<span>${label}</span>`;
       el.appendChild(realFlightRow);
     }
     return;
@@ -680,10 +706,11 @@ window.addEventListener('pointermove', evt => {
   // dragging it elsewhere by hand breaks that alignment, so treat the drag
   // itself as backing out of the comparison rather than leaving a pinned
   // box whose numbers no longer describe where the pad actually is.
-  if (realFlightPinned) {
-    realFlightPinned = false;
+  if (pinnedRealFlightIndex !== null) {
+    pinnedRealFlightIndex = null;
     hideRealFlightBox();
-    setRealFlightComparing(realFlightHovering);
+    updateActiveRealFlightOverlay();
+    setRealFlightComparing(hoveredRealFlightIndex !== null);
     // This drag itself is the user placing the pad -- unlike a normal
     // close, there's nothing to restore it to (see
     // padOffsetBeforeRealFlightSnap's own declaration).
@@ -838,10 +865,11 @@ padResetBtn.addEventListener('click', () => {
   // (even back to zero) breaks a pinned real-flight snap, so back out of
   // that comparison rather than leave it pointing at a pad that's no
   // longer where it claims.
-  if (realFlightPinned) {
-    realFlightPinned = false;
+  if (pinnedRealFlightIndex !== null) {
+    pinnedRealFlightIndex = null;
     hideRealFlightBox();
-    setRealFlightComparing(realFlightHovering);
+    updateActiveRealFlightOverlay();
+    setRealFlightComparing(hoveredRealFlightIndex !== null);
     padOffsetBeforeRealFlightSnap = null;
   }
   render();
@@ -907,7 +935,8 @@ function hideTooltip() { tooltip.style.display = 'none'; }
 const realFlightBox = document.getElementById('real-flight-box');
 
 function realFlightBoxHTML() {
-  const rf = REAL_FLIGHT;
+  const rf = activeRealFlight();
+  if (!rf) return '';
   // GPS-tracked flights (analyze_real_flight.py's analyze()) score against
   // self_simulated_boost_adjusted -- a real measured apogee position makes
   // it a genuine accuracy check. No-GPS flights (analyze_no_gps(), see
@@ -1002,7 +1031,7 @@ function showRealFlightBox(evt, avoidScreenPoints) {
   realFlightBox.style.display = 'block';
 }
 function hideRealFlightBox() {
-  if (realFlightPinned) return; // stays open until something else is clicked -- see the document-level listener below
+  if (pinnedRealFlightIndex !== null) return; // stays open until something else is clicked -- see the document-level listener below
   realFlightBox.style.display = 'none';
 }
 
@@ -1025,10 +1054,11 @@ function setRealFlightComparing(active) {
 // #map-wrap's pointerdown to stop eating clicks on the zoom buttons/layer
 // toggle/pad marker.
 document.addEventListener('click', () => {
-  if (!realFlightPinned) return;
-  realFlightPinned = false;
+  if (pinnedRealFlightIndex === null) return;
+  pinnedRealFlightIndex = null;
   realFlightBox.style.display = 'none';
-  setRealFlightComparing(realFlightHovering);
+  updateActiveRealFlightOverlay();
+  setRealFlightComparing(hoveredRealFlightIndex !== null);
   restorePadFromRealFlightSnap();
 });
 
@@ -1184,9 +1214,9 @@ const REAL_FLIGHT_COLOR = '#e91e8c';
 const PREDICTED_LANDING_COLOR = '#06b6d4';
 const PREDICTED_LANDING_STROKE = '#1a1a19';
 // This flight's own apogee -- real (GPS-measured) or, for a no-GPS
-// altimeter, estimated (see REAL_FLIGHT.apogee.position_source and the
-// info box's own note) -- shown alongside the other real-flight markers
-// while comparing. Distinct from every other color already in use here.
+// altimeter, estimated (see apogee.position_source and the info box's own
+// note) -- shown alongside the other real-flight markers while comparing.
+// Distinct from every other color already in use here.
 const APOGEE_MARKER_COLOR = '#84cc16';
 const APOGEE_MARKER_STROKE = '#1a1a19';
 
@@ -1306,20 +1336,30 @@ function shapeSwatchSVG(shape, color) {
 // at all, so click has to be a full substitute, not just a shortcut, and a
 // pinned box needs its own way to close again on a device that can't hover
 // off it to do so implicitly.
-function drawRealFlightMarker() {
-  if (!REAL_FLIGHT) { predictedLandingStarEl = null; launchRailEl = null; apogeeMarkerEl = null; return; }
+// Rebuilds the shared rail/predicted-landing/apogee overlay to describe
+// whichever flight activeRealFlight() currently resolves to (or removes it
+// entirely if that's none) -- a 'target'-shape marker is a multi-element
+// group (see drawMarker()), so "moving" it means redrawing it, not just
+// updating cx/cy. Always (re)creates hidden (display:none); the caller is
+// responsible for calling setRealFlightComparing() to reveal it, same as
+// drawRealFlightMarker() did inline before this was split out to also serve
+// hover/pin switches between different flights on the same map.
+function updateActiveRealFlightOverlay() {
+  [launchRailEl, predictedLandingStarEl, apogeeMarkerEl].forEach(el => el && el.remove());
+  launchRailEl = predictedLandingStarEl = apogeeMarkerEl = null;
+  activeOverlaySvgPoints = [];
+  const flight = activeRealFlight();
+  if (!flight) return;
 
   // Real launch-rail GPS position -- separate from the pad's *configured*
   // lat/lon (a surveyed/estimated point, not necessarily exactly where this
   // rail sat). Model points and the splash zone stay anchored to the
-  // configured pad *plus* padOffsetFt -- clicking the real-flight marker
-  // below snaps padOffsetFt to this rail offset automatically, so the
-  // projections line up against where the rocket actually flew without the
-  // user needing to find and drag the crosshair by hand. Hidden by default,
-  // revealed alongside the predicted-landing star -- see
-  // setRealFlightComparing(). Not interactive itself (pointer-events: none)
-  // -- purely informational.
-  const railOffset = REAL_FLIGHT.launch.offset_from_pad_ft;
+  // configured pad *plus* padOffsetFt -- clicking a real-flight marker snaps
+  // padOffsetFt to this rail offset automatically, so the projections line
+  // up against where the rocket actually flew without the user needing to
+  // find and drag the crosshair by hand. Not interactive itself
+  // (pointer-events: none) -- purely informational.
+  const railOffset = flight.launch.offset_from_pad_ft;
   const [railPx, railPy] = ftToPxAbsolute(railOffset.x, railOffset.y);
   launchRailEl = drawMarker(svg, 'target', railPx, railPy, 6, REAL_FLIGHT_COLOR, REAL_FLIGHT_COLOR);
   launchRailEl.style.display = 'none';
@@ -1328,7 +1368,7 @@ function drawRealFlightMarker() {
   // This flight's own predicted landing (real apogee + real derived rates +
   // real wind) -- shown in place of the generic "Final projection" star
   // while comparing, see setRealFlightComparing().
-  const predOffset = REAL_FLIGHT.predicted_landing_offset_from_pad_ft;
+  const predOffset = flight.predicted_landing_offset_from_pad_ft;
   const [predPx, predPy] = ftToPxAbsolute(predOffset.x, predOffset.y);
   predictedLandingStarEl = drawMarker(svg, 'star', predPx, predPy, 13, PREDICTED_LANDING_COLOR, PREDICTED_LANDING_STROKE);
   predictedLandingStarEl.style.display = 'none';
@@ -1338,60 +1378,91 @@ function drawRealFlightMarker() {
   // box's own note, which explains the difference to the viewer). Same
   // treatment either way here: not interactive, revealed alongside the
   // other real-flight markers while comparing.
-  const apogeeOffset = REAL_FLIGHT.apogee.offset_from_pad_ft;
+  const apogeeOffset = flight.apogee.offset_from_pad_ft;
   const [apogeePx, apogeePy] = ftToPxAbsolute(apogeeOffset.x, apogeeOffset.y);
   apogeeMarkerEl = drawMarker(svg, 'triangle-up', apogeePx, apogeePy, 9, APOGEE_MARKER_COLOR, APOGEE_MARKER_STROKE);
   apogeeMarkerEl.style.display = 'none';
   apogeeMarkerEl.style.pointerEvents = 'none';
 
-  const { x, y } = REAL_FLIGHT.landing.offset_from_pad_ft;
-  const [px, py] = ftToPxAbsolute(x, y);
-  const marker = drawMarker(svg, 'target', px, py, 11, REAL_FLIGHT_COLOR, REAL_FLIGHT_COLOR);
-  marker.style.cursor = 'pointer';
+  activeOverlaySvgPoints = [[railPx, railPy], [predPx, predPy], [apogeePx, apogeePy]];
+}
 
-  // Screen-space positions of every point the info box needs to dodge --
-  // computed fresh per event since pan/zoom can move them between renders.
-  const avoidPoints = () => [svgToScreen(px, py), svgToScreen(predPx, predPy), svgToScreen(railPx, railPy), svgToScreen(apogeePx, apogeePy)];
+function drawRealFlightMarker() {
+  REAL_FLIGHTS.forEach((flight, i) => {
+    const { x, y } = flight.landing.offset_from_pad_ft;
+    const [px, py] = ftToPxAbsolute(x, y);
+    const marker = drawMarker(svg, 'target', px, py, 11, REAL_FLIGHT_COLOR, REAL_FLIGHT_COLOR);
+    marker.style.cursor = 'pointer';
 
-  marker.addEventListener('pointerdown', evt => evt.stopPropagation()); // don't let #map-wrap's pan handler eat this click
-  marker.addEventListener('mousemove', evt => {
-    realFlightHovering = true;
-    setRealFlightComparing(true);
-    showRealFlightBox(evt, avoidPoints());
-  });
-  marker.addEventListener('mouseleave', () => {
-    realFlightHovering = false;
-    if (!realFlightPinned) setRealFlightComparing(false);
-    hideRealFlightBox();
-  });
-  marker.addEventListener('click', evt => {
-    evt.stopPropagation(); // don't let the document-level click-away listener immediately re-close this
-    realFlightPinned = !realFlightPinned;
-    if (realFlightPinned) {
-      // No reason to leave the pad marker somewhere that isn't this
-      // flight's real launch position once it's known -- snap it here
-      // instead of making the user find and drag the crosshair by hand to
-      // see the projections lined up against where the rocket actually
-      // flew. Remembered so a normal close (unpin below, or the
-      // click-away listener) can put it back rather than stranding it
-      // here. render() rebuilds this marker too; avoidPoints() below is
-      // still valid afterward since it's built from absolute (pad-
-      // independent) coordinates.
-      padOffsetBeforeRealFlightSnap = padOffsetFt;
-      setPadOffsetClamped(railOffset.x, railOffset.y);
-      render();
-    } else {
-      restorePadFromRealFlightSnap();
-    }
-    setRealFlightComparing(realFlightPinned || realFlightHovering);
-    if (realFlightPinned) showRealFlightBox(evt, avoidPoints());
-    else hideRealFlightBox();
+    // Screen-space positions of every point the info box needs to dodge --
+    // computed fresh per event since pan/zoom can move them between
+    // renders, and re-reads activeOverlaySvgPoints (rather than closing over
+    // a snapshot) since it's only valid for whichever flight is active at
+    // call time -- always this one, since it's read right after this
+    // marker's own handlers make flight `i` active below.
+    const avoidPoints = () => [svgToScreen(px, py), ...activeOverlaySvgPoints.map(([ax, ay]) => svgToScreen(ax, ay))];
+
+    marker.addEventListener('pointerdown', evt => evt.stopPropagation()); // don't let #map-wrap's pan handler eat this click
+    marker.addEventListener('mousemove', evt => {
+      hoveredRealFlightIndex = i;
+      updateActiveRealFlightOverlay();
+      setRealFlightComparing(true);
+      showRealFlightBox(evt, avoidPoints());
+    });
+    marker.addEventListener('mouseleave', () => {
+      hoveredRealFlightIndex = null;
+      updateActiveRealFlightOverlay();
+      setRealFlightComparing(pinnedRealFlightIndex !== null);
+      hideRealFlightBox();
+    });
+    marker.addEventListener('click', evt => {
+      evt.stopPropagation(); // don't let the document-level click-away listener immediately re-close this
+      const alreadyPinnedHere = pinnedRealFlightIndex === i;
+      pinnedRealFlightIndex = alreadyPinnedHere ? null : i;
+      if (pinnedRealFlightIndex !== null) {
+        // No reason to leave the pad marker somewhere that isn't this
+        // flight's real launch position once it's known -- snap it here
+        // instead of making the user find and drag the crosshair by hand to
+        // see the projections lined up against where the rocket actually
+        // flew. Only save the pre-snap position on the *first* snap (see
+        // padOffsetBeforeRealFlightSnap's own declaration) -- switching the
+        // pin straight from one flight to another shouldn't clobber it with
+        // the previous flight's rail. render() rebuilds every marker
+        // (including this overlay, via renderHistory() -> drawRealFlightMarker()
+        // -> updateActiveRealFlightOverlay()); avoidPoints() below reads it
+        // fresh afterward.
+        if (padOffsetBeforeRealFlightSnap === null) padOffsetBeforeRealFlightSnap = padOffsetFt;
+        setPadOffsetClamped(flight.launch.offset_from_pad_ft.x, flight.launch.offset_from_pad_ft.y);
+        // Line the displayed splash zone/history key up with this flight's
+        // own real launch time and apogee altitude, rather than leaving
+        // whatever hour/altitude happened to already be selected -- these
+        // are exactly the buckets analyze_real_flight.py itself picked as
+        // "closest" for its own model-forecast comparison (closest_hour /
+        // altitude_bucket_used_ft), so this is the one apples-to-apples zone
+        // for this flight. Not reverted on unpin (see restorePadFromRealFlightSnap()
+        // below, which only ever reverts the pad snap) -- unlike that snap,
+        // this is a normal user-facing selection worth leaving as-is.
+        state.hour = flight.closest_hour;
+        hourExplicitlyChosen = true;
+        state.compareAlt = flight.delta_from_predictions.altitude_bucket_used_ft;
+        buildToggle('hour-toggle', DATA.hours, HOUR_LABELS, 'hour', () => { hourExplicitlyChosen = true; });
+        buildAltList();
+        render();
+      } else {
+        restorePadFromRealFlightSnap();
+      }
+      updateActiveRealFlightOverlay();
+      setRealFlightComparing(pinnedRealFlightIndex !== null || hoveredRealFlightIndex !== null);
+      if (pinnedRealFlightIndex !== null) showRealFlightBox(evt, avoidPoints());
+      else hideRealFlightBox();
+    });
   });
 
-  // Keeps the rail-distance-from-pad line current if the box is left open
-  // (pinned, or still hovered) while the pad marker gets dragged by hand --
-  // otherwise it'd only ever reflect whatever it read at the moment the box
-  // was last (re)opened.
+  updateActiveRealFlightOverlay();
+
+  // Keeps the info box current if it's left open (pinned, or still hovered)
+  // while the pad marker gets dragged by hand -- otherwise it'd only ever
+  // reflect whatever it read at the moment the box was last (re)opened.
   if (realFlightBox.style.display === 'block') realFlightBox.innerHTML = realFlightBoxHTML();
 }
 
@@ -1489,7 +1560,7 @@ function renderHistory() {
   // A render can happen for reasons unrelated to this marker (e.g. toggling
   // isolatedModel elsewhere) while the box is still pinned or hovered open
   // -- reapply the swap so a fresh render doesn't silently revert it.
-  setRealFlightComparing(realFlightPinned || realFlightHovering);
+  setRealFlightComparing(pinnedRealFlightIndex !== null || hoveredRealFlightIndex !== null);
 }
 
 // --- Accuracy-vs-actual table (History mode only) ---------------------------
@@ -1748,7 +1819,7 @@ function buildPermalinkParams(includeDate) {
   // compare across hours" selection byTime and byHistory both use
   // (compareAlt, see buildAltList()) via `compare`.
   if (state.mode === 'byAltitude' && state.pinnedAlt !== null) p.set('alt', state.pinnedAlt);
-  if (state.mode === 'byTime' || state.mode === 'byHistory') p.set('compare', state.compareAlt);
+  if ((state.mode === 'byTime' || state.mode === 'byHistory') && state.compareAlt !== null) p.set('compare', state.compareAlt);
   if (state.mode === 'byHistory' && state.pinnedCapture !== null) p.set('capture', state.pinnedCapture);
   return p;
 }
@@ -1951,12 +2022,15 @@ async function loadDataset(entry) {
   // -- HISTORY just stays null and the History view mode shows its own
   // "nothing published yet" state (see renderHistory()) instead of erroring.
   HISTORY = entry.history_path ? await (await fetch(entry.history_path)).json() : null;
-  // null for the overwhelming majority of targets -- a real GPS-tracked
+  // Empty for the overwhelming majority of targets -- a real GPS-tracked
   // flight is a rare, manually-fed-in thing (see analyze_real_flight.py),
-  // not something every launch has.
-  REAL_FLIGHT = entry.real_flight_path ? await (await fetch(entry.real_flight_path)).json() : null;
-  realFlightPinned = false;
-  realFlightHovering = false;
+  // not something every launch has. Usually 0 or 1 paths, occasionally more
+  // than one (a site can fly more than one rocket the same day).
+  REAL_FLIGHTS = entry.real_flight_paths?.length
+    ? await Promise.all(entry.real_flight_paths.map(p => fetch(p).then(r => r.json())))
+    : [];
+  pinnedRealFlightIndex = null;
+  hoveredRealFlightIndex = null;
   padOffsetBeforeRealFlightSnap = null; // stale otherwise -- it'd belong to whatever target was just left
   initFromData();
   subtitleEl.innerHTML = describeEntry(entry);

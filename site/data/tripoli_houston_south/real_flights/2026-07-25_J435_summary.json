@@ -1,0 +1,237 @@
+{
+  "site_id": "tripoli_houston_south",
+  "target_date": "2026-07-25",
+  "deploy": "dual",
+  "closest_hour": 13,
+  "launch": {
+    "time_local": "13:50:40.203",
+    "offset_from_pad_ft": {
+      "x": 240.6,
+      "y": 320.7,
+      "dist": 400.9
+    }
+  },
+  "apogee": {
+    "time_local": "13:50:53.394",
+    "altitude_agl_ft": 2582.5,
+    "offset_from_pad_ft": {
+      "x": 44.1,
+      "y": -325.6,
+      "dist": 328.6
+    },
+    "boost_angle_from_vertical_deg": 7.25,
+    "configured_boost_angle_deg": 10,
+    "position_source": "gps_measured"
+  },
+  "main_deploy": {
+    "time_local": "13:51:36.009",
+    "altitude_agl_ft": 545.9
+  },
+  "descent_rates_ground_equivalent_fps": {
+    "drogue": {
+      "mean": 46.7,
+      "range": [
+        6.7,
+        59.4
+      ]
+    },
+    "main": {
+      "mean": 15.4,
+      "range": [
+        0.5,
+        20.0
+      ]
+    },
+    "configured_dual_deploy_fps": {
+      "slow": [
+        80.0,
+        10.0
+      ],
+      "fast": [
+        100.0,
+        20.0
+      ]
+    }
+  },
+  "density_scaling_check": {
+    "early_drogue": {
+      "mean_ground_equivalent_fps": 48.2,
+      "range": [
+        40.6,
+        59.4
+      ],
+      "altitude_range_agl_ft": [
+        546,
+        2241
+      ],
+      "n_samples": 35
+    },
+    "late_drogue": {
+      "mean_ground_equivalent_fps": 46.6,
+      "range": [
+        6.7,
+        59.4
+      ],
+      "altitude_range_agl_ft": [
+        837,
+        2582
+      ],
+      "n_samples": 37
+    },
+    "pct_difference": 3.3
+  },
+  "landing": {
+    "lat": 29.224708,
+    "lon": -95.097294,
+    "offset_from_pad_ft": {
+      "x": -10.8,
+      "y": 550.8,
+      "dist": 550.9
+    },
+    "note": "extrapolated -0.2s past the last real GPS fix (-2ft on the tracker's own AGL scale, vs a measured ~1ft ground-level baseline on that same scale) using its own heading/horizontal speed"
+  },
+  "predicted_landing_offset_from_pad_ft": {
+    "x": -425.1,
+    "y": 562.3
+  },
+  "delta_from_predictions": {
+    "self_simulated_descent_only": {
+      "ft": 569.0,
+      "pct_of_actual_drift": 103.3
+    },
+    "self_simulated_boost_adjusted": {
+      "ft": 414.4,
+      "pct_of_actual_drift": 75.2
+    },
+    "altitude_bucket_used_ft": 2000,
+    "forecast_capture_date_used": "2026-07-25",
+    "model_forecasts": {
+      "11_dual_fast_2000": {
+        "gfs": {
+          "ft": 244.3,
+          "pct_of_actual_drift": 44.3
+        },
+        "hrrr": {
+          "ft": 174.5,
+          "pct_of_actual_drift": 31.7
+        },
+        "ecmwf": {
+          "ft": 146.7,
+          "pct_of_actual_drift": 26.6
+        },
+        "icon": {
+          "ft": 195.6,
+          "pct_of_actual_drift": 35.5
+        },
+        "arpege": {
+          "ft": 176.4,
+          "pct_of_actual_drift": 32.0
+        },
+        "gem": {
+          "ft": 167.1,
+          "pct_of_actual_drift": 30.3
+        }
+      },
+      "11_dual_slow_2000": {
+        "gfs": {
+          "ft": 661.9,
+          "pct_of_actual_drift": 120.2
+        },
+        "hrrr": {
+          "ft": 522.9,
+          "pct_of_actual_drift": 94.9
+        },
+        "ecmwf": {
+          "ft": 361.5,
+          "pct_of_actual_drift": 65.6
+        },
+        "icon": {
+          "ft": 316.0,
+          "pct_of_actual_drift": 57.4
+        },
+        "arpege": {
+          "ft": 395.7,
+          "pct_of_actual_drift": 71.8
+        },
+        "gem": {
+          "ft": 397.4,
+          "pct_of_actual_drift": 72.1
+        }
+      },
+      "13_dual_fast_2000": {
+        "gfs": {
+          "ft": 356.1,
+          "pct_of_actual_drift": 64.6
+        },
+        "hrrr": {
+          "ft": 294.6,
+          "pct_of_actual_drift": 53.5
+        },
+        "ecmwf": {
+          "ft": 241.8,
+          "pct_of_actual_drift": 43.9
+        },
+        "icon": {
+          "ft": 203.9,
+          "pct_of_actual_drift": 37.0
+        },
+        "arpege": {
+          "ft": 209.1,
+          "pct_of_actual_drift": 38.0
+        },
+        "gem": {
+          "ft": 248.5,
+          "pct_of_actual_drift": 45.1
+        }
+      },
+      "13_dual_slow_2000": {
+        "gfs": {
+          "ft": 852.9,
+          "pct_of_actual_drift": 154.8
+        },
+        "hrrr": {
+          "ft": 672.3,
+          "pct_of_actual_drift": 122.1
+        },
+        "ecmwf": {
+          "ft": 563.4,
+          "pct_of_actual_drift": 102.3
+        },
+        "icon": {
+          "ft": 468.0,
+          "pct_of_actual_drift": 85.0
+        },
+        "arpege": {
+          "ft": 439.7,
+          "pct_of_actual_drift": 79.8
+        },
+        "gem": {
+          "ft": 639.6,
+          "pct_of_actual_drift": 116.1
+        }
+      }
+    },
+    "hrrr_analysis_actual_proxy": {
+      "11_dual_fast_2000": {
+        "ft": 171.8,
+        "pct_of_actual_drift": 31.2
+      },
+      "11_dual_slow_2000": {
+        "ft": 519.3,
+        "pct_of_actual_drift": 94.3
+      },
+      "13_dual_fast_2000": {
+        "ft": 332.4,
+        "pct_of_actual_drift": 60.3
+      },
+      "13_dual_slow_2000": {
+        "ft": 826.6,
+        "pct_of_actual_drift": 150.0
+      }
+    },
+    "within_published_core_hull": {
+      "11": false,
+      "13": false
+    }
+  }
+}

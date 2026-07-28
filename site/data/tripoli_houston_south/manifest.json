@@ -1,6 +1,6 @@
 {
   "site_id": "tripoli_houston_south",
-  "generated_at": "2026-07-25T19:33:15",
+  "generated_at": "2026-07-27T22:15:47",
   "launch_dates": [
     {
       "target_date": "2026-07-25",
@@ -9,7 +9,10 @@
       "label": "Sat, Jul 25 (T-0)",
       "data_path": "data/tripoli_houston_south/live/2026-07-25/splash_zones_captured_2026-07-25.json",
       "history_path": "data/tripoli_houston_south/live/2026-07-25/points_history.json",
-      "real_flight_path": null
+      "real_flight_paths": [
+        "data/tripoli_houston_south/real_flights/2026-07-25_J270_summary.json",
+        "data/tripoli_houston_south/real_flights/2026-07-25_J435_summary.json"
+      ]
     },
     {
       "target_date": "2026-06-27",
@@ -18,7 +21,7 @@
       "label": "Sat, Jun 27 (T-0)",
       "data_path": "data/tripoli_houston_south/live/2026-06-27/splash_zones_captured_2026-06-27.json",
       "history_path": "data/tripoli_houston_south/live/2026-06-27/points_history.json",
-      "real_flight_path": null
+      "real_flight_paths": []
     }
   ]
 }
