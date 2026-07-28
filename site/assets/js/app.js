@@ -321,7 +321,7 @@ function applyModeUI(mode) {
     : 'Hover a model to isolate it -- zones collapse to a line (a single model\'s fast/slow points fall on the same bearing from the pad). Click to pin; click again to release.';
   document.getElementById('rate-hint').textContent =
     'Fast = single deploy 20 fps, or dual deploy drogue 100 fps + main 20 fps. Slow = single deploy 10 fps, or dual deploy drogue 80 fps + main 10 fps.'
-    + (mode === 'byHistory' ? ' History always shows exactly one -- click the other to switch.' : ' Hover a rate to isolate it; click to pin, click again to release.');
+    + (mode === 'byHistory' ? ' History starts on fast -- click to switch, click again to clear.' : ' Hover a rate to isolate it; click to pin, click again to release.');
 }
 
 // --- toggles ---
@@ -478,10 +478,12 @@ function buildRateLegend() {
     row.addEventListener('mouseenter', () => { state.isolatedRate = key; render(); });
     row.addEventListener('mouseleave', () => { state.isolatedRate = null; render(); });
     row.addEventListener('click', () => {
-      // History always shows exactly one rate -- clicking the already-
-      // selected one stays selected instead of toggling back to "both"
-      // (which byAltitude/byTime support but History deliberately doesn't).
-      state.pinnedRate = state.mode === 'byHistory' ? key : (state.pinnedRate === key ? null : key);
+      // Toggle, same as the altitude list -- clicking the already-selected
+      // rate again clears it rather than being stuck permanently selected.
+      // History defaults to 'fast' the first time that mode is entered (see
+      // setMode()) so it doesn't start out showing nothing, but from there
+      // behaves the same as byAltitude/byTime.
+      state.pinnedRate = (state.pinnedRate === key) ? null : key;
       [...el.children].forEach(r => r.classList.remove('pinned'));
       if (state.pinnedRate === key) row.classList.add('pinned');
       render();
