@@ -1,3 +1,34 @@
+// --- update check (see .github/workflows/pages.yml's asset-versioning step) ---
+// GitHub Pages' Cache-Control (max-age=600, identical for every file --
+// there's no per-path header control here) is short enough that a real
+// reload picks up a new deploy on its own -- the actual mobile pain point is
+// a backgrounded tab (or a home-screen-added PWA-like icon) coming back to
+// the foreground straight from the OS/browser's own disk or bfcache, never
+// touching the network at all, no matter how short max-age is. document.
+// currentScript.src carries this deploy's ?v=<commit-sha> (empty during
+// local dev, e.g. python -m http.server -- CURRENT_VERSION stays null and
+// checkForUpdate() below just no-ops there, nothing to compare against).
+// Reloading is safe UX-wise since it only ever fires right as a hidden tab
+// becomes visible again (visibilitychange) or restores from bfcache
+// (pageshow's persisted flag) -- never while someone's actively mid-interaction.
+const CURRENT_VERSION = new URL(document.currentScript.src, location.href).searchParams.get('v');
+
+async function checkForUpdate() {
+  if (!CURRENT_VERSION) return;
+  try {
+    const resp = await fetch(`version.json?_=${Date.now()}`, { cache: 'no-store' });
+    const { version } = await resp.json();
+    if (version && version !== CURRENT_VERSION) location.reload();
+  } catch {
+    // Offline, or version.json not deployed yet on a brand-new site -- no
+    // harm done, the next visibility/pageshow event just tries again.
+  }
+}
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') checkForUpdate();
+});
+window.addEventListener('pageshow', evt => { if (evt.persisted) checkForUpdate(); });
+
 let DATA = null;
 // points_history.json for the current target date -- every capture's splash
 // point per hour/deploy/rate/altitude, for the "History" view mode (see

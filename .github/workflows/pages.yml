@@ -23,6 +23,26 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/configure-pages@v5
+      - name: Version app.js/app.css for reliable cache-busting
+        # GitHub Pages sends the same Cache-Control: max-age=600 on every
+        # file regardless of type (no per-path header control here, unlike
+        # Netlify/Cloudflare Pages' _headers) -- fine for index.html itself
+        # (a real reload re-fetches it within 10min and gets the current
+        # asset URLs below), but a mobile browser reopening a backgrounded
+        # tab often serves everything, index.html included, straight from
+        # its own disk/bfcache without ever re-hitting the network, no
+        # matter how short max-age is. Query-stringing the JS/CSS URLs with
+        # this commit's SHA (so they change every deploy) fixes the case
+        # where a *new* index.html load did happen but the old script/style
+        # was still served from cache under the same old URL; version.json
+        # (fetched cache-busted itself, see app.js's own check) is what
+        # catches the "never re-fetched index.html at all" case, by letting
+        # a page already open compare what it's running against what's
+        # actually live and reload itself.
+        run: |
+          V="${GITHUB_SHA:0:12}"
+          sed -i "s|assets/js/app.js|assets/js/app.js?v=$V|; s|assets/css/app.css|assets/css/app.css?v=$V|" site/index.html
+          echo "{\"version\": \"$V\"}" > site/version.json
       - uses: actions/upload-pages-artifact@v3
         with:
           path: site
