@@ -23,10 +23,20 @@ constant, so re-running this after any future change to Hutto's own bounds
 stays consistent automatically. Zoom level is chosen per box size (not
 hardcoded to Hutto's zoom 17/14) to keep the tile count in the same
 ballpark as Hutto's original fetch (~250-350 tiles/image) regardless of how
-much bigger the box is -- Seymour/Argonia's ~3x-larger boxes would mean
-~9x the tiles at a fixed zoom, which is both slow and more likely to hit
-rate limits for no real benefit (a 45,000 ft-waiver map doesn't need
-Hutto's close-in zoom 17 resolution over an area that much larger).
+much bigger the box is -- Seymour/Argonia's ~4-5x-larger boxes would mean
+~16-25x the tiles at a fixed zoom, which is both slow and more likely to
+hit rate limits for no real benefit.
+
+That budget is a soft preference, not a hard ceiling, though: MIN_DETAIL_ZOOM
+sets a floor under the *detail* crop specifically (the one read against real
+terrain/roads, not the wide contextual one) that pick_zoom() will blow the
+tile budget to reach rather than silently hand back a blurrier image. Found
+by comparing tripoli_houston_south's real flights against its map (zoom 16,
+already at this floor) and noticing Seymour/Argonia's old budget-picked
+zoom 15/14 -- 2x/4x blurrier per pixel than zoom 16, since each zoom step
+halves ground distance/pixel -- were coarse enough to matter for the same
+reason. The wide crop has no such floor -- it's just orientation context,
+never the thing someone's zoomed all the way into.
 
 Also builds the non-satellite regional site-selector map (all of config.SITES
 at once, roads/labels instead of imagery) -- see build_regional_map_image()
@@ -53,6 +63,13 @@ TILE_SIZE = 256
 TILE_BUDGET = 350  # keep each image's tile count in Hutto's original ballpark
 DETAIL_ZOOM_CANDIDATES = [17, 16, 15, 14]
 WIDE_ZOOM_CANDIDATES = [14, 13, 12, 11]
+# Floor under the detail crop's zoom specifically (see pick_zoom()'s min_zoom
+# param) -- large-waiver sites (Seymour, Argonia, and anything future in
+# that range) blow well past TILE_BUDGET to hit this, which is the point:
+# reading a splash zone against real terrain needs at least this much
+# resolution regardless of how big the box is, not whatever a fixed tile
+# count happens to afford.
+MIN_DETAIL_ZOOM = 16
 DETAIL_WEB_LONG_EDGE = 1600  # matches Hutto's original _web.jpg convention
 WIDE_WEB_LONG_EDGE = 900
 WEB_JPEG_QUALITY = 85
@@ -93,13 +110,18 @@ def _tile_grid(bounds: dict, zoom: int) -> tuple[int, int, int, int]:
     return math.floor(x_w) - 1, math.floor(x_e) + 1, math.floor(y_n) - 1, math.floor(y_s) + 1
 
 
-def pick_zoom(bounds: dict, candidates: list[int], tile_budget: int = TILE_BUDGET) -> int:
+def pick_zoom(bounds: dict, candidates: list[int], tile_budget: int = TILE_BUDGET, min_zoom: int | None = None) -> int:
     """Highest-resolution zoom (from `candidates`, checked high to low) whose
-    tile count for `bounds` doesn't exceed `tile_budget`."""
+    tile count for `bounds` doesn't exceed `tile_budget` -- but never lower
+    than `min_zoom` if given, even over budget. `min_zoom` must be one of
+    `candidates`; a bigger `bounds` needing more tiles to reach it is the
+    point of the floor, not something to trade away for a smaller fetch."""
     for zoom in candidates:
         tx_min, tx_max, ty_min, ty_max = _tile_grid(bounds, zoom)
         n_tiles = (tx_max - tx_min + 1) * (ty_max - ty_min + 1)
         if n_tiles <= tile_budget:
+            return zoom
+        if min_zoom is not None and zoom == min_zoom:
             return zoom
     return candidates[-1]  # coarsest candidate, even if still over budget
 
@@ -287,7 +309,7 @@ def build_site_maps(site_key: str) -> Path:
 
     detail_png = raw_dir / "detail_sat.png"
     detail_bounds = bbox_for(lat, lon, detail_m)
-    detail_zoom = pick_zoom(detail_bounds, DETAIL_ZOOM_CANDIDATES)
+    detail_zoom = pick_zoom(detail_bounds, DETAIL_ZOOM_CANDIDATES, min_zoom=MIN_DETAIL_ZOOM)
     print(f"detail: {detail_m/1000:.1f}km box")
     detail_size, detail_site_px = fetch_satellite(detail_bounds, detail_zoom, detail_png, mark_site=(lat, lon))
     _make_web_jpg(detail_png, site_dir / "detail_sat_web.jpg", DETAIL_WEB_LONG_EDGE)
