@@ -9,6 +9,11 @@ pillow==12.3.0
 requests==2.34.2
 xarray==2026.7.0
 herbie-data==2026.3.0
+# herbie-data's point-extraction (used by pull_historical.py's pull_actual())
+# needs this at import time but doesn't declare it as a hard dependency --
+# missing here meant every noaa-actuals cron run silently failed at the
+# actual-pull step (masked locally since dev venvs already had it installed).
+scikit-learn==1.9.0
 cfgrib==0.9.15.1
 eccodes==2.47.0
 eccodeslib==2.47.3.23
