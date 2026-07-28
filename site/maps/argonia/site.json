@@ -9,14 +9,14 @@
       "lon_e": -97.64078900070443
     },
     "image_size_px": [
-      2284,
-      2284
+      9137,
+      9137
     ],
     "site_px": [
-      1142.1322726817596,
-      1142.03725418451
+      4568.529090727038,
+      4568.545521216407
     ],
-    "zoom": 14
+    "zoom": 16
   },
   "wide": {
     "bounds": {
@@ -33,5 +33,5 @@
   },
   "source": "ArcGIS World Imagery (server.arcgisonline.com)",
   "road_source": "ArcGIS World Street Map (server.arcgisonline.com)",
-  "fetched_at": "2026-07-19"
+  "fetched_at": "2026-07-28"
 }
