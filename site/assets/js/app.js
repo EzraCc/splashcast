@@ -526,8 +526,28 @@ function buildTimeLegend() {
       const label = REAL_FLIGHTS.length > 1 ? `Real flights (${REAL_FLIGHTS.length}, hover or click for details)` : 'Real flight (hover or click for details)';
       const realFlightRow = document.createElement('div');
       realFlightRow.className = 'alt-row static';
-      realFlightRow.innerHTML = `${shapeSwatchSVG('target', REAL_FLIGHT_COLOR)}<span>${label}</span>`;
+      realFlightRow.innerHTML = `${shapeSwatchSVG('target', REAL_FLIGHT_COLOR)}<span>${label}</span>` +
+        `<button class="info-btn" type="button" data-hint="real-flight-hint" title="Show details">i</button>`;
       el.appendChild(realFlightRow);
+
+      // Generic across every real flight -- how launch/apogee/landing/
+      // predicted-landing are each derived, not this flight's own numbers
+      // (those already show in the info box itself, and a no-GPS flight's
+      // own estimation caveat already shows there too via apogeeNote).
+      // Built here (not static markup in index.html) since this row only
+      // exists at all when REAL_FLIGHTS is non-empty -- wired directly
+      // rather than relying on the one-time global .info-btn listener setup
+      // (see that code's own comment: it only ever runs once, before this
+      // element can exist).
+      const hint = document.createElement('div');
+      hint.className = 'alt-hint';
+      hint.id = 'real-flight-hint';
+      hint.innerHTML = 'Launch is the tracker’s own real GPS at liftoff (or a hand-recorded pin, for altimeters with no GPS) — shown for reference and the boost-angle figure, not itself an input to the predicted landing below. Apogee altitude is always real (barometric or GPS); its horizontal position is either real GPS too, or, for no-GPS altimeters, estimated from the real landing point and the wind model (flagged in that flight’s own note when this applies). Landing is a real GPS position (the tracker’s own fix, or a hand-recorded pin at recovery). Predicted landing (the cyan star) is this flight’s own apogee — real or estimated — plus its own derived descent rates and the real wind profile for its actual time of day, simulated forward to the ground: based on apogee, not the launch/rail position, so for GPS-tracked flights it’s an independent accuracy check against the real landing.';
+      el.appendChild(hint);
+      realFlightRow.querySelector('.info-btn').addEventListener('click', () => {
+        const isOpen = hint.classList.toggle('open');
+        realFlightRow.querySelector('.info-btn').classList.toggle('open', isOpen);
+      });
     }
     return;
   }
