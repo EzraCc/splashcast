@@ -100,7 +100,7 @@
     },
     "self_simulated_boost_adjusted": {
       "ft": 207.1,
-      "pct_of_actual_drift": 5.6
+      "pct_of_descent_drift": 6.1
     },
     "altitude_bucket_used_ft": 10000,
     "t0_model_forecasts": {

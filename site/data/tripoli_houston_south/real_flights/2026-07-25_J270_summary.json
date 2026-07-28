@@ -101,7 +101,7 @@
     },
     "self_simulated_boost_adjusted": {
       "ft": 120.2,
-      "pct_of_actual_drift": 15.5
+      "pct_of_descent_drift": 14.1
     },
     "altitude_bucket_used_ft": 2000,
     "forecast_capture_date_used": "2026-07-25",

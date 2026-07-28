@@ -228,9 +228,9 @@ def point_in_polygon(x: float, y: float, poly: list[list[float]]) -> bool:
     return inside
 
 
-def _delta(x_ft: float, y_ft: float, real_x_ft: float, real_y_ft: float, real_dist_ft: float) -> dict:
+def _delta(x_ft: float, y_ft: float, real_x_ft: float, real_y_ft: float, real_dist_ft: float, pct_key: str = "pct_of_actual_drift") -> dict:
     d = math.hypot(x_ft - real_x_ft, y_ft - real_y_ft)
-    return {"ft": round(d, 1), "pct_of_actual_drift": pct_of_actual_drift(d, real_dist_ft)}
+    return {"ft": round(d, 1), pct_key: pct_of_actual_drift(d, real_dist_ft)}
 
 
 def compare_to_pipeline(site_id: str, target_date: date, real_x_ft: float, real_y_ft: float, real_dist_ft: float, altitude_bucket: int, hour_buckets: tuple[int, ...] = (11, 13)) -> dict:
@@ -330,6 +330,15 @@ def analyze(site_id: str, target_date: date, samples: list[FlightSample], ground
     apogee_dist_ft = math.hypot(apogee_x_ft, apogee_y_ft)
     boost_angle_deg = boost_angle_from_vertical(apogee_dist_ft, apogee.agl_ft)
 
+    # How far the wind actually carried the rocket during descent alone
+    # (real apogee -> real landing) -- the thing boost_adjusted_delta below
+    # is actually scored against. Not real_dist_ft (pad -> real landing):
+    # that's inflated by real boost-phase/weathercocking drift, which this
+    # sim never touches -- apogee's horizontal position here is measured
+    # GPS, not predicted, so pad-to-landing would size a pure descent-model
+    # error against a distance the model was never trying to explain.
+    descent_drift_dist_ft = math.hypot(real_x_ft - apogee_x_ft, real_y_ft - apogee_y_ft)
+
     # Real wind profile, blended between the two bracketing HRRR-analysis
     # hours to the real launch time.
     raw_path = Path(config.DATA_DIR) / site_id / "raw" / f"{target_date}_actual.parquet"
@@ -348,7 +357,12 @@ def analyze(site_id: str, target_date: date, samples: list[FlightSample], ground
     descent_only_delta = _delta(sim_x, sim_y, real_x_ft, real_y_ft, real_dist_ft)
 
     total_x, total_y = apogee_x_ft + sim_x, apogee_y_ft + sim_y
-    boost_adjusted_delta = _delta(total_x, total_y, real_x_ft, real_y_ft, real_dist_ft)
+    # total_x/total_y - real_x_ft/real_y_ft reduces to sim_x/sim_y -
+    # (real_x_ft - apogee_x_ft)/(real_y_ft - apogee_y_ft) -- i.e. purely
+    # predicted-vs-actual descent drift, apogee cancels out of it exactly --
+    # so descent_drift_dist_ft (not real_dist_ft) is the right denominator:
+    # this error has nothing to do with boost-phase drift to begin with.
+    boost_adjusted_delta = _delta(total_x, total_y, real_x_ft, real_y_ft, descent_drift_dist_ft, pct_key="pct_of_descent_drift")
 
     if altitude_bucket is None:
         altitudes = config.altitudes_for_site(site_id)
@@ -407,6 +421,19 @@ def analyze(site_id: str, target_date: date, samples: list[FlightSample], ground
         # client can plot both on the same map.
         "predicted_landing_offset_from_pad_ft": {"x": round(float(total_x), 1), "y": round(float(total_y), 1)},
         "delta_from_predictions": {
+            # self_simulated_boost_adjusted scores pct_of_descent_drift, not
+            # pct_of_actual_drift like everything else here -- its error is
+            # purely descent-model (real measured apogee + sim vs. real
+            # landing; apogee's real GPS offset from the pad cancels out of
+            # that error exactly, see boost_adjusted_delta's own comment
+            # above), so it's sized against how far the wind actually
+            # carried the rocket from apogee to landing, not pad to landing
+            # (which real boost-phase/weathercocking drift dominates, and
+            # this sim never touches -- apogee here is measured, not
+            # predicted). self_simulated_descent_only keeps the pad-relative
+            # framing: its own error already conflates an assumed-zero boost
+            # drift with descent-model error, so total actual drift remains
+            # the fair comparison for it.
             "self_simulated_descent_only": descent_only_delta,
             "self_simulated_boost_adjusted": boost_adjusted_delta,
             "altitude_bucket_used_ft": altitude_bucket,
@@ -769,7 +796,7 @@ if __name__ == "__main__":
         headline = summary["delta_from_predictions"]["self_simulated_boost_adjusted"]
         print(f"apogee {summary['apogee']['altitude_agl_ft']}ft, "
               f"landing {summary['landing']['offset_from_pad_ft']['dist']}ft from pad, "
-              f"boost-adjusted error {headline['ft']}ft ({headline['pct_of_actual_drift']}% of actual drift)")
+              f"boost-adjusted error {headline['ft']}ft ({headline['pct_of_descent_drift']}% of actual descent drift)")
     elif args.tracker == "aim_xtra":
         samples, ground_baseline = load_aim_xtra_csv(args.csv_path)
         summary = analyze(args.site, args.date, samples, ground_baseline)
@@ -777,7 +804,7 @@ if __name__ == "__main__":
         headline = summary["delta_from_predictions"]["self_simulated_boost_adjusted"]
         print(f"apogee {summary['apogee']['altitude_agl_ft']}ft, "
               f"landing {summary['landing']['offset_from_pad_ft']['dist']}ft from pad, "
-              f"boost-adjusted error {headline['ft']}ft ({headline['pct_of_actual_drift']}% of actual drift)")
+              f"boost-adjusted error {headline['ft']}ft ({headline['pct_of_descent_drift']}% of actual descent drift)")
     else:
         samples = load_blueraven_lr_csv(args.lr_csv_path)
         summary = analyze_no_gps(args.site, args.date, samples, args.rail_lat, args.rail_lon, args.landing_lat, args.landing_lon)

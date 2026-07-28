@@ -573,7 +573,7 @@ function buildTimeLegend() {
       const hint = document.createElement('div');
       hint.className = 'alt-hint';
       hint.id = 'real-flight-hint';
-      hint.innerHTML = 'Launch is the tracker’s own real GPS at liftoff (or a hand-recorded pin, for altimeters with no GPS) — shown for reference and the boost-angle figure, not itself an input to the predicted landing below. Apogee altitude is always real (barometric or GPS); its horizontal position is either real GPS too, or, for no-GPS altimeters, estimated from the real landing point and the wind model (flagged in that flight’s own note when this applies). Landing is a real GPS position (the tracker’s own fix, or a hand-recorded pin at recovery). Predicted landing (the cyan star) is this flight’s own apogee — real or estimated — plus its own derived descent rates and the real wind profile for its actual time of day, simulated forward to the ground: based on apogee, not the launch/rail position, so for GPS-tracked flights it’s an independent accuracy check against the real landing.';
+      hint.innerHTML = 'Launch is the tracker’s own real GPS at liftoff (or a hand-recorded pin, for altimeters with no GPS) — shown for reference and the boost-angle figure, not itself an input to the predicted landing below. Apogee altitude is always real (barometric or GPS); its horizontal position is either real GPS too, or, for no-GPS altimeters, estimated from the real landing point and the wind model (flagged in that flight’s own note when this applies). Landing is a real GPS position (the tracker’s own fix, or a hand-recorded pin at recovery). Predicted landing (the cyan star) is this flight’s own apogee — real or estimated — plus its own derived descent rates and the real wind profile for its actual time of day, simulated forward to the ground: based on apogee, not the launch/rail position, so for GPS-tracked flights it’s an independent accuracy check against the real landing. Its “% of actual descent drift” scores that check against how far the wind actually carried the rocket from apogee to landing — not pad to landing, which real boost-phase drift (the rail angle, weathercocking) dominates and this sim never touches, since apogee’s position there is measured, not predicted.';
       el.appendChild(hint);
       realFlightRow.querySelector('.info-btn').addEventListener('click', () => {
         const isOpen = hint.classList.toggle('open');
@@ -1003,7 +1003,16 @@ function realFlightBoxHTML() {
   const descentOnly = rf.delta_from_predictions.self_simulated_descent_only;
   const d = boostAdjusted || descentOnly;
   const deltaLabel = boostAdjusted ? 'delta from predicted landing' : 'delta from wind-only prediction (no boost data)';
-  const deltaLine = d ? `${deltaLabel}: ${d.ft.toFixed(0)} ft (${d.pct_of_actual_drift}% of actual drift)<br>` : '';
+  // boostAdjusted's error is purely descent-model (real measured apogee, not
+  // predicted, cancels out of it -- see analyze_real_flight.py's own
+  // comment), so it's scored as % of the real apogee-to-landing descent
+  // drift (pct_of_descent_drift), not % of the real pad-to-landing drift
+  // like descentOnly (whose own error already conflates an assumed-zero
+  // boost drift with descent-model error, so pad-to-landing stays the fair
+  // comparison there).
+  const pct = boostAdjusted ? boostAdjusted.pct_of_descent_drift : (descentOnly && descentOnly.pct_of_actual_drift);
+  const pctSuffix = boostAdjusted ? 'of actual descent drift' : 'of actual drift';
+  const deltaLine = d ? `${deltaLabel}: ${d.ft.toFixed(0)} ft (${pct}% ${pctSuffix})<br>` : '';
   // Against the pad's *current* position (configured + any drag offset) --
   // not the fixed figure baked into the summary JSON at pipeline-run time.
   // No need to also show a "rail N ft from pad" readout here: clicking the
