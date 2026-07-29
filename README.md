@@ -57,7 +57,7 @@ Two scheduled GitHub Actions jobs in [`.github/workflows/cron-pulls.yml`](.githu
 | `open-meteo-live` | every 6h, at `:15` past 0/6/12/18 | Pulls the current forecast for every site with a launch 0–7 days out (`launch_schedule.py --run-live`), building that day's forecast-drift snapshot. Stops pulling for a site once its launch day is past a per-site cutoff hour (`config.SITES[...]["cron_cutoff_hour_utc"]`). |
 | `noaa-actuals` | daily at 11:00 | Pulls the HRRR-analysis "actual" for every site that launched the day before (`launch_schedule.py --run-actuals`), populating the History view's star marker and accuracy table. |
 
-Both jobs commit their output (`pipeline/data/`, `site/data/`, `site/maps/`) straight back to `master` when something changed — that's what makes the data survive past the ephemeral runner, and it's also what triggers [`pages.yml`](.github/workflows/pages.yml)'s redeploy. Which sites/dates get pulled isn't hardcoded anywhere — it's derived from each club's real recurring schedule in `launch_schedule.py` (see [Adding a site](docs/adding-a-site.md)), so a fork just needs its own schedule rule added there and the cron jobs pick it up automatically.
+Both jobs commit their output (`pipeline/data/`, `site/data/`, `site/maps/`) straight back to `master` when something changed — that's what makes the data survive past the ephemeral runner, and it's also what triggers [`pages.yml`](.github/workflows/pages.yml)'s redeploy. Which sites/dates get pulled isn't hardcoded anywhere — it's derived from `pipeline/launch_calendar.json` (each club's recurring schedule, plus one-off cancel/move/add/flag exceptions for a single date -- see [Adding a site](docs/adding-a-site.md)), interpreted generically by `launch_schedule.py`. A fork just needs its own rule entry added to that file and the cron jobs pick it up automatically; a cancelled or moved launch (`launch_schedule.py --cancel`/`--move`) stops (or redirects) its pulls with no code change.
 
 Both are also runnable on demand via the Actions tab's "Run workflow" button (`workflow_dispatch`, with a `live`/`actuals`/`both` picker) if you don't want to wait for the schedule.
 
@@ -66,7 +66,8 @@ Both are also runnable on demand via the Actions tab's "Run workflow" button (`w
 ```
 pipeline/                Python: pulls data, runs the simulation, publishes JSON. Never deployed.
   config.py                 Per-site config (coordinates, waiver, elevation, cron cutoff) + shared constants.
-  launch_schedule.py         Per-club recurring launch-day rules; the cron jobs' entry point.
+  launch_calendar.json       Per-club recurring launch-day rules + one-off cancel/move/add/flag exceptions (data, not code).
+  launch_schedule.py         Generic interpreter for launch_calendar.json; the cron jobs' entry point.
   pull_live_forecast.py      Live Open-Meteo pull -- one capture per day, building forecast-drift history.
   pull_historical.py         NOAA HRRR-analysis "actual" pull + a separate multi-week backfill mode.
   splash_zones.py            Wind capture -> drift simulation -> convex-hull zone JSON for the viewer.

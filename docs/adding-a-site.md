@@ -1,6 +1,6 @@
 # Adding a site
 
-A step-by-step guide for pointing Splashcast at a new launch site — your own club's field, if you've forked this. Every site needs two things registered in the pipeline (a config entry and a recurring-launch rule) plus a one-time map fetch; after that, the [cron jobs](../README.md#automation-cron-jobs) pick it up automatically with no further per-site setup.
+A step-by-step guide for pointing Splashcast at a new launch site — your own club's field, if you've forked this. Every site needs two things registered in the pipeline (a config entry and a recurring-launch rule in `launch_calendar.json`) plus a one-time map fetch; after that, the [cron jobs](../README.md#automation-cron-jobs) pick it up automatically with no further per-site setup.
 
 ## 1. Add the site to `config.SITES`
 
@@ -24,16 +24,32 @@ Open `pipeline/config.py` and add an entry to the `SITES` dict:
 
 ## 2. Add a recurring launch-schedule rule
 
-`pipeline/launch_schedule.py` is what tells the cron jobs *when* your site actually needs a pull — nothing gets pulled automatically just because a site exists in `config.SITES`. Add a function that returns your club's real recurring schedule as a list of `LaunchEvent`s, then register it in `all_events()`.
+`pipeline/launch_calendar.json` is what tells the cron jobs *when* your site actually needs a pull — nothing gets pulled automatically just because a site exists in `config.SITES`. It's a plain JSON file, not Python: add an entry under `"clubs"` with your club's real recurring schedule, described as one or more rules. `pipeline/launch_schedule.py` is a generic interpreter for these rule shapes, not a place you need to write code.
 
 The common case — a fixed nth-weekday-of-month, e.g. "3rd Saturday every month":
 
-```python
-def your_club_events(year: int) -> list[LaunchEvent]:
-    return [LaunchEvent(nth_weekday(year, m, SAT, 3), "your_site_id", "Your Club") for m in range(1, 13)]
+```json
+"your_club": {
+  "label": "Your Club",
+  "rules": [
+    {"type": "nth_weekday_monthly", "site_id": "your_site_id", "weekday": "SAT", "n": 3, "label": "Your Club"}
+  ]
+}
 ```
 
-Then add `+ your_club_events(year)` to the list built in `all_events()`. If your club's schedule doesn't fit a simple nth-weekday rule (moves around, has a fixed off-season, needs holiday-relative dates like Memorial Day weekend), look at `tnt_seymour_events()` (holiday-relative multi-day event) or `kloudbusters_events()` (a hand-entered per-year dict, for a schedule with no reproducible formula at all) for patterns to copy. The module docstring at the top of the file lays out the four rule shapes already in use.
+If your club's schedule doesn't fit that (has a fixed off-season, needs holiday-relative dates like Memorial Day weekend, alternates between two sites seasonally, or has no reproducible formula at all), there are three more rule `type`s already in use — `holiday_relative_multiday`, `seasonal_site_swap`, and `hand_entered` — see the existing `"aarg"`, `"tnt_seymour"`, and `"kloudbusters"` entries in `launch_calendar.json` for real examples of each, and `launch_schedule.py`'s own module docstring for the full parameter list per type.
+
+**One-off exceptions** (a single cancelled/moved/added/uncertain date, without touching the recurring rule) go in the same file's `"overrides"` list — use the CLI instead of hand-editing JSON:
+
+```bash
+cd pipeline
+python launch_schedule.py --cancel your_site_id 2026-07-18 "cancelled due to heat"
+python launch_schedule.py --move your_site_id 2026-08-01 some_other_site_id --reason "field was plowed"
+python launch_schedule.py --add your_site_id 2026-08-15 "extra August launch" --tentative
+python launch_schedule.py --flag your_site_id 2026-09-05 "may move for a conflicting event, undecided"
+```
+
+Each of these validates the target date/site against the recurring schedule before writing (refuses if it doesn't match anything, rather than silently writing a no-op override) and auto-fills the club from `config.SITES`.
 
 Verify it's wired up correctly:
 
@@ -64,6 +80,6 @@ Then serve `site/` locally (`python -m http.server` from inside `site/` — open
 
 ## 5. That's it — the cron jobs take over
 
-Once your site is in `config.SITES` and has a schedule rule in `launch_schedule.py`, the two scheduled GitHub Actions jobs (see the [README](../README.md#automation-cron-jobs)) will pull forecasts leading up to every future launch and the HRRR actual the day after, with no further per-site configuration. Nothing needs to be added to the workflow file itself — it iterates whatever `launch_schedule.py` reports.
+Once your site is in `config.SITES` and has a rule entry in `launch_calendar.json`, the two scheduled GitHub Actions jobs (see the [README](../README.md#automation-cron-jobs)) will pull forecasts leading up to every future launch and the HRRR actual the day after, with no further per-site configuration. Nothing needs to be added to the workflow file itself — it iterates whatever `launch_schedule.py` reports.
 
 If you're running this in your own fork, make sure your repo's **Settings → Actions → General → Workflow permissions** is set to "Read and write permissions" — the cron jobs commit their pulled data straight back to the repo, and that's off by default on most repos.

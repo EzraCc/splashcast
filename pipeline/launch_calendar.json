@@ -1,0 +1,269 @@
+{
+  "schema_version": 1,
+  "clubs": {
+    "aarg": {
+      "label": "AARG",
+      "rules": [
+        {
+          "type": "seasonal_site_swap",
+          "weekday": "SAT",
+          "n": 1,
+          "primary_site": "apache_pass",
+          "primary_months": [
+            4,
+            5,
+            6,
+            7,
+            8,
+            9
+          ],
+          "secondary_site": "hutto",
+          "overlap_months": [
+            4,
+            9
+          ],
+          "label": "AARG",
+          "overlap_label": "AARG (grow-season/off-season overlap)"
+        }
+      ]
+    },
+    "tripoli_houston": {
+      "label": "Tripoli Houston",
+      "rules": [
+        {
+          "type": "nth_weekday_monthly",
+          "site_id": "hearne",
+          "weekday": "SAT",
+          "n": 2,
+          "label": "Tripoli Houston"
+        },
+        {
+          "type": "nth_weekday_monthly",
+          "site_id": "tripoli_houston_south",
+          "weekday": "SAT",
+          "n": 4,
+          "months": [
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8
+          ],
+          "label": "Tripoli Houston South"
+        }
+      ]
+    },
+    "dars": {
+      "label": "DARS",
+      "rules": [
+        {
+          "type": "nth_weekday_monthly",
+          "site_id": "gunter",
+          "weekday": "SAT",
+          "n": 3,
+          "month_overrides": {
+            "7": 4
+          },
+          "label": "DARS"
+        }
+      ]
+    },
+    "tnt_seymour": {
+      "label": "TNT",
+      "rules": [
+        {
+          "type": "nth_weekday_monthly",
+          "site_id": "seymour",
+          "weekday": "SAT",
+          "n": 4,
+          "months": [
+            1,
+            2,
+            3,
+            4,
+            5
+          ],
+          "label": "TNT Seymour (Sat)",
+          "plus_days_after": [
+            {
+              "days": 1,
+              "label": "TNT Seymour (Sun)"
+            }
+          ]
+        },
+        {
+          "type": "holiday_relative_multiday",
+          "site_id": "seymour",
+          "holiday": "memorial_day",
+          "offsets": [
+            {
+              "days": -2,
+              "label": "Texas Shootout (Sat)"
+            },
+            {
+              "days": -1,
+              "label": "Texas Shootout (Sun)"
+            },
+            {
+              "days": 0,
+              "label": "Texas Shootout (Memorial Day Mon)"
+            }
+          ]
+        }
+      ]
+    },
+    "sd_rocket_jockies": {
+      "label": "SD Rocket Jockies",
+      "rules": [
+        {
+          "type": "nth_weekday_monthly",
+          "site_id": "sd_rocket_jockies",
+          "weekday": "SAT",
+          "n": 1,
+          "months": [
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10
+          ],
+          "label": "SD Rocket Jockies"
+        }
+      ]
+    },
+    "kloudbusters": {
+      "label": "KLOUDBusters",
+      "rules": [
+        {
+          "type": "hand_entered",
+          "site_id": "argonia",
+          "years": {
+            "2026": [
+              {
+                "date": "2026-01-10",
+                "label": "January Fun Fly"
+              },
+              {
+                "date": "2026-02-15",
+                "label": "February Fun Fly"
+              },
+              {
+                "date": "2026-03-08",
+                "label": "March Fun Fly"
+              },
+              {
+                "date": "2026-03-21",
+                "label": "Argonia Cup / KLOUDBurst 34 (Sat)"
+              },
+              {
+                "date": "2026-03-22",
+                "label": "Argonia Cup / KLOUDBurst 34 (Sun)"
+              },
+              {
+                "date": "2026-07-11",
+                "label": "July Fun Fly"
+              },
+              {
+                "date": "2026-08-02",
+                "label": "August Fun Fly"
+              },
+              {
+                "date": "2026-08-30",
+                "label": "AIRFest Set Up (Sun)"
+              },
+              {
+                "date": "2026-09-04",
+                "label": "AIRFest 32 (Fri)"
+              },
+              {
+                "date": "2026-09-05",
+                "label": "AIRFest 32 (Sat)"
+              },
+              {
+                "date": "2026-09-06",
+                "label": "AIRFest 32 (Sun)"
+              },
+              {
+                "date": "2026-09-07",
+                "label": "AIRFest 32 (Mon)"
+              },
+              {
+                "date": "2026-10-10",
+                "label": "October Fun Fly (Sat)"
+              },
+              {
+                "date": "2026-10-11",
+                "label": "October Fun Fly (Sun)"
+              },
+              {
+                "date": "2026-11-14",
+                "label": "Distant Thunder '26 (Sat)"
+              },
+              {
+                "date": "2026-11-15",
+                "label": "Distant Thunder '26 (Sun)"
+              },
+              {
+                "date": "2026-12-13",
+                "label": "December Fun Fly"
+              }
+            ]
+          }
+        }
+      ]
+    }
+  },
+  "overrides": [
+    {
+      "action": "move",
+      "club": "AARG",
+      "from": {
+        "date": "2026-08-01",
+        "site_id": "apache_pass"
+      },
+      "to": {
+        "date": "2026-08-01",
+        "site_id": "hutto"
+      },
+      "label": "AARG (moved from Apache Pass)",
+      "reason": "Apache Pass field was plowed",
+      "status": "confirmed"
+    },
+    {
+      "action": "add",
+      "club": "AARG",
+      "date": "2026-08-15",
+      "site_id": "apache_pass",
+      "label": "AARG (possible extra August launch)",
+      "reason": "may add an additional August date, unconfirmed",
+      "status": "tentative"
+    },
+    {
+      "action": "flag",
+      "club": "AARG",
+      "date": "2026-09-05",
+      "site_id": "apache_pass",
+      "reason": "may move because of Airfest -- undecided as of 2026-07",
+      "status": "tentative"
+    },
+    {
+      "action": "flag",
+      "club": "AARG",
+      "date": "2026-09-05",
+      "site_id": "hutto",
+      "reason": "may move because of Airfest -- undecided as of 2026-07",
+      "status": "tentative"
+    },
+    {
+      "action": "cancel",
+      "club": "DARS",
+      "date": "2026-07-25",
+      "site_id": "gunter",
+      "reason": "cancelled due to heat"
+    }
+  ]
+}

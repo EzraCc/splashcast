@@ -1,38 +1,49 @@
-"""Recurring per-site launch-day schedule.
+"""Per-site launch-day schedule, driven by launch_calendar.json.
 
 Encodes which site(s) actually need a pull_live_forecast.py/splash_zones.py
 run on a given day, per club, so a daily driver can figure out "what's coming
-up" without a human re-deriving nth-weekday-of-month math every time. Rules
-are sourced directly from each club (AARG/Hearne/TNT) or their published
-calendar (KLOUDBusters) except where a per-rule comment below says otherwise;
-re-verify before trusting a season this schedule hasn't been checked against
--- clubs change their own schedules without this file knowing.
+up" without a human re-deriving nth-weekday-of-month math every time.
 
-Every site here must already exist in config.SITES.
+The actual schedule data (recurring club rules + one-off exceptions) lives in
+launch_calendar.json, not here -- this module is a generic interpreter for
+that file's small set of rule/override shapes, not a per-club hardcoded list.
+See that file's own structure (or docs/adding-a-site.md) for how to add a
+club, and the --cancel/--move/--add/--flag CLI flags below for editing
+one-off exceptions without hand-writing JSON.
 
-Four distinct kinds of rule, because the clubs don't actually share one:
-  1. Fixed nth-weekday-of-month, valid across a month range (AARG, Hearne,
-     TNT Seymour's regular flight day, SD Rocket Jockies, Tripoli Houston
-     South Site) -- computed generically, works for any year.
-  2. A named holiday-relative multi-day event (Texas Shootout: the Sat/Sun/
-     Mon of Memorial Day weekend) -- also computed generically.
-  3. Season-dependent site choice for one recurring rule (AARG: Apache Pass
-     April-September, Hutto the rest of the year), with the two transition
-     months pulling *both* sites since the real trigger -- planting/harvest
-     -- doesn't happen on a fixed calendar date.
-  4. A club whose actual calendar doesn't fit any of the above at all
-     (KLOUDBusters -- see KLOUDBUSTERS_2026 below) and has to be hand-entered
-     per year from their published PDF instead of computed.
+Recurring rule shapes (see RULE_HANDLERS): a fixed nth-weekday-of-month valid
+across a month range, optionally with per-month exceptions or an extra event
+N days after (nth_weekday_monthly); a named holiday-relative multi-day event
+(holiday_relative_multiday); season-dependent site choice for one recurring
+rule, with overlap months pulling *both* sites since the real trigger doesn't
+happen on a fixed calendar date (seasonal_site_swap); and a fully hand-entered
+per-year list for a club whose calendar has no reproducible formula at all
+(hand_entered).
+
+One-off override actions (see _apply_overrides()): cancel (this specific
+occurrence isn't happening), move (moved to a different date and/or site),
+add (a brand-new one-off date, no recurring rule involved), flag (annotates
+an existing event as tentative/uncertain without changing what gets
+generated or polled -- for a "may move, undecided" situation with no new
+date to move *to* yet). cancel/move/flag all hard-fail if they don't match
+an actual generated event, rather than silently no-op'ing on a typo'd date.
 """
 
+import argparse
+import dataclasses
+import json
 import subprocess
 import sys
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
 
 import config
 
 MON, TUE, WED, THU, FRI, SAT, SUN = range(7)
+WEEKDAY_MAP = {"MON": MON, "TUE": TUE, "WED": WED, "THU": THU, "FRI": FRI, "SAT": SAT, "SUN": SUN}
+
+CALENDAR_PATH = Path(__file__).parent / "launch_calendar.json"
 
 
 def nth_weekday(year: int, month: int, weekday: int, n: int) -> date:
@@ -58,154 +69,220 @@ def memorial_day(year: int) -> date:
     return nth_weekday(year, 5, MON, -1)
 
 
+HOLIDAYS = {"memorial_day": memorial_day}
+
+
 @dataclass
 class LaunchEvent:
     event_date: date
     site_id: str
     label: str
+    # "confirmed" (default) or "tentative" -- see the add/flag override
+    # actions below. Additive fields: every existing consumer of LaunchEvent
+    # only ever reads event_date/site_id/label, so these are safe defaults.
+    status: str = "confirmed"
+    note: str | None = None
 
 
-# --- Rule 1+3: AARG -- 1st Saturday every month, site by grow season -------
-# "Grow season" (Apache Pass, April-September) vs. the rest of the year
-# (Hutto) -- the exact planting/harvest date isn't known in advance, so the
-# two transition months (April, September) pull *both* sites rather than
-# guessing which side of the season boundary that Saturday actually falls on.
-AARG_GROW_SEASON_MONTHS = range(4, 10)  # April(4)..September(9) inclusive
-AARG_OVERLAP_MONTHS = {4, 9}
+# --- Recurring-rule interpreters (one per launch_calendar.json rule "type") -
+
+def _nth_weekday_monthly_events(rule: dict, year: int) -> list[LaunchEvent]:
+    site_id = rule["site_id"]
+    weekday = WEEKDAY_MAP[rule["weekday"]]
+    n = rule["n"]
+    months = rule.get("months", list(range(1, 13)))
+    month_overrides = {int(k): v for k, v in rule.get("month_overrides", {}).items()}
+    label = rule.get("label", "")
+    plus_days_after = rule.get("plus_days_after", [])
+    out = []
+    for month in months:
+        d = nth_weekday(year, month, weekday, month_overrides.get(month, n))
+        out.append(LaunchEvent(d, site_id, label))
+        for extra in plus_days_after:
+            out.append(LaunchEvent(d + timedelta(days=extra["days"]), site_id, extra["label"]))
+    return out
 
 
-def aarg_events(year: int) -> list[LaunchEvent]:
+def _holiday_relative_multiday_events(rule: dict, year: int) -> list[LaunchEvent]:
+    site_id = rule["site_id"]
+    anchor = HOLIDAYS[rule["holiday"]](year)
+    return [LaunchEvent(anchor + timedelta(days=o["days"]), site_id, o["label"]) for o in rule["offsets"]]
+
+
+def _seasonal_site_swap_events(rule: dict, year: int) -> list[LaunchEvent]:
+    weekday = WEEKDAY_MAP[rule["weekday"]]
+    n = rule["n"]
+    primary_site, primary_months = rule["primary_site"], set(rule["primary_months"])
+    secondary_site, overlap_months = rule["secondary_site"], set(rule["overlap_months"])
+    label = rule.get("label", "")
+    overlap_label = rule.get("overlap_label", label)
     out = []
     for month in range(1, 13):
-        d = nth_weekday(year, month, SAT, 1)
-        if month in AARG_OVERLAP_MONTHS:
-            out.append(LaunchEvent(d, "apache_pass", "AARG (grow-season/off-season overlap)"))
-            out.append(LaunchEvent(d, "hutto", "AARG (grow-season/off-season overlap)"))
-        elif month in AARG_GROW_SEASON_MONTHS:
-            out.append(LaunchEvent(d, "apache_pass", "AARG"))
+        d = nth_weekday(year, month, weekday, n)
+        if month in overlap_months:
+            out.append(LaunchEvent(d, primary_site, overlap_label))
+            out.append(LaunchEvent(d, secondary_site, overlap_label))
+        elif month in primary_months:
+            out.append(LaunchEvent(d, primary_site, label))
         else:
-            out.append(LaunchEvent(d, "hutto", "AARG"))
+            out.append(LaunchEvent(d, secondary_site, label))
     return out
 
 
-# --- Rule 1: Tripoli Houston @ Hearne -- 2nd Saturday every month ----------
-def hearne_events(year: int) -> list[LaunchEvent]:
-    return [LaunchEvent(nth_weekday(year, m, SAT, 2), "hearne", "Tripoli Houston") for m in range(1, 13)]
+def _hand_entered_events(rule: dict, year: int) -> list[LaunchEvent]:
+    site_id = rule["site_id"]
+    year_events = rule.get("years", {}).get(str(year))
+    if year_events is None:
+        print(f"(skipping hand-entered events for site {site_id!r} in {year}: no \"{year}\" key under this "
+              f"rule's \"years\" dict in {CALENDAR_PATH.name} -- add one before relying on this past what's entered)",
+              file=sys.stderr)
+        return []
+    return [LaunchEvent(date.fromisoformat(e["date"]), site_id, e["label"]) for e in year_events]
 
 
-# --- Rule 1: DARS @ Gunter -- 3rd Saturday every month, except July --------
-# Per dars.org: "Gunter launches are normally held on the third Saturday."
-# July is a recurring exception (per the club): the 3rd Saturday regularly
-# conflicts with "Moon Day" activities the club does instead, so DARS moves
-# to the 4th Saturday that month most years.
-GUNTER_JULY_SATURDAY_N = 4
+RULE_HANDLERS = {
+    "nth_weekday_monthly": _nth_weekday_monthly_events,
+    "holiday_relative_multiday": _holiday_relative_multiday_events,
+    "seasonal_site_swap": _seasonal_site_swap_events,
+    "hand_entered": _hand_entered_events,
+}
 
 
-def gunter_events(year: int) -> list[LaunchEvent]:
-    return [
-        LaunchEvent(nth_weekday(year, m, SAT, GUNTER_JULY_SATURDAY_N if m == 7 else 3), "gunter", "DARS")
-        for m in range(1, 13)
-    ]
+# --- Calendar loading/validation ---------------------------------------------
+
+def _validate_calendar(calendar: dict) -> None:
+    """Collects every problem found (not just the first) and raises one
+    ValueError listing all of them -- a typo here directly risks silently
+    losing real cron coverage for a launch, so this fails loudly rather than
+    skipping the one bad entry."""
+    problems = []
+    known_sites = set(config.SITES)
+
+    def _check_date(d: str, where: str):
+        try:
+            date.fromisoformat(d)
+        except (TypeError, ValueError):
+            problems.append(f"{where}: {d!r} is not a valid ISO date")
+
+    def _check_site(site_id, where: str):
+        if site_id not in known_sites:
+            problems.append(f"{where}: unknown site_id {site_id!r}")
+
+    for club_key, club in calendar.get("clubs", {}).items():
+        for i, rule in enumerate(club.get("rules", [])):
+            where = f"clubs.{club_key}.rules[{i}]"
+            rtype = rule.get("type")
+            if rtype not in RULE_HANDLERS:
+                problems.append(f"{where}: unknown rule type {rtype!r}")
+                continue
+            for site_field in ("site_id", "primary_site", "secondary_site"):
+                if site_field in rule:
+                    _check_site(rule[site_field], f"{where}.{site_field}")
+            if rtype == "hand_entered":
+                for year_str, entries in rule.get("years", {}).items():
+                    for j, e in enumerate(entries):
+                        _check_date(e.get("date"), f"{where}.years.{year_str}[{j}].date")
+
+    for i, ov in enumerate(calendar.get("overrides", [])):
+        where = f"overrides[{i}]"
+        action = ov.get("action")
+        if action not in ("cancel", "move", "add", "flag"):
+            problems.append(f"{where}: unknown action {action!r}")
+            continue
+        if ov.get("status", "confirmed") not in ("confirmed", "tentative"):
+            problems.append(f"{where}: unknown status {ov.get('status')!r}")
+        if action == "move":
+            for side in ("from", "to"):
+                d = ov.get(side, {})
+                _check_date(d.get("date"), f"{where}.{side}.date")
+                _check_site(d.get("site_id"), f"{where}.{side}.site_id")
+        else:
+            _check_date(ov.get("date"), f"{where}.date")
+            _check_site(ov.get("site_id"), f"{where}.site_id")
+
+    if problems:
+        raise ValueError(f"{CALENDAR_PATH} failed validation:\n  " + "\n  ".join(problems))
 
 
-# --- Rule 1: Tripoli Houston @ South Site -- 4th Saturday, Feb-Aug ---------
-# Confirmed directly from tripolihouston.com/news-updates: "South site 4th
-# Saturday of each month February thru August" -- a member-only site that
-# doesn't operate the rest of the year (was an all-year placeholder here
-# until this was checked against the club's own page).
-TRIPOLI_HOUSTON_SOUTH_MONTHS = range(2, 9)  # February(2)..August(8) inclusive
-
-
-def tripoli_houston_south_events(year: int) -> list[LaunchEvent]:
-    return [LaunchEvent(nth_weekday(year, m, SAT, 4), "tripoli_houston_south", "Tripoli Houston South")
-            for m in TRIPOLI_HOUSTON_SOUTH_MONTHS]
-
-
-# --- Rule 1+2: Tripoli North Texas @ Seymour -------------------------------
-# Regular monthly launch is 4th Saturday, but only Jan-May (no listed
-# off-season pattern given, so no launches assumed Jun-Dec until told
-# otherwise). Texas Shootout is a separate, holiday-anchored event -- doesn't
-# assume it lands on the "4th Saturday" even though it usually falls near it;
-# some years those are two different Saturdays.
-TNT_SEYMOUR_MONTHLY_MONTHS = range(1, 6)  # January(1)..May(5)
-
-
-def tnt_seymour_events(year: int) -> list[LaunchEvent]:
-    # 4th Saturday's regular monthly launch runs into the Sunday directly
-    # after it too, not a Saturday-only event.
-    out = []
-    for m in TNT_SEYMOUR_MONTHLY_MONTHS:
-        sat = nth_weekday(year, m, SAT, 4)
-        out.append(LaunchEvent(sat, "seymour", "TNT Seymour (Sat)"))
-        out.append(LaunchEvent(sat + timedelta(days=1), "seymour", "TNT Seymour (Sun)"))
-    mem_day = memorial_day(year)
-    for d, label in [(mem_day - timedelta(days=2), "Texas Shootout (Sat)"),
-                      (mem_day - timedelta(days=1), "Texas Shootout (Sun)"),
-                      (mem_day, "Texas Shootout (Memorial Day Mon)")]:
-        out.append(LaunchEvent(d, "seymour", label))
-    return out
-
-
-# --- Rule 1: SD Rocket Jockies -- 1st Saturday, April-October ---------------
-# Given directly by the user, not sourced from the club's own calendar like
-# the rules above -- re-verify before trusting this season.
-SD_ROCKET_JOCKIES_MONTHS = range(4, 11)  # April(4)..October(10) inclusive
-
-
-def sd_rocket_jockies_events(year: int) -> list[LaunchEvent]:
-    return [LaunchEvent(nth_weekday(year, m, SAT, 1), "sd_rocket_jockies", "SD Rocket Jockies")
-            for m in SD_ROCKET_JOCKIES_MONTHS]
-
-
-# --- Rule 4: KLOUDBusters @ Argonia -- no fixed weekday-of-month rule ------
-# Per KLOUDBusters' own published 2026 schedule PDF (kloudbusters.org):
-# unlike every other club here, their monthly "Fun Fly" isn't pinned to a
-# specific nth-weekday -- it moves between Saturday and Sunday at the club's
-# discretion, and several months get *no* launch ("Break for Wheat",
-# mid-April through June, to stay off the landowner's winter wheat before
-# harvest). No formula reproduces this -- hand-entered per year from their
-# PDF, and needs a new year added before relying on it past what's published.
-# "April Rail Cleaning" (a work day, not a launch) is deliberately excluded.
-KLOUDBUSTERS_2026 = [
-    (date(2026, 1, 10), "January Fun Fly"),
-    (date(2026, 2, 15), "February Fun Fly"),
-    (date(2026, 3, 8), "March Fun Fly"),
-    (date(2026, 3, 21), "Argonia Cup / KLOUDBurst 34 (Sat)"),
-    (date(2026, 3, 22), "Argonia Cup / KLOUDBurst 34 (Sun)"),
-    # ------------ Break for Wheat (no launches) ------------
-    (date(2026, 7, 11), "July Fun Fly"),
-    (date(2026, 8, 2), "August Fun Fly"),
-    (date(2026, 8, 30), "AIRFest Set Up (Sun)"),
-    (date(2026, 9, 4), "AIRFest 32 (Fri)"),
-    (date(2026, 9, 5), "AIRFest 32 (Sat)"),
-    (date(2026, 9, 6), "AIRFest 32 (Sun)"),
-    (date(2026, 9, 7), "AIRFest 32 (Mon)"),
-    (date(2026, 10, 10), "October Fun Fly (Sat)"),
-    (date(2026, 10, 11), "October Fun Fly (Sun)"),
-    (date(2026, 11, 14), "Distant Thunder '26 (Sat)"),
-    (date(2026, 11, 15), "Distant Thunder '26 (Sun)"),
-    (date(2026, 12, 13), "December Fun Fly"),
-]
-
-
-def kloudbusters_events(year: int) -> list[LaunchEvent]:
-    if year != 2026:
-        raise ValueError(
-            f"no published KLOUDBusters schedule entered for {year} -- only 2026 is hand-entered "
-            "(see KLOUDBUSTERS_2026 above). Check kloudbusters.org's own published PDF for that "
-            "year and add it before relying on this for anything past 2026."
-        )
-    return [LaunchEvent(d, "argonia", label) for d, label in KLOUDBUSTERS_2026]
-
-
-def all_events(year: int) -> list[LaunchEvent]:
-    events = (aarg_events(year) + hearne_events(year) + tnt_seymour_events(year)
-              + sd_rocket_jockies_events(year) + tripoli_houston_south_events(year)
-              + gunter_events(year))
+def load_calendar(path: Path = None) -> dict:
+    path = path or CALENDAR_PATH
     try:
-        events += kloudbusters_events(year)
-    except ValueError as e:
-        print(f"(skipping KLOUDBusters for {year}: {e})", file=sys.stderr)
+        calendar = json.loads(path.read_text())
+    except json.JSONDecodeError as e:
+        raise ValueError(f"{path} is not valid JSON: {e}") from e
+    _validate_calendar(calendar)
+    return calendar
+
+
+def _recurring_events(year: int, calendar: dict) -> list[LaunchEvent]:
+    out = []
+    for club in calendar.get("clubs", {}).values():
+        for rule in club.get("rules", []):
+            out.extend(RULE_HANDLERS[rule["type"]](rule, year))
+    return out
+
+
+def _apply_overrides(events: list[LaunchEvent], year: int, overrides: list[dict]) -> list[LaunchEvent]:
+    """Applies cancel/move/add/flag on top of the recurring events for this
+    one year, in file order. Matching is always by (date, site_id) -- never
+    club/label text, which can get restyled without meaning anything
+    changed. cancel/move's "from" side/flag all hard-fail (raise) if they
+    don't match an actual generated event -- silently no-op'ing a typo'd
+    override date is exactly the bug class this exists to prevent."""
+    by_key: dict[tuple[date, str], list[LaunchEvent]] = {}
+    for e in events:
+        by_key.setdefault((e.event_date, e.site_id), []).append(e)
+
+    def _year_of(d: str) -> int:
+        return date.fromisoformat(d).year
+
+    def _pop_required(d: str, site_id: str, ov: dict) -> None:
+        key = (date.fromisoformat(d), site_id)
+        if not by_key.get(key):
+            raise ValueError(f"override {ov} has no matching event at {key} in {year} -- check the date/site_id "
+                              f"against the recurring schedule (python launch_schedule.py --days-ahead ...)")
+        by_key[key] = []
+        return key
+
+    for ov in overrides:
+        action = ov["action"]
+        status = ov.get("status", "confirmed")
+        if action == "cancel":
+            if _year_of(ov["date"]) != year:
+                continue
+            _pop_required(ov["date"], ov["site_id"], ov)
+        elif action == "move":
+            if _year_of(ov["from"]["date"]) == year:
+                _pop_required(ov["from"]["date"], ov["from"]["site_id"], ov)
+            if _year_of(ov["to"]["date"]) == year:
+                to_key = (date.fromisoformat(ov["to"]["date"]), ov["to"]["site_id"])
+                by_key.setdefault(to_key, []).append(LaunchEvent(to_key[0], to_key[1], ov.get("label", ""), status=status))
+        elif action == "add":
+            if _year_of(ov["date"]) != year:
+                continue
+            key = (date.fromisoformat(ov["date"]), ov["site_id"])
+            by_key.setdefault(key, []).append(LaunchEvent(key[0], key[1], ov.get("label", ""), status=status))
+        elif action == "flag":
+            if _year_of(ov["date"]) != year:
+                continue
+            key = (date.fromisoformat(ov["date"]), ov["site_id"])
+            if not by_key.get(key):
+                raise ValueError(f"override {ov} has no matching event at {key} in {year}")
+            by_key[key] = [dataclasses.replace(e, status=status, note=ov.get("reason")) for e in by_key[key]]
+        else:
+            raise ValueError(f"unknown override action {action!r}")
+
+    out = []
+    for evs in by_key.values():
+        out.extend(evs)
+    return out
+
+
+def all_events(year: int, apply_overrides: bool = True) -> list[LaunchEvent]:
+    calendar = load_calendar()
+    events = _recurring_events(year, calendar)
+    if apply_overrides:
+        events = _apply_overrides(events, year, calendar.get("overrides", []))
     return sorted(events, key=lambda e: e.event_date)
 
 
@@ -316,18 +393,74 @@ def run_actual_pulls(today: date = None, dry_run: bool = False) -> None:
             print(f"actual pull failed for {site_id} {yesterday}: {e}", file=sys.stderr)
 
 
-if __name__ == "__main__":
-    import argparse
+# --- CLI helper for editing launch_calendar.json's one-off overrides --------
 
-    parser = argparse.ArgumentParser()
+def _site_club(site_id: str) -> str:
+    if site_id not in config.SITES:
+        raise SystemExit(f"error: unknown site_id {site_id!r} -- known: {list(config.SITES)}")
+    return config.SITES[site_id]["club"]
+
+
+def _append_override(override: dict, *, require_match: bool) -> None:
+    calendar = load_calendar()
+    if require_match:
+        if override["action"] == "move":
+            target_date, target_site = date.fromisoformat(override["from"]["date"]), override["from"]["site_id"]
+        else:
+            target_date, target_site = date.fromisoformat(override["date"]), override["site_id"]
+        recurring = _recurring_events(target_date.year, calendar)
+        if not any(e.event_date == target_date and e.site_id == target_site for e in recurring):
+            raise SystemExit(f"error: no recurring event on {target_date} at site {target_site!r} -- check the "
+                              f"date/site_id against `python launch_schedule.py --days-ahead ...` first "
+                              f"(overrides can only reference events the recurring schedule actually generates)")
+    calendar.setdefault("overrides", []).append(override)
+    _validate_calendar(calendar)
+    CALENDAR_PATH.write_text(json.dumps(calendar, indent=2) + "\n")
+    print(f"added override: {override}")
+    print(f"-> {CALENDAR_PATH}")
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--days-ahead", type=int, default=60)
     parser.add_argument("--run-today", action="store_true", help="actually run pulls for today's scheduled launches only (not just list them)")
     parser.add_argument("--run-live", action="store_true", help="cron entry point: Open-Meteo pulls for every site T-0..T-7 out (see run_live_pulls())")
     parser.add_argument("--run-actuals", action="store_true", help="cron entry point: NOAA actual pull for every site that launched yesterday (see run_actual_pulls())")
     parser.add_argument("--dry-run", action="store_true", help="with --run-today/--run-live/--run-actuals, print what would run without pulling")
+
+    parser.add_argument("--cancel", nargs=3, metavar=("SITE_ID", "DATE", "REASON"), help="mark a recurring event cancelled, e.g. --cancel gunter 2026-07-25 \"cancelled due to heat\"")
+    parser.add_argument("--move", nargs=3, metavar=("SITE_ID", "DATE", "NEW_SITE_ID"), help="move a recurring event to a different site (and/or --new-date), e.g. --move apache_pass 2026-08-01 hutto --reason \"field plowed\"")
+    parser.add_argument("--new-date", metavar="DATE", help="with --move: new date, if it's changing too (default: same as DATE)")
+    parser.add_argument("--add", nargs=3, metavar=("SITE_ID", "DATE", "LABEL"), help="add a brand-new one-off event, e.g. --add apache_pass 2026-08-15 \"AARG extra date\" --tentative")
+    parser.add_argument("--flag", nargs=3, metavar=("SITE_ID", "DATE", "REASON"), help="annotate an existing event as tentative/uncertain without changing what's polled, e.g. --flag apache_pass 2026-09-05 \"may move for Airfest\"")
+    parser.add_argument("--reason", default="", help="with --move/--add: optional reason text")
+    parser.add_argument("--tentative", action="store_true", help="with --move/--add: mark status tentative instead of confirmed")
     args = parser.parse_args()
 
-    if args.run_live:
+    if args.cancel:
+        site_id, date_str, reason = args.cancel
+        _append_override({"action": "cancel", "club": _site_club(site_id), "date": date_str, "site_id": site_id, "reason": reason}, require_match=True)
+    elif args.move:
+        site_id, date_str, new_site_id = args.move
+        _site_club(new_site_id)  # validates new_site_id too
+        _append_override({
+            "action": "move", "club": _site_club(site_id),
+            "from": {"date": date_str, "site_id": site_id},
+            "to": {"date": args.new_date or date_str, "site_id": new_site_id},
+            "label": f"{_site_club(site_id)} (moved from {config.SITES[site_id]['name']})",
+            "reason": args.reason, "status": "tentative" if args.tentative else "confirmed",
+        }, require_match=True)
+    elif args.add:
+        site_id, date_str, label = args.add
+        _append_override({
+            "action": "add", "club": _site_club(site_id),
+            "date": date_str, "site_id": site_id, "label": label,
+            "reason": args.reason, "status": "tentative" if args.tentative else "confirmed",
+        }, require_match=False)
+    elif args.flag:
+        site_id, date_str, reason = args.flag
+        _append_override({"action": "flag", "club": _site_club(site_id), "date": date_str, "site_id": site_id, "reason": reason, "status": "tentative"}, require_match=True)
+    elif args.run_live:
         run_live_pulls(dry_run=args.dry_run)
     elif args.run_actuals:
         run_actual_pulls(dry_run=args.dry_run)
@@ -336,4 +469,6 @@ if __name__ == "__main__":
     else:
         print(f"Upcoming launches (next {args.days_ahead} days):")
         for e in upcoming(days_ahead=args.days_ahead):
-            print(f"  {e.event_date:%a %Y-%m-%d}  {e.site_id:12s} {e.label}")
+            tag = f" [{e.status}]" if e.status != "confirmed" else ""
+            note = f"  -- {e.note}" if e.note else ""
+            print(f"  {e.event_date:%a %Y-%m-%d}  {e.site_id:12s} {e.label}{tag}{note}")
