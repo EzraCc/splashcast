@@ -48,6 +48,15 @@ log = logging.getLogger("splashcast.live")
 
 _LEVEL_RE = re.compile(r"^(?P<var>.+)_(?P<value>\d+)(?P<unit>hPa|m)$")
 
+# Measured directly against the real API (32 successful requests, mixed
+# sites/models, 2026-07-30): mean 1.04s, median 1.05s, p90 1.37s, max 2.24s.
+# 30s (the old value) meant a genuinely stuck request sat for a full 30s
+# before either succeeding late or giving up -- with real successes never
+# even approaching 3s, waiting anywhere near that long only delays detecting
+# a real failure, not more often catching a slow-but-real response. 10s
+# leaves ~4x headroom over the slowest success actually observed.
+REQUEST_TIMEOUT_S = 10
+
 STAT_LABELS = {
     "ground_wind_max": ("ground wind max", "mph"),
     "cloud_low_max": ("cloud low max", "%"),
@@ -83,7 +92,7 @@ def _hourly_variables(model_key: str, site_id: str) -> list[str]:
     return variables
 
 
-def fetch_model(model_key: str, target_date: date, site_id: str = "hutto", attempts: int = 2) -> dict:
+def fetch_model(model_key: str, target_date: date, site_id: str = "hutto", attempts: int = 3, timeout: int = REQUEST_TIMEOUT_S) -> dict:
     # UTC throughout, not date.today() -- unambiguous regardless of the
     # runner's local timezone. The one place local time matters is the
     # per-site pull cutoff (config.py's cron_cutoff_hour_utc).
@@ -119,14 +128,22 @@ def fetch_model(model_key: str, target_date: date, site_id: str = "hutto", attem
 
     # Observed in testing: Open-Meteo itself times out intermittently, not just
     # the burn-ban feed -- different models fail on different runs, not the
-    # same one each time, so a single retry is worth it before giving up to
-    # run()'s try/except.
+    # same one each time, so more than one attempt is worth it before giving
+    # up to run()'s try/except.
     last_exc = None
     for attempt in range(attempts):
+        if attempt:
+            _sleep(1.0)  # don't immediately re-fire at a model that just timed out/failed
         try:
-            resp = requests.get(model_info["url"], params=params, timeout=30)
-            resp.raise_for_status()
-            data = resp.json()
+            # Session as a context manager, not requests.get() directly -- guarantees
+            # the underlying connection is torn down the moment this raises (Session.
+            # __exit__ always runs, even on exception), rather than leaving an
+            # abandoned in-flight request for Open-Meteo to keep processing while we've
+            # already stopped waiting on it and are about to fire attempt N+1.
+            with requests.Session() as session:
+                resp = session.get(model_info["url"], params=params, timeout=timeout)
+                resp.raise_for_status()
+                data = resp.json()
             if data.get("error"):
                 raise RuntimeError(f"Open-Meteo error for {model_key}: {data.get('reason')}")
             return data
@@ -161,7 +178,7 @@ def fetch_model(model_key: str, target_date: date, site_id: str = "hutto", attem
 SINGLE_RUNS_URL = "https://single-runs-api.open-meteo.com/v1/forecast"
 
 
-def fetch_model_at_run(model_key: str, run_dt: datetime, site_id: str = "hutto", attempts: int = 2) -> dict:
+def fetch_model_at_run(model_key: str, run_dt: datetime, site_id: str = "hutto", attempts: int = 3, timeout: int = REQUEST_TIMEOUT_S) -> dict:
     site = config.SITES[site_id]
     model_info = config.LIVE_MODELS[model_key]
     variables = [v for v in _hourly_variables(model_key, site_id) if v != "precipitation_probability"]
@@ -178,10 +195,13 @@ def fetch_model_at_run(model_key: str, run_dt: datetime, site_id: str = "hutto",
     }
     last_exc = None
     for attempt in range(attempts):
+        if attempt:
+            _sleep(1.0)  # see fetch_model()'s own comment -- same reasoning applies here
         try:
-            resp = requests.get(SINGLE_RUNS_URL, params=params, timeout=30)
-            resp.raise_for_status()
-            data = resp.json()
+            with requests.Session() as session:
+                resp = session.get(SINGLE_RUNS_URL, params=params, timeout=timeout)
+                resp.raise_for_status()
+                data = resp.json()
             if data.get("error"):
                 raise RuntimeError(f"Open-Meteo error for {model_key} @ run {run_dt}: {data.get('reason')}")
             return data
