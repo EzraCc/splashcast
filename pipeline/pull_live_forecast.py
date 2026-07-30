@@ -288,7 +288,15 @@ def run(target_date: date, site_id: str = "hutto") -> tuple[pd.DataFrame, dict |
     # day, not a bug.
     capture_date = datetime.now(timezone.utc).date()
     frames = []
-    for model_key in config.LIVE_MODELS:
+    for i, model_key in enumerate(config.LIVE_MODELS):
+        if i:
+            _sleep(0.5)  # same reasoning as fetch_model_at_run()'s loop -- observed transient
+            # 502s/timeouts hammering these endpoints back-to-back with no pause, worse for
+            # gfs/hrrr/nam/nbm specifically since all 4 share one literal endpoint (api.open-
+            # meteo.com/v1/gfs) -- confirmed directly in six days of real cron logs: gunter's
+            # gfs+hrrr pull failed in 18/18 consecutive runs (always the 2nd site processed,
+            # right after another site's own 8-request burst), while whichever site ran first
+            # each time never failed at all.
         try:
             raw = fetch_model(model_key, target_date, site_id)
             frames.append(parse_hourly(raw, model_key))

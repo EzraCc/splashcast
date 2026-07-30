@@ -2,6 +2,13 @@
 
 Dated, terse log of notable changes. For the full design rationale and decision history, see [docs/spec.md](docs/spec.md).
 
+## 2026-07-30
+
+**Live-pull model requests now paced, fixing a real, reproducible per-site cron failure**
+- Investigated whether pulling this many sites/models could be hitting rate limits, prompted by a one-off `gfs`/`hrrr` failure on Hutto's Aug 1 pull. Pulled and parsed six days of real GitHub Actions logs (07-19 through 07-25, ~26 runs) for every site in that window -- first pass mis-attributed failures to the wrong site (a log-ordering trap: `pull_live_forecast.py`'s "[site] Pulling live forecast" line only prints *after* that site's own model loop finishes, so a site's own failures appear to precede its own marker line in the raw log). Corrected extraction showed a stark, non-random pattern: `tripoli_houston_south` had zero failures in 21/21 runs (always pulled first each time it shared a run), while `gunter` failed on `gfs`+`hrrr` in 18/18 consecutive runs (always pulled second, immediately after another site's full 8-model burst).
+- Root cause: `pull_live_forecast.py`'s `run()` (the actual live-cron path) fired all 8 per-model requests back-to-back with zero pacing -- `fetch_model_at_run()` (the backfill-only path) already had a `_sleep(0.5)` between requests, with a comment noting exactly this failure mode ("observed transient 502s hammering this endpoint back-to-back with no pause"), but that fix was never carried over to the live path. Made worse by `gfs`/`hrrr`/`nam`/`nbm` all sharing one literal endpoint (`api.open-meteo.com/v1/gfs`) -- four requests to the same URL with no delay, repeated for every site in a run.
+- Fixed both levels: `run()` now paces its 8 per-model requests (mirroring the backfill path exactly), and `launch_schedule.py`'s `run_pulls_for()`/`run_live_pulls()` now pace between *sites* too (threaded across target-date groups via a new `pause_before_first` param), addressing gunter's specific always-2nd pattern directly. Both skip the pacing under `--dry-run`, so dry-run stays instant.
+
 ## 2026-07-29
 
 **Launch calendar moved to JSON + one-off cancel/move/add/flag overrides**

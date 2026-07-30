@@ -37,6 +37,7 @@ import sys
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
+from time import sleep as _sleep
 
 import config
 
@@ -294,7 +295,7 @@ def upcoming(from_date: date = None, days_ahead: int = 60) -> list[LaunchEvent]:
     return sorted([e for e in events if from_date <= e.event_date <= to_date], key=lambda e: e.event_date)
 
 
-def run_pulls_for(target_date: date, dry_run: bool = False, only_sites: set[str] | None = None) -> None:
+def run_pulls_for(target_date: date, dry_run: bool = False, only_sites: set[str] | None = None, pause_before_first: bool = False) -> None:
     """Runs pull_live_forecast.py + splash_zones.py for every site with an
     event on target_date -- the daily driver's actual job. Safe to call for
     any date repeatedly (each day's capture is its own file, per
@@ -304,6 +305,13 @@ def run_pulls_for(target_date: date, dry_run: bool = False, only_sites: set[str]
     only_sites: if given, sites with an event on target_date but not in this
     set are silently skipped -- lets run_live_pulls() drop just the sites
     past their own cron cutoff without touching others sharing this date.
+
+    pause_before_first: whether to pace even the first site pulled here --
+    False for a genuinely first call (nothing's hit Open-Meteo yet this run,
+    no reason to wait), True when run_live_pulls() is calling this for a
+    later target_date group in the same job, so the gap between the last
+    site of one group and the first of the next still gets paced (see the
+    per-site pause below for why this matters).
     """
     events = [e for e in all_events(target_date.year) if e.event_date == target_date]
     if not events:
@@ -320,7 +328,17 @@ def run_pulls_for(target_date: date, dry_run: bool = False, only_sites: set[str]
     if not sites_seen:
         print(f"no scheduled launches on {target_date} (after site filter)")
         return
-    for site_id, labels in sites_seen.items():
+    for i, (site_id, labels) in enumerate(sites_seen.items()):
+        if (i or pause_before_first) and not dry_run:
+            # Confirmed directly in six days of real cron logs: gunter's gfs+hrrr
+            # pull failed in 18/18 consecutive runs, always the 2nd site pulled
+            # right after another site's own full 8-model burst against Open-
+            # Meteo, while whichever site ran first each time never failed at
+            # all -- same "hammering the endpoint back-to-back" issue as
+            # pull_live_forecast.py's own per-model pacing, one level up.
+            # Skipped for dry runs -- nothing's actually hitting Open-Meteo, so
+            # there's no reason to make a --dry-run wait through it.
+            _sleep(1.0)
         print(f"=== {', '.join(labels)}: {site_id} on {target_date} ===")
         if dry_run:
             continue
@@ -365,8 +383,8 @@ def run_live_pulls(today: date = None, dry_run: bool = False) -> None:
             continue
         by_date.setdefault(e.event_date, set()).add(e.site_id)
 
-    for target_date, site_ids in sorted(by_date.items()):
-        run_pulls_for(target_date, dry_run=dry_run, only_sites=site_ids)
+    for i, (target_date, site_ids) in enumerate(sorted(by_date.items())):
+        run_pulls_for(target_date, dry_run=dry_run, only_sites=site_ids, pause_before_first=i > 0)
 
 
 def run_actual_pulls(today: date = None, dry_run: bool = False) -> None:
