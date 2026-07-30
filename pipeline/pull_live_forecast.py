@@ -274,15 +274,30 @@ def parse_hourly(raw: dict, model_key: str) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def fetch_burn_ban(attempts: int = 2) -> dict:
+# A different host from Open-Meteo entirely (tfsfrp.tamu.edu, Texas A&M
+# Forest Service -- a tiny static text file, not a computed forecast), so
+# REQUEST_TIMEOUT_S's justification doesn't transfer -- measured this one
+# separately: 8 real requests, mean 0.29s, median 0.29s, max 0.31s. Even
+# faster and tighter than Open-Meteo's own numbers, as expected for a static
+# file vs. a computed response, but kept a wider margin (~16x the observed
+# max, vs. Open-Meteo's ~4x) since this is a smaller sample against a single
+# small government feed server, not the larger check Open-Meteo itself got.
+BURN_BAN_TIMEOUT_S = 5
+
+
+def fetch_burn_ban(attempts: int = 3, timeout: int = BURN_BAN_TIMEOUT_S) -> dict:
     # This endpoint has been observed to time out intermittently (not a one-off
-    # in testing) -- one retry before giving up to run()'s own try/except.
+    # in testing) -- more than one attempt is worth it before giving up to
+    # run()'s own try/except.
     last_exc = None
     for attempt in range(attempts):
+        if attempt:
+            _sleep(1.0)  # same reasoning as fetch_model()'s own comment
         try:
-            resp = requests.get(config.BURN_BAN_URL, timeout=30)
-            resp.raise_for_status()
-            text = resp.content.decode("utf-16")
+            with requests.Session() as session:
+                resp = session.get(config.BURN_BAN_URL, timeout=timeout)
+                resp.raise_for_status()
+                text = resp.content.decode("utf-16")
             lines = [line.strip() for line in text.splitlines() if line.strip()]
             counties = set(lines[1:])
             return {
