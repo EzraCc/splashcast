@@ -4,6 +4,9 @@ Dated, terse log of notable changes. For the full design rationale and decision 
 
 ## 2026-07-31
 
+**Temperature toggle: radio-style pair, not a single link naming only the other mode**
+- User feedback: the single toggle link only ever showed "Show actual temp" or "Show feels-like temp" -- the CURRENT mode had to be decoded from what the other option's label said, not read directly. Replaced with a `.temp-mode-toggle` two-button pair ("Feels like" / "Actual"), same bordered-pill/active-filled-with-accent visual language as the TIME/View/Deploy toggles in the controls bar, scaled down for this compact header -- both options always labeled, active one highlighted, current state legible at a glance.
+
 **Temperature timeline: actual/feels-like toggle, default feels-like**
 - Investigated whether heat index, dew point, or other flyer-relevant fields were available but unused -- none were pulled before this. Confirmed live against the API with real per-model coverage counts (not docs alone) that `apparent_temperature` (Open-Meteo's own combined wind+humidity+temperature "feels like" figure -- covers both heat-index-when-hot and wind-chill-when-cold in one number, not two separate fields) is available with near-full coverage across all 8 live models (HRRR's slightly lower count is just its normal ~48h horizon, not a gap). `dew_point_2m`/`relative_humidity_2m` are also available but not added -- kept this simple per direction: one toggle, not three more timelines.
 - `_hourly_variables()` now requests `apparent_temperature` alongside the existing `temperature_2m` (already in every model's base variable list, so this is one more field on requests already being made, not a new pull). `build_temperature_data()`'s cell shape changed from a plain float to `{"actual": .., "apparent": ..}`.

@@ -318,15 +318,22 @@
   }
   /* Rain has no toggle, so its title carries its own spacing to the grid
      below; temp's title sits in .temp-head instead (with the actual/
-     feels-like toggle beside it), which carries that spacing itself -- same
-     .cloud-head/.cloud-expand-btn pattern the cloud panel already uses. */
+     feels-like toggle beside it), which carries that spacing itself. */
   .rain-timeline-title { margin-bottom: 8px; }
   .temp-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
-  .temp-toggle-btn {
-    border: none; background: none; color: var(--accent); font-size: 0.7rem;
-    font-weight: 600; cursor: pointer; padding: 2px 0; white-space: nowrap;
+  /* Same .toggle-btns visual language as TIME/View/Deploy in the controls
+     bar (bordered pill, active filled with --accent) scaled down for this
+     compact header -- both options always labeled, so the current state
+     reads directly instead of being decoded from a single link naming only
+     the OTHER mode. */
+  .temp-mode-toggle { display: flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; flex-shrink: 0; }
+  .temp-mode-toggle button {
+    border: none; border-right: 1px solid var(--border); background: var(--surface-1); color: var(--text-secondary);
+    padding: 3px 8px; font-size: 0.68rem; cursor: pointer; white-space: nowrap;
   }
-  .temp-toggle-btn:hover { text-decoration: underline; }
+  .temp-mode-toggle button:last-child { border-right: none; }
+  .temp-mode-toggle button.active { background: var(--accent); color: #fff; font-weight: 600; }
+  .temp-mode-toggle button:hover:not(.active) { background: var(--surface-2); }
   .rain-grid, .temp-grid {
     display: grid;
     grid-auto-flow: column;

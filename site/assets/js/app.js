@@ -1479,15 +1479,28 @@ function renderTempTimeline() {
   title.className = 'temp-timeline-title';
   title.textContent = 'Temperature forecast';
   head.appendChild(title);
-  // Same "button names what clicking it does" convention as the cloud
-  // panel's "Show all altitudes" -- describes the OTHER mode, not the
-  // current one.
-  const toggleBtn = document.createElement('button');
-  toggleBtn.className = 'temp-toggle-btn';
-  toggleBtn.type = 'button';
-  toggleBtn.textContent = tempShowApparent ? 'Show actual temp' : 'Show feels-like temp';
-  toggleBtn.addEventListener('click', () => { tempShowApparent = !tempShowApparent; renderTempTimeline(); });
-  head.appendChild(toggleBtn);
+  // Radio-style pair (same .toggle-btns visual language as TIME/View/
+  // Deploy in the controls bar, scaled down for this header) -- both
+  // options always labeled and visible, active one highlighted, so the
+  // current state is read directly rather than decoded from what the
+  // OTHER option's link text says (the single link-button this replaced
+  // only ever showed the mode you'd switch TO).
+  const modeToggle = document.createElement('div');
+  modeToggle.className = 'temp-mode-toggle';
+  [['apparent', 'Feels like'], ['actual', 'Actual']].forEach(([mode, text]) => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.textContent = text;
+    const isActive = (mode === 'apparent') === tempShowApparent;
+    btn.className = isActive ? 'active' : '';
+    btn.addEventListener('click', () => {
+      if (isActive) return;
+      tempShowApparent = (mode === 'apparent');
+      renderTempTimeline();
+    });
+    modeToggle.appendChild(btn);
+  });
+  head.appendChild(modeToggle);
   container.appendChild(head);
 
   const row = document.createElement('div');
