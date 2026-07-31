@@ -161,10 +161,10 @@ LEAD_DAYS = list(range(8))  # 0 (morning-of) through 7 (one week out)
 # descriptions; RAP's number assumes the same extended-cycle pattern as HRRR
 # (not independently confirmed).
 PROFILE_MODELS = {
-    "hrrr": {"model": "hrrr", "product": "prs", "max_fxx": 48},
     "gfs": {"model": "gfs", "product": "pgrb2.0p25", "max_fxx": 384},
-    "rap": {"model": "rap", "product": "awp130pgrb", "max_fxx": 39},
+    "hrrr": {"model": "hrrr", "product": "prs", "max_fxx": 48},
     "nam": {"model": "nam", "product": "conusnest.hiresf", "max_fxx": 60},
+    "rap": {"model": "rap", "product": "awp130pgrb", "max_fxx": 39},
 }
 
 # Common archive window across all 4 profile models' AWS buckets: NAM starts
@@ -183,6 +183,12 @@ DATA_DIR = "data"
 # wrong here before). RAP/HREF/SREF don't exist on Open-Meteo -- the NOAA side
 # tops out at GFS/HRRR/NAM/NBM.
 LIVE_MODELS = {
+    # Other free national-agency models on Open-Meteo -- independently
+    # confirmed to have real (non-null) pressure-level wind, giving genuinely
+    # independent winds-aloft sources rather than more NOAA.
+    "arpege": {"model": "arpege_world", "url": "https://api.open-meteo.com/v1/meteofrance"},
+    "ecmwf": {"model": "ecmwf_ifs025", "url": "https://api.open-meteo.com/v1/ecmwf"},
+    "gem": {"model": "gem_global", "url": "https://api.open-meteo.com/v1/gem"},
     # ncep_gfs_global, not ncep_gfs_seamless: the "seamless" blend silently
     # splices in raw HRRR data for near-term lead times (best-available-model
     # per lead time, by design), which would double-count HRRR as two
@@ -191,15 +197,9 @@ LIVE_MODELS = {
     # a real capture, diverging normally once past HRRR's horizon.
     "gfs": {"model": "ncep_gfs_global", "url": "https://api.open-meteo.com/v1/gfs"},
     "hrrr": {"model": "ncep_hrrr_conus", "url": "https://api.open-meteo.com/v1/gfs"},
+    "icon": {"model": "icon_global", "url": "https://api.open-meteo.com/v1/dwd-icon"},
     "nam": {"model": "ncep_nam_conus", "url": "https://api.open-meteo.com/v1/gfs"},
     "nbm": {"model": "ncep_nbm_conus", "url": "https://api.open-meteo.com/v1/gfs"},
-    # Other free national-agency models on Open-Meteo -- independently
-    # confirmed to have real (non-null) pressure-level wind, giving genuinely
-    # independent winds-aloft sources rather than more NOAA.
-    "ecmwf": {"model": "ecmwf_ifs025", "url": "https://api.open-meteo.com/v1/ecmwf"},
-    "icon": {"model": "icon_global", "url": "https://api.open-meteo.com/v1/dwd-icon"},
-    "arpege": {"model": "arpege_world", "url": "https://api.open-meteo.com/v1/meteofrance"},
-    "gem": {"model": "gem_global", "url": "https://api.open-meteo.com/v1/gem"},
 }
 
 # Open-Meteo only exposes near-surface wind at these fixed heights regardless
@@ -213,7 +213,7 @@ LIVE_NBM_HEIGHTS_M = [10, 80, 120, 180]
 # historical Herbie/GRIB2 pull's raw NAM isobaric data IS real. NBM has no
 # pressure levels on either side. The two pulls don't have matching
 # level-availability per model.
-LIVE_PROFILE_MODELS = ["gfs", "hrrr", "ecmwf", "icon", "arpege", "gem"]
+LIVE_PROFILE_MODELS = ["arpege", "ecmwf", "gem", "gfs", "hrrr", "icon"]
 
 # Coverage is NOT uniform across LIVE_PROFILE_MODELS -- confirmed by probing
 # the live API directly at every PRESSURE_LEVEL_MASTER_MB level (docs proved
