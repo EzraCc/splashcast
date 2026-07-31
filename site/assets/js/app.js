@@ -1023,8 +1023,12 @@ function isCloudHot(vals) {
 //     (cloud's is the value itself, rain's is scaled against
 //     RAIN_BAR_MAX_IN).
 // Both rows always get one slot per model, even when empty, so per-model
-// columns stay aligned between the two rows.
-function appendValueBar(barsAbove, barsBelow, m, v, heightPct) {
+// columns stay aligned between the two rows. `opacity` (only ever passed by
+// addRainCell -- cloud has no separate confidence figure) fades a real bar
+// by how likely it is, not just how much: a model that's 9% confident in
+// 0.02in is a materially different claim than one that's confident, and the
+// bar shouldn't look identical either way.
+function appendValueBar(barsAbove, barsBelow, m, v, heightPct, opacity) {
   const above = document.createElement('div');
   const below = document.createElement('div');
   if (v === null) {
@@ -1038,6 +1042,7 @@ function appendValueBar(barsAbove, barsBelow, m, v, heightPct) {
     above.className = 'cloud-bar';
     above.style.height = heightPct + '%';
     above.style.background = MODEL_COLORS_HEX[m];
+    if (opacity !== undefined) above.style.opacity = opacity;
     below.className = 'cloud-bar-slot';
   }
   barsAbove.appendChild(above);
@@ -1228,6 +1233,10 @@ const RAIN_BAR_MAX_IN = 0.3;
 // they read as the same "9/11/1/3" the rest of the viewer already uses, not
 // a separate unrelated set of times.
 const RAIN_MARKED_HOURS = new Set([9, 11, 13, 15]);
+// Floor for chance-scaled bar opacity (see appendValueBar()'s opacity
+// param) -- a bar fades toward this as probability drops, but never past
+// it, so even a 9%-chance reading stays visibly present as real data.
+const RAIN_MIN_OPACITY = 0.4;
 
 function addRainCell(row, label, sub, cellData, marked) {
   // `sub` (the exact window, e.g. "12am-8am") only appears in the tooltip
@@ -1268,7 +1277,16 @@ function addRainCell(row, label, sub, cellData, marked) {
   const barsBelow = document.createElement('div');
   barsBelow.className = 'bars-below';
   cell.appendChild(barsBelow);
-  vals.forEach(({ m, amount }) => appendValueBar(bars, barsBelow, m, amount, amount === null ? null : Math.min(100, (amount / RAIN_BAR_MAX_IN) * 100)));
+  vals.forEach(({ m, amount, chance }) => {
+    const heightPct = amount === null ? null : Math.min(100, (amount / RAIN_BAR_MAX_IN) * 100);
+    // Floored at RAIN_MIN_OPACITY, not scaled all the way to 0 -- a low-
+    // chance bar should still read as "real reported data," just clearly
+    // less likely, not fade out to nothing. No probability at all (ARPEGE)
+    // stays full-opacity -- "unknown confidence" isn't the same claim as
+    // "low confidence" and shouldn't look like it.
+    const opacity = chance === null ? 1 : Math.max(RAIN_MIN_OPACITY, chance / 100);
+    appendValueBar(bars, barsBelow, m, amount, heightPct, opacity);
+  });
 
   if (!real.length) {
     const nodata = document.createElement('div');

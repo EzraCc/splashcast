@@ -317,7 +317,6 @@
      nine columns." */
   .rain-cell-label.marked b { color: var(--accent); }
   .rain-cell { height: 64px; }
-  .rain-cell.marked { box-shadow: inset 0 0 0 1px var(--accent); }
 
   /* =========================== burn-ban status =========================== */
   /* Quiet by default (clear is the common case, most days) -- a small chip.
