@@ -1071,12 +1071,19 @@ function addCloudRow(grid, layerKey, label, sub, beyondWaiver) {
       // with a divider between every single model line read as a long,
       // slow-to-scan column of near-identical rows. Right-aligning the %
       // column lets the numbers themselves line up for a quick vertical read.
-      const rows = vals.map(({ m, v }) =>
-        `<div class="tt-model-name"><b>${MODEL_LABELS[m] || m.toUpperCase()}</b></div><div class="tt-model-pct">${v === null ? 'no data' : v + '%'}</div>`
-      ).join('');
-      const hotNames = hot ? real.filter(x => x.v >= DATA.cloud_nogo_pct).map(x => MODEL_LABELS[x.m] || x.m.toUpperCase()).join(', ') : '';
+      // Models at/above the nogo threshold are bolded in place instead of
+      // re-listed by name in the footer -- same information, once.
+      const rows = vals.map(({ m, v }) => {
+        const isHigh = v !== null && v >= DATA.cloud_nogo_pct;
+        return `<div class="tt-model-name"><b>${MODEL_LABELS[m] || m.toUpperCase()}</b></div>` +
+          `<div class="tt-model-pct${isHigh ? ' pct-high' : ''}">${v === null ? 'no data' : v + '%'}</div>`;
+      }).join('');
+      // `hot` is the same isCloudHot() flag the cell's own warning badge
+      // uses (majority of reporting models >=50%) -- not a separate rule,
+      // so the hover state and the at-rest cell always agree.
+      const badge = hot ? '<span class="cloud-badge" style="margin-right:5px;">&#9888;</span>' : '';
       tooltip.innerHTML = `<div class="tt-cloud-grid">${rows}</div>` +
-        `<div class="tt-cloud-footer" style="color:var(--text-muted);">${label} · ${HOUR_LABELS[h]}${hot ? ` · ≥50%: ${hotNames}` : ''}</div>`;
+        `<div class="tt-cloud-footer" style="color:var(--text-muted);">${badge}${label} · ${HOUR_LABELS[h]}</div>`;
       tooltip.style.left = (evt.clientX + 14) + 'px';
       tooltip.style.top = (evt.clientY + 14) + 'px';
       tooltip.style.display = 'block';

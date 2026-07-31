@@ -436,7 +436,11 @@
      of reading a tall stack of near-identical "Model 42%" lines. */
   .tooltip .tt-cloud-grid { display: grid; grid-template-columns: auto auto; column-gap: 14px; row-gap: 3px; }
   .tooltip .tt-model-pct { text-align: right; }
-  .tooltip .tt-cloud-footer { margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--border, #dedcd6); }
+  /* At/above the nogo threshold -- marked in place instead of re-listed by
+     name in the footer below, same --hot-text used for the cell's own
+     "pop" state so the two read as the same signal. */
+  .tooltip .tt-model-pct.pct-high { font-weight: 700; color: var(--hot-text); }
+  .tooltip .tt-cloud-footer { margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--border, #dedcd6); display: flex; align-items: center; }
 
   /* Real-flight info box: same fixed/positioned-at-cursor mechanism as
      .tooltip, but stays open once pinned (see realFlightPinned in app.js) --
