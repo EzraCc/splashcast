@@ -962,6 +962,20 @@ function isPointVisible(rp) {
   }
 }
 
+// Clamps to the viewport -- verified directly on a 375px-wide screen that
+// an unclamped tooltip (the burn-ban one especially, whose feed_header line
+// runs long) can extend ~70px past the right edge, effectively unreadable
+// with no way to scroll to it. Must run AFTER innerHTML/display are set on
+// the caller's side -- offsetWidth/offsetHeight need the real, current
+// content to measure correctly, not whatever was in the tooltip before.
+function positionTooltip(evt) {
+  const margin = 8;
+  const maxLeft = window.innerWidth - tooltip.offsetWidth - margin;
+  const maxTop = window.innerHeight - tooltip.offsetHeight - margin;
+  tooltip.style.left = Math.max(margin, Math.min(evt.clientX + 14, maxLeft)) + 'px';
+  tooltip.style.top = Math.max(margin, Math.min(evt.clientY + 14, maxTop)) + 'px';
+}
+
 function showTooltip(evt, hoveredPt) {
   const nearby = renderedPoints.filter(rp => {
     if (!isPointVisible(rp)) return false;
@@ -969,8 +983,6 @@ function showTooltip(evt, hoveredPt) {
     return Math.sqrt(dx * dx + dy * dy) <= PROXIMITY_PX;
   });
   tooltip.style.display = 'block';
-  tooltip.style.left = (evt.clientX + 14) + 'px';
-  tooltip.style.top = (evt.clientY + 14) + 'px';
   tooltip.innerHTML = nearby.map(rp => {
     const dist = Math.sqrt(rp.x_ft * rp.x_ft + rp.y_ft * rp.y_ft);
     const whenPart = state.mode === 'byTime' ? ` &middot; ${HOUR_LABELS[rp.hour]}`
@@ -981,6 +993,7 @@ function showTooltip(evt, hoveredPt) {
       `offset: ${rp.x_ft >= 0 ? '+' : ''}${rp.x_ft.toFixed(0)} ft E, ${rp.y_ft >= 0 ? '+' : ''}${rp.y_ft.toFixed(0)} ft N<br>` +
       `distance from pad: ${dist.toFixed(0)} ft</div>`;
   }).join('');
+  positionTooltip(evt);
 }
 function hideTooltip() { tooltip.style.display = 'none'; }
 
@@ -1115,9 +1128,8 @@ function addCloudRow(grid, layerKey, label, sub, beyondWaiver) {
       const badge = hot ? '<span class="cloud-badge" style="margin-right:5px;">&#9888;</span>' : '';
       tooltip.innerHTML = `<div class="tt-cloud-grid">${rows}</div>` +
         `<div class="tt-cloud-footer" style="color:var(--text-muted);">${badge}${label} · ${HOUR_LABELS[h]}</div>`;
-      tooltip.style.left = (evt.clientX + 14) + 'px';
-      tooltip.style.top = (evt.clientY + 14) + 'px';
       tooltip.style.display = 'block';
+      positionTooltip(evt);
     });
     cell.addEventListener('mouseleave', hideTooltip);
 
@@ -1312,9 +1324,8 @@ function addRainCell(row, label, sub, cellData, marked) {
     tooltip.innerHTML =
       `<div class="tt-rain-grid"><div class="tt-rain-head">Model</div><div class="tt-rain-head">Chance</div><div class="tt-rain-head">Amount</div>${rows}</div>` +
       `<div class="tt-cloud-footer" style="color:var(--text-muted);">${label}${sub ? ' ' + sub : ''} rain forecast</div>`;
-    tooltip.style.left = (evt.clientX + 14) + 'px';
-    tooltip.style.top = (evt.clientY + 14) + 'px';
     tooltip.style.display = 'block';
+    positionTooltip(evt);
   });
   cell.addEventListener('mouseleave', hideTooltip);
 
@@ -1386,9 +1397,8 @@ function showBanTooltip(evt) {
     `<div class="tt-row"><b>${site ? siteLabel(site) : currentSiteId}</b> — ${countyTitleCase} County</div>` +
     `<div class="tt-row">Checked ${formatCheckedAt(burnBan.checked_at)}</div>` +
     `<div class="tt-row" style="color:var(--text-muted);">Feed: ${burnBan.feed_header}</div>`;
-  tooltip.style.left = (evt.clientX + 14) + 'px';
-  tooltip.style.top = (evt.clientY + 14) + 'px';
   tooltip.style.display = 'block';
+  positionTooltip(evt);
 }
 document.getElementById('burn-ban-chip').addEventListener('mousemove', showBanTooltip);
 document.getElementById('burn-ban-chip').addEventListener('mouseleave', hideTooltip);

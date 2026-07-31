@@ -174,7 +174,16 @@
      same % are still two visibly distinct bars instead of one dot hiding
      behind another at the same pixel position. */
   .cloud-overlay {
-    position: absolute; right: 10px; top: 10px; z-index: 5; width: 260px;
+    position: absolute; right: 10px; top: 10px; z-index: 5;
+    /* min(), not a flat 260px + one mobile breakpoint override -- verified
+       directly that a fixed-width panel collides with .layer-toggle at
+       narrow map sizes (a 375px viewport's map-wrap renders ~335px wide;
+       260px -- or even the old 200px mobile override -- left too little
+       room for the layer buttons beside it, a real ~16px overlap measured).
+       Scaling with the container's own width instead of a second hardcoded
+       number means it keeps working continuously as the map narrows,
+       rather than only being correct at whatever one width was tested. */
+    width: min(260px, 48%);
     background: color-mix(in srgb, var(--surface-2) 92%, transparent);
     backdrop-filter: blur(3px); border: 1px solid var(--border); border-radius: 10px;
     padding: 10px 12px 8px; box-shadow: 0 1px 4px rgba(0,0,0,0.15);
@@ -293,6 +302,13 @@
   .rain-timeline {
     margin-bottom: 14px; padding: 10px 12px;
     background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px;
+    /* 11 columns have no room to compress into on a phone-width screen --
+       verified directly (375px viewport): with no floor, every column's
+       label/range-num text overflowed into its neighbor with no gap between
+       them at all, an illegible run-together mess. Same overflow-x: auto
+       pattern already used for .accuracy-table-wrap -- scroll instead of
+       crushing every column below what its own text needs. */
+    overflow-x: auto;
   }
   .rain-timeline-title {
     font-size: 0.78rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.03em;
@@ -302,7 +318,10 @@
     display: grid;
     grid-auto-flow: column;
     grid-template-rows: auto 1fr;
-    grid-auto-columns: 1fr;
+    /* minmax floor, not a bare 1fr -- columns still stretch to fill real
+       width on desktop, but can't shrink past what "0.00 in" itself needs
+       once the row has to scroll instead. */
+    grid-auto-columns: minmax(52px, 1fr);
     /* row-gap 16px, not 5 -- .cloud-cell .range-num floats to -14px above
        its own cell (escapes into whatever's above it via `position:
        absolute` relative to .cloud-cell), which only avoids colliding with
@@ -371,7 +390,7 @@
   }
 
   @media (max-width: 760px) {
-    .cloud-overlay { width: 200px; padding: 8px 9px 6px; }
+    .cloud-overlay { padding: 8px 9px 6px; }
   }
 
   .zone-buffer { stroke: none; pointer-events: none; }
