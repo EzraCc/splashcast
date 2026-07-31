@@ -187,7 +187,10 @@ function initialMapLayer() {
 let mapLayer = initialMapLayer();
 const HOUR_LABELS = { 9: '9am', 11: '11am', 13: '1pm', 15: '3pm' };
 const DEPLOY_LABELS = { single: 'Single', dual: 'Dual' };
-const MODEL_LABELS = { gfs: 'GFS', hrrr: 'HRRR', ecmwf: 'ECMWF', icon: 'ICON', arpege: 'ARPEGE', gem: 'GEM' };
+// Key order matches MODEL_LEGEND_ORDER below (published forecast horizon,
+// longest first) -- one canonical model order shared by every model-keyed
+// object/list on this page instead of each picking its own.
+const MODEL_LABELS = { gfs: 'GFS', ecmwf: 'ECMWF', gem: 'GEM', icon: 'ICON', arpege: 'ARPEGE', hrrr: 'HRRR' };
 // "History" not "Drift" -- Driftcast (the tool this project extends) already
 // owns that word for the wind-drift calc itself; reusing it here would be
 // confusing even though it'd otherwise fit.
@@ -204,18 +207,19 @@ const MODE_LABELS = { byAltitude: 'By altitude', byTime: 'By time of day', byHis
 // secondary encoding, which this page already has (model name in every
 // tooltip, text-labeled legend, white/dark stroke outline on every marker).
 const MODEL_COLORS_HEX = {
-  gfs: '#2a78d6', hrrr: '#008300', ecmwf: '#4a3aa7',
-  icon: '#eda100', arpege: '#1baf7a', gem: '#e34948',
+  gfs: '#2a78d6', ecmwf: '#4a3aa7', gem: '#e34948',
+  icon: '#eda100', arpege: '#1baf7a', hrrr: '#008300',
 };
-// Legend display order only (color assignments above are unaffected --
-// this just controls what order buildModelLegend() lists them in): longest
-// forecast horizon first, shortest last, so the models that keep contributing
-// at longer lead times cluster together at the top and the ones that drop
-// out early (see modelsWithData()) cluster at the bottom instead of being
-// interleaved. Per each model's published range (GFS 16 days, ECMWF 15,
-// GEM 10, ICON 7.5, ARPEGE 4, HRRR ~2) -- also matches the dropout order
-// actually observed across T-1/T-3/T-5/T-7 captures (HRRR first, then
-// ARPEGE, GFS/ECMWF/ICON/GEM still present at T-7).
+// Longest published forecast horizon first, shortest last (GFS 16 days,
+// ECMWF 15, GEM 10, ICON 7.5, ARPEGE 4, HRRR ~2) -- matches the dropout
+// order actually observed across T-1/T-3/T-5/T-7 captures (HRRR first, then
+// ARPEGE, GFS/ECMWF/ICON/GEM still present at T-7). This is the canonical
+// model order for the whole page, not just the legend -- MODEL_LABELS,
+// MODEL_COLORS_HEX, MODEL_SHAPES, and config.py's LIVE_PROFILE_MODELS all
+// mirror it, so there's one order to reason about instead of five different
+// ones that happen to disagree. buildModelLegend() clusters the
+// still-contributing models at the top and the dropped-out ones at the
+// bottom (see modelsWithData()) using this same sequence.
 const MODEL_LEGEND_ORDER = ['gfs', 'ecmwf', 'gem', 'icon', 'arpege', 'hrrr'];
 
 // History view: model identity is color (same MODEL_COLORS_HEX as every

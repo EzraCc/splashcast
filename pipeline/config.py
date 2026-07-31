@@ -213,7 +213,13 @@ LIVE_NBM_HEIGHTS_M = [10, 80, 120, 180]
 # historical Herbie/GRIB2 pull's raw NAM isobaric data IS real. NBM has no
 # pressure levels on either side. The two pulls don't have matching
 # level-availability per model.
-LIVE_PROFILE_MODELS = ["gfs", "hrrr", "ecmwf", "icon", "arpege", "gem"]
+#
+# Ordered by published forecast horizon, longest first (GFS 16 days, ECMWF
+# 15, GEM 10, ICON 7.5, ARPEGE 4, HRRR ~2) -- matches app.js's
+# MODEL_LEGEND_ORDER/MODEL_LABELS/MODEL_COLORS_HEX/MODEL_SHAPES exactly, so
+# there's one canonical model order shared by the pipeline and the viewer
+# instead of each picking its own.
+LIVE_PROFILE_MODELS = ["gfs", "ecmwf", "gem", "icon", "arpege", "hrrr"]
 
 # Coverage is NOT uniform across LIVE_PROFILE_MODELS -- confirmed by probing
 # the live API directly at every PRESSURE_LEVEL_MASTER_MB level (docs proved
