@@ -1136,7 +1136,10 @@ function renderCloudPanel() {
 
   const hoursRow = document.createElement('div');
   hoursRow.className = 'cloud-hours';
-  hoursRow.appendChild(document.createElement('div'));
+  const cornerLabel = document.createElement('div');
+  cornerLabel.className = 'cloud-corner-label';
+  cornerLabel.textContent = '% covered';
+  hoursRow.appendChild(cornerLabel);
   DATA.hours.forEach(h => {
     const d = document.createElement('div');
     d.className = 'hr-label';

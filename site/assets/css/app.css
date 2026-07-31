@@ -205,6 +205,10 @@
      very first row has nothing above it except this header. */
   .cloud-hours { display: grid; grid-template-columns: 42px repeat(4, 1fr); gap: 0 6px; margin-bottom: 16px; }
   .cloud-hours .hr-label { font-size: 0.68rem; color: var(--text-muted); text-align: center; padding-bottom: 4px; }
+  /* Corner cell above the Low/Mid/High labels -- the grid's cell values
+     ("0-24%") never spell out the unit on their own, so this is the one
+     place it's stated once for the whole panel instead of repeated per cell. */
+  .cloud-corner-label { font-size: 0.6rem; color: var(--text-muted); line-height: 1.15; align-self: end; padding-bottom: 4px; }
   .cloud-grid { display: grid; grid-template-columns: 42px repeat(4, 1fr); row-gap: 16px; column-gap: 6px; align-items: end; }
   .cloud-layer-label { font-size: 0.68rem; color: var(--text-secondary); line-height: 1.2; align-self: end; padding-bottom: 4px; }
   .cloud-layer-label b { display: block; color: var(--text-primary); font-size: 0.72rem; font-weight: 600; }

@@ -403,20 +403,32 @@ def fetch_burn_ban(county: str, attempts: int = 3, timeout: int = BURN_BAN_TIMEO
     raise last_exc
 
 
-# How long to wait before retrying a model that's still missing after both
-# the immediate attempts (fetch_model()/fetch_grouped_models()'s own 3x
-# retry) and, for grouped models, the individual-pull fallback below. Not
-# about a single stuck request -- every request already has a hard 10s
-# timeout (REQUEST_TIMEOUT_S) inside a `with requests.Session()` block, so a
-# request can never hang past that regardless of retries. This is for the
-# case where Open-Meteo itself is having a bad few minutes (a real "surge"
-# on their side, not our own back-to-back hammering -- that's what grouping
-# already reduced): firing right back at it within the same minute just
-# catches the same surge again. 15min gives a transient surge real room to
-# pass. One retry pass, not a loop -- if it's still down after that, this
-# isn't the only chance to recover the data anyway, since the next scheduled
-# cron run is at most 6h away and will try again fresh.
-SURGE_RETRY_WAIT_S = 900
+# Retry timing for a model still missing after both the immediate attempts
+# (fetch_model()/fetch_grouped_models()'s own 3x retry) and, for grouped
+# models, the individual-pull fallback below. Not about a single stuck
+# request -- every request already has a hard 10s timeout (REQUEST_TIMEOUT_S)
+# inside a `with requests.Session()` block, so a request can never hang past
+# that regardless of retries. This is for the case where Open-Meteo itself is
+# having a bad few minutes (a real "surge" on their side, not our own
+# back-to-back hammering -- that's what grouping already reduced): firing
+# right back at it within the same minute just catches the same surge again.
+#
+# Polls every SURGE_RETRY_POLL_S instead of taking one long blind wait --
+# sites are pulled sequentially (run_pulls_for() in launch_schedule.py calls
+# pull_live_forecast.py once per site via a blocking subprocess.run(), not in
+# parallel -- parallel would only load the shared endpoint harder, the
+# opposite of what grouping above is for), so a slow site's wait fully
+# blocks every site queued after it. A single blind wait pays the full
+# ceiling even when the surge clears in under a minute; polling recovers as
+# soon as it actually does, while still capping at SURGE_RETRY_MAX_WAIT_S
+# total so one bad site can't run away with the whole job. Same constants for
+# every site/model -- this is app-level pacing, not something tuned per
+# launch site. Not a loop past that ceiling -- if it's still down after 15min
+# of real surge room, this isn't the only chance to recover the data anyway,
+# since the next scheduled cron run is at most 6h away and will try again
+# fresh.
+SURGE_RETRY_POLL_S = 60
+SURGE_RETRY_MAX_WAIT_S = 900
 
 
 def _fetch_one_model(model_key: str, target_date: date, site_id: str) -> pd.DataFrame | None:
@@ -485,18 +497,25 @@ def run(target_date: date, site_id: str = "hutto") -> tuple[pd.DataFrame, dict |
     if failed_models:
         log.warning(
             f"{', '.join(failed_models)} still missing after immediate attempts + fallback -- "
-            f"waiting {SURGE_RETRY_WAIT_S // 60}min in case it's a transient Open-Meteo-side surge, then retrying once"
+            f"polling every {SURGE_RETRY_POLL_S}s (up to {SURGE_RETRY_MAX_WAIT_S // 60}min total) "
+            "in case it's a transient Open-Meteo-side surge"
         )
-        _sleep(SURGE_RETRY_WAIT_S)
-        still_failed = []
-        for model_key in failed_models:
-            df = _fetch_one_model(model_key, target_date, site_id)
-            if df is not None:
-                frames.append(df)
-            else:
-                still_failed.append(model_key)
+        still_failed = failed_models
+        waited = 0
+        while still_failed and waited < SURGE_RETRY_MAX_WAIT_S:
+            _sleep(SURGE_RETRY_POLL_S)
+            waited += SURGE_RETRY_POLL_S
+            retry_now, still_failed = still_failed, []
+            for model_key in retry_now:
+                df = _fetch_one_model(model_key, target_date, site_id)
+                if df is not None:
+                    frames.append(df)
+                else:
+                    still_failed.append(model_key)
         if still_failed:
-            log.warning(f"{', '.join(still_failed)} still failed after the surge retry -- giving up for this capture")
+            log.warning(f"{', '.join(still_failed)} still failed after {waited}s of surge polling -- giving up for this capture")
+        else:
+            log.info(f"recovered {', '.join(failed_models)} after {waited}s of surge polling")
 
     combined = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
     if not combined.empty:
