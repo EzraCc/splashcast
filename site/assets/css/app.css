@@ -218,7 +218,12 @@
      zone, not a cell boundary between otherwise-touching rows. */
   .cloud-layer-divider { grid-column: 1 / -1; border-top: 1px dashed var(--border); margin: 2px 0 4px; }
 
-  .cloud-cell { position: relative; height: 44px; cursor: pointer; border-radius: 5px; transition: background-color 0.15s; }
+  /* 8px taller than the bare bar area (BELOW_LINE_H) -- reserves a strip
+     below .baseline for confirmed-zero marks. Rain/cloud-% can never be
+     negative, so that strip is otherwise permanently empty -- the one place
+     a mark can't be mistaken for "a small positive amount," unlike sitting
+     at or above the line. */
+  .cloud-cell { position: relative; height: 52px; cursor: pointer; border-radius: 5px; transition: background-color 0.15s; }
   .cloud-cell:hover { background: color-mix(in srgb, var(--accent) 8%, transparent); }
   /* white-space: nowrap -- a two-digit low bound ("24-100%") is one
      character wider than a one-digit one ("0-100%"), just enough to wrap
@@ -229,24 +234,33 @@
      different row entirely. */
   .cloud-cell .range-num { position: absolute; left: 0; right: 0; top: -14px; text-align: center;
     font-size: 0.62rem; color: var(--text-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
-  .cloud-cell .baseline { position: absolute; left: 2px; right: 2px; bottom: 0; height: 1px; background: var(--border); }
-  .cloud-cell .bars { position: absolute; inset: 0; display: flex; align-items: flex-end; justify-content: center; gap: 2.5px; }
+  /* Sits 8px up from the cell's own bottom edge -- .bars-below (confirmed-
+     zero marks) live in that reserved 8px strip underneath it. */
+  .cloud-cell .baseline { position: absolute; left: 2px; right: 2px; bottom: 8px; height: 1px; background: var(--border); }
+  .cloud-cell .bars { position: absolute; left: 0; right: 0; top: 0; bottom: 8px; display: flex; align-items: flex-end; justify-content: center; gap: 2.5px; }
+  .cloud-cell .bars-below { position: absolute; left: 0; right: 0; bottom: 0; height: 8px;
+    display: flex; align-items: flex-start; justify-content: center; gap: 2.5px; }
   /* Real, nonzero data only -- bottom corners square (not rounded), flush
      against .baseline with nothing rendering below it (below the line is
-     0, not a real value). min-height is just enough to keep a genuinely
-     tiny-but-real value clickable/visible, not a floor 0% would also hit --
-     0% doesn't use this class at all anymore, see .bar-zero below. */
+     the confirmed-zero strip, not a fractional/negative value). min-height
+     is just enough to keep a genuinely tiny-but-real value clickable/
+     visible -- 0 never reaches this class at all, see .bar-zero below. */
   .cloud-bar { width: 7px; border-radius: 2px 2px 0 0; min-height: 2px; }
   .cloud-bar.bar-nodata { width: 7px; height: 7px !important; min-height: 0; border-radius: 50%;
     background: none; border: 1.5px dashed var(--text-muted); align-self: flex-end; }
-  /* Confirmed zero -- a small filled dot lifted clear of the baseline, not
-     a colored sliver sitting on it. A min-height bar at 0% used to be
-     visually indistinguishable from a genuinely small nonzero value (both
-     hit the same floor height); a dot floating above the bars reads as its
-     own distinct state instead of "the smallest possible amount of data." */
-  .cloud-bar.bar-zero { width: 6px; height: 6px !important; min-height: 0; border-radius: 50%;
-    align-self: flex-end; margin-bottom: 14px; }
-  .cloud-cell .no-data { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  /* Invisible same-width filler -- keeps a model's column aligned between
+     .bars and .bars-below even on the row it isn't actually present in
+     (a model only ever renders in one of the two). */
+  .cloud-bar-slot { width: 7px; visibility: hidden; }
+  /* Confirmed zero -- a small flat square in the reserved strip BELOW the
+     line, flush against its underside (square top, mirroring .cloud-bar's
+     square bottom against the line from above). A min-height colored bar
+     at 0% used to be visually indistinguishable from a genuinely small
+     nonzero value (both hit the same floor height); putting zero in the
+     one strip that can never hold a real positive value removes the
+     ambiguity outright instead of relying on a subtler visual cue. */
+  .cloud-bar.bar-zero { width: 7px; height: 6px; border-radius: 0 0 2px 2px; align-self: flex-start; }
+  .cloud-cell .no-data { position: absolute; inset: 0 0 8px 0; display: flex; align-items: center; justify-content: center;
     font-size: 0.64rem; color: var(--text-muted); }
   /* "Pop" state: a majority of reporting models agree this layer/hour is
      >=50% covered (config.CLOUD_COVER_NOGO_PCT, Tripoli Unified Safety Code
@@ -302,7 +316,7 @@
      highlighted so they read as those specific hours, not just "some of the
      nine columns." */
   .rain-cell-label.marked b { color: var(--accent); }
-  .rain-cell { height: 56px; }
+  .rain-cell { height: 64px; }
   .rain-cell.marked { box-shadow: inset 0 0 0 1px var(--accent); }
 
   /* =========================== burn-ban status =========================== */

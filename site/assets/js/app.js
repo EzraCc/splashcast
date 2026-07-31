@@ -1011,27 +1011,37 @@ function isCloudHot(vals) {
   return atOrAbove / real.length >= 0.5;
 }
 
-// Shared by addCloudRow() and addRainCell() -- three states per model:
-// null (no data -- hollow dashed mark), 0 (confirmed zero -- a small dot
-// lifted clear of the baseline, not a colored sliver sitting on it, since a
-// min-height bar at 0% was easy to mistake for "a small amount" rather than
-// "checked, reported exactly zero"), and a real nonzero value (a colored
-// bar, bottom flush with the baseline, height via the caller's own
-// heightPct -- cloud's is the value itself, rain's is scaled against
-// RAIN_BAR_MAX_IN).
-function appendValueBar(bars, m, v, heightPct) {
-  const bar = document.createElement('div');
+// Shared by addCloudRow() and addRainCell() -- three states per model,
+// split across two flex rows (barsAbove/barsBelow) so zero gets real room
+// to sit BELOW the baseline -- the one part of the cell that can never be
+// mistaken for "a small measured amount," since rain/cloud-% can't be
+// negative and nothing else ever renders there:
+//   null (no data) -> hollow dashed mark, above the line (unchanged spot).
+//   0 (confirmed zero) -> a small flat square BELOW the line.
+//   nonzero -> a colored bar ABOVE the line, bottom flush with it (square
+//     bottom corners, not rounded), height via the caller's own heightPct
+//     (cloud's is the value itself, rain's is scaled against
+//     RAIN_BAR_MAX_IN).
+// Both rows always get one slot per model, even when empty, so per-model
+// columns stay aligned between the two rows.
+function appendValueBar(barsAbove, barsBelow, m, v, heightPct) {
+  const above = document.createElement('div');
+  const below = document.createElement('div');
   if (v === null) {
-    bar.className = 'cloud-bar bar-nodata';
+    above.className = 'cloud-bar bar-nodata';
+    below.className = 'cloud-bar-slot';
   } else if (v === 0) {
-    bar.className = 'cloud-bar bar-zero';
-    bar.style.background = MODEL_COLORS_HEX[m];
+    above.className = 'cloud-bar-slot';
+    below.className = 'cloud-bar bar-zero';
+    below.style.background = MODEL_COLORS_HEX[m];
   } else {
-    bar.className = 'cloud-bar';
-    bar.style.height = heightPct + '%';
-    bar.style.background = MODEL_COLORS_HEX[m];
+    above.className = 'cloud-bar';
+    above.style.height = heightPct + '%';
+    above.style.background = MODEL_COLORS_HEX[m];
+    below.className = 'cloud-bar-slot';
   }
-  bars.appendChild(bar);
+  barsAbove.appendChild(above);
+  barsBelow.appendChild(below);
 }
 
 function addCloudRow(grid, layerKey, label, sub, beyondWaiver) {
@@ -1062,8 +1072,11 @@ function addCloudRow(grid, layerKey, label, sub, beyondWaiver) {
 
     const bars = document.createElement('div');
     bars.className = 'bars';
-    vals.forEach(({ m, v }) => appendValueBar(bars, m, v, v));
     cell.appendChild(bars);
+    const barsBelow = document.createElement('div');
+    barsBelow.className = 'bars-below';
+    cell.appendChild(barsBelow);
+    vals.forEach(({ m, v }) => appendValueBar(bars, barsBelow, m, v, v));
 
     if (!real.length) {
       const nodata = document.createElement('div');
@@ -1251,8 +1264,11 @@ function addRainCell(row, label, sub, cellData, marked) {
 
   const bars = document.createElement('div');
   bars.className = 'bars';
-  vals.forEach(({ m, amount }) => appendValueBar(bars, m, amount, amount === null ? null : Math.min(100, (amount / RAIN_BAR_MAX_IN) * 100)));
   cell.appendChild(bars);
+  const barsBelow = document.createElement('div');
+  barsBelow.className = 'bars-below';
+  cell.appendChild(barsBelow);
+  vals.forEach(({ m, amount }) => appendValueBar(bars, barsBelow, m, amount, amount === null ? null : Math.min(100, (amount / RAIN_BAR_MAX_IN) * 100)));
 
   if (!real.length) {
     const nodata = document.createElement('div');
