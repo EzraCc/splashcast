@@ -70,6 +70,17 @@
   h1 { font-size: 1.3rem; margin: 0 0 2px; }
   .subtitle { color: var(--text-secondary); font-size: 0.88rem; margin: 0 0 18px; }
 
+  .legal-disclaimer {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text-secondary);
+    font-size: 0.78rem;
+    line-height: 1.5;
+    padding: 8px 12px;
+    margin: 0 0 14px;
+  }
+
   .controls {
     display: flex;
     flex-wrap: wrap;

@@ -28,7 +28,7 @@ For each launch site and upcoming launch date, Splashcast:
 - Once a launch date has passed, pulls NOAA's own HRRR analysis (its data-assimilation output, the closest free proxy to "what actually happened") and plots it as a star marker against every model's prior forecasts, with a per-model accuracy table.
 - Lets you toggle satellite vs. road map imagery, drag the launch pad to try a nearby setup spot, and adjust the boost-angle buffer live — all client-side, no server.
 
-It is **not** a go/no-go safety tool — it surfaces model spread and forecast-drift patterns for a launch director to read against their own approved landing zone and safety code, not a pass/fail call.
+It is **not** a go/no-go safety tool — it surfaces model spread and forecast-drift patterns for a launch director to read against their own approved landing zone and safety code, not a pass/fail call. The viewer itself carries a disclaimer to the same effect: an aid for planning, not legal advice, and not a substitute for checking with local authorities on burn bans and other applicable rules.
 
 ## How it works
 
@@ -43,10 +43,10 @@ For the full design rationale (why convex hulls instead of a weighted average, w
 
 ## Data sources
 
-- **Live multi-model forecasts — [Open-Meteo](https://open-meteo.com/)** (free tier, no API key): GFS, HRRR, NAM, NBM (NOAA), plus ECMWF, DWD ICON, Météo-France ARPEGE, and Environment Canada GEM, each pulled from its own endpoint. Surface wind for all 8; pressure-level wind (winds aloft) for the 6 that expose it, sized per site to reach that site's own waiver altitude. Real per-model pressure-level coverage and forecast horizon vary quite a bit — see `config.py`'s `LIVE_PROFILE_MODELS` comment for the actual numbers. GEM's feed has been observed stale/unreliable on Open-Meteo's side; it's tolerated like any other model missing from a capture, not specially handled.
+- **Live multi-model forecasts — [Open-Meteo](https://open-meteo.com/)** (free tier, no API key): GFS, HRRR, NAM, NBM (NOAA), plus ECMWF, DWD ICON, Météo-France ARPEGE, and Environment Canada GEM. Surface wind for all 8; pressure-level wind (winds aloft) for the 6 that expose it, sized per site to reach that site's own waiver altitude. Real per-model pressure-level coverage and forecast horizon vary quite a bit — see `config.py`'s `LIVE_PROFILE_MODELS` comment for the actual numbers. GEM's feed has been observed stale/unreliable on Open-Meteo's side; it's tolerated like any other model missing from a capture, not specially handled. GFS/HRRR/NAM/NBM share one literal Open-Meteo endpoint and are pulled together in a single grouped request rather than four separate ones — see [Automation](#automation-cron-jobs) for the retry/fallback behavior around that.
 - **"Actual" landing point — NOAA HRRR, via [Herbie](https://herbie.readthedocs.io/)/AWS Open Data**: not a real post-flight GPS track (that's a possible future addition, not built), but HRRR's own `f00` analysis — its data-assimilation output at the model's init time, the closest free proxy to ground truth. Labeled `hrrr_f00_analysis` throughout, never claimed as "actual" outright. Pulled the day *after* a launch (not same-day) so HRRR's own archive has had time to finish publishing.
 - **Satellite/road imagery — ArcGIS Online** (`World_Imagery`/`World_Street_Map`, free tier, no key), fetched once per site and re-fetched only if a site's coordinates or waiver change.
-- **Burn-ban status — Texas A&M Forest Service**, Hutto/Williamson-County-specific (not yet generalized per-site).
+- **Burn-ban status — Texas A&M Forest Service**, checked per-site against each Texas site's real county (`config.BURN_BAN_COUNTY_BY_SITE`). Kansas/South Dakota sites have no equivalent statewide machine-readable feed and are marked explicitly unsupported rather than silently checked against the wrong county.
 
 ## Automation (cron jobs)
 
@@ -60,6 +60,8 @@ Two scheduled GitHub Actions jobs in [`.github/workflows/cron-pulls.yml`](.githu
 Both jobs commit their output (`pipeline/data/`, `site/data/`, `site/maps/`) straight back to `master` when something changed — that's what makes the data survive past the ephemeral runner, and it's also what triggers [`pages.yml`](.github/workflows/pages.yml)'s redeploy. Which sites/dates get pulled isn't hardcoded anywhere — it's derived from `pipeline/launch_calendar.json` (each club's recurring schedule, plus one-off cancel/move/add/flag exceptions for a single date -- see [Adding a site](docs/adding-a-site.md)), interpreted generically by `launch_schedule.py`. A fork just needs its own rule entry added to that file and the cron jobs pick it up automatically; a cancelled or moved launch (`launch_schedule.py --cancel`/`--move`) stops (or redirects) its pulls with no code change.
 
 Both are also runnable on demand via the Actions tab's "Run workflow" button (`workflow_dispatch`, with a `live`/`actuals`/`both` picker) if you don't want to wait for the schedule.
+
+The live pull is resilient to transient Open-Meteo failures at a few layers: models sharing one endpoint are requested together to cut request count, a group that fails as a whole falls back to pulling each model individually, and any model still missing after that gets one retry after a 15-minute wait in case it's a short-lived surge on Open-Meteo's side rather than a real outage — bounded to a single extra pass per run, since the next scheduled run is at most 6h away regardless. See `pull_live_forecast.py`'s `run()` and `SURGE_RETRY_WAIT_S`.
 
 ## Project layout
 

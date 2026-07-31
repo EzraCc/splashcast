@@ -153,6 +153,95 @@ def fetch_model(model_key: str, target_date: date, site_id: str = "hutto", attem
     raise last_exc
 
 
+def fetch_grouped_models(model_keys: list[str], target_date: date, site_id: str = "hutto", attempts: int = 3, timeout: int = REQUEST_TIMEOUT_S) -> dict:
+    """Like fetch_model(), but for several models that share one literal
+    Open-Meteo endpoint (config.LIVE_MODELS[...]["url"]) -- gfs/hrrr/nam/nbm
+    all live on /v1/gfs. One request with a comma-separated `models` param
+    instead of one per model; Open-Meteo suffixes every hourly variable name
+    with the model id (confirmed live), which _split_grouped_response()
+    below undoes. Cuts request count against that specific endpoint, which
+    run()'s loop comment ties directly to the observed back-to-back-hammering
+    failures."""
+    today = datetime.now(timezone.utc).date()
+    days_ahead = (target_date - today).days
+    if days_ahead < 0:
+        raise ValueError(
+            f"target_date {target_date} is in the past -- this pulls live forecasts, "
+            "not historical data (see pull_historical.py for that)"
+        )
+    site = config.SITES[site_id]
+    variables = []
+    for mk in model_keys:
+        for v in _hourly_variables(mk, site_id):
+            if v not in variables:
+                variables.append(v)
+    params = {
+        "latitude": site["lat"],
+        "longitude": site["lon"],
+        "hourly": ",".join(variables),
+        "models": ",".join(config.LIVE_MODELS[mk]["model"] for mk in model_keys),
+        "timezone": config.SITE_TZ,
+        "forecast_days": days_ahead + 2,  # see fetch_model()'s own comment for the +2
+        "wind_speed_unit": "mph",
+        "temperature_unit": "fahrenheit",
+        "precipitation_unit": "inch",
+    }
+    if days_ahead == 0:
+        params["past_days"] = 1
+
+    url = config.LIVE_MODELS[model_keys[0]]["url"]
+    label = "+".join(model_keys)
+    last_exc = None
+    for attempt in range(attempts):
+        if attempt:
+            _sleep(1.0)
+        try:
+            with requests.Session() as session:
+                resp = session.get(url, params=params, timeout=timeout)
+                resp.raise_for_status()
+                data = resp.json()
+            if data.get("error"):
+                raise RuntimeError(f"Open-Meteo error for {label}: {data.get('reason')}")
+            return data
+        except Exception as e:
+            last_exc = e
+            log.debug(f"{label} grouped fetch attempt {attempt + 1}/{attempts} failed: {e}")
+    raise last_exc
+
+
+def _split_grouped_response(raw: dict, model_keys: list[str], site_id: str = "hutto") -> dict[str, dict]:
+    """Undo fetch_grouped_models()'s multi-model response, back into
+    fetch_model()-shaped per-model dicts -- so parse_hourly() doesn't need
+    to know a grouped request happened.
+
+    Filters each model back down to its own _hourly_variables() set, not
+    just whatever the combined response happens to include: the `hourly`
+    param is shared across every model in the group, so e.g. nbm's height-
+    level wind variables get requested (and Open-Meteo returns real,
+    non-null data) for gfs/hrrr/nam too even though those models were never
+    asked for them individually -- silently changing their stored schema
+    otherwise (extra "height"-type wind rows alongside their normal
+    "pressure"-type ones)."""
+    hourly = raw["hourly"]
+    units = raw.get("hourly_units", {})
+    out = {}
+    for mk in model_keys:
+        suffix = f"_{config.LIVE_MODELS[mk]['model']}"
+        wanted = set(_hourly_variables(mk, site_id))
+        mk_hourly = {"time": hourly["time"]}
+        mk_units = {}
+        for name, values in hourly.items():
+            if name.endswith(suffix):
+                base = name[: -len(suffix)]
+                if base not in wanted:
+                    continue
+                mk_hourly[base] = values
+                if name in units:
+                    mk_units[base] = units[name]
+        out[mk] = {"hourly_units": mk_units, "hourly": mk_hourly}
+    return out
+
+
 # --- Historical backfill -----------------------------------------------------
 # Separate from fetch_model() above -- hits Open-Meteo's Single Runs API
 # (free tier, despite its pricing page's summary text suggesting otherwise)
@@ -314,6 +403,34 @@ def fetch_burn_ban(county: str, attempts: int = 3, timeout: int = BURN_BAN_TIMEO
     raise last_exc
 
 
+# How long to wait before retrying a model that's still missing after both
+# the immediate attempts (fetch_model()/fetch_grouped_models()'s own 3x
+# retry) and, for grouped models, the individual-pull fallback below. Not
+# about a single stuck request -- every request already has a hard 10s
+# timeout (REQUEST_TIMEOUT_S) inside a `with requests.Session()` block, so a
+# request can never hang past that regardless of retries. This is for the
+# case where Open-Meteo itself is having a bad few minutes (a real "surge"
+# on their side, not our own back-to-back hammering -- that's what grouping
+# already reduced): firing right back at it within the same minute just
+# catches the same surge again. 15min gives a transient surge real room to
+# pass. One retry pass, not a loop -- if it's still down after that, this
+# isn't the only chance to recover the data anyway, since the next scheduled
+# cron run is at most 6h away and will try again fresh.
+SURGE_RETRY_WAIT_S = 900
+
+
+def _fetch_one_model(model_key: str, target_date: date, site_id: str) -> pd.DataFrame | None:
+    """fetch_model() + parse_hourly(), collapsed to None (and logged) on
+    failure instead of raising -- shared by run()'s main pass, its grouped-
+    request fallback, and its surge retry, so each has one place to fail."""
+    try:
+        raw = fetch_model(model_key, target_date, site_id)
+        return parse_hourly(raw, model_key)
+    except Exception as e:
+        log.warning(f"{model_key} pull failed: {e}")
+        return None
+
+
 def run(target_date: date, site_id: str = "hutto") -> tuple[pd.DataFrame, dict | None, date]:
     # UTC, not date.today() -- see fetch_model()'s comment above. capture_date
     # is the key every downstream file is named/deduped by (save_capture(),
@@ -324,20 +441,63 @@ def run(target_date: date, site_id: str = "hutto") -> tuple[pd.DataFrame, dict |
     # day, not a bug.
     capture_date = datetime.now(timezone.utc).date()
     frames = []
-    for i, model_key in enumerate(config.LIVE_MODELS):
+    failed_models = []
+    # Models sharing one literal Open-Meteo endpoint (gfs/hrrr/nam/nbm, all
+    # on /v1/gfs) are pulled together via fetch_grouped_models() -- one
+    # request instead of four against that endpoint, directly addressing the
+    # back-to-back-hammering failures below (gunter's gfs+hrrr pull failed in
+    # 18/18 consecutive real cron runs, always the 2nd site processed, right
+    # after another site's own 8-request burst against the same endpoint).
+    groups: dict[str, list[str]] = {}
+    for model_key in config.LIVE_MODELS:
+        groups.setdefault(config.LIVE_MODELS[model_key]["url"], []).append(model_key)
+
+    for i, model_keys in enumerate(groups.values()):
         if i:
             _sleep(0.5)  # same reasoning as fetch_model_at_run()'s loop -- observed transient
-            # 502s/timeouts hammering these endpoints back-to-back with no pause, worse for
-            # gfs/hrrr/nam/nbm specifically since all 4 share one literal endpoint (api.open-
-            # meteo.com/v1/gfs) -- confirmed directly in six days of real cron logs: gunter's
-            # gfs+hrrr pull failed in 18/18 consecutive runs (always the 2nd site processed,
-            # right after another site's own 8-request burst), while whichever site ran first
-            # each time never failed at all.
+            # 502s/timeouts hammering these endpoints back-to-back with no pause.
+        if len(model_keys) == 1:
+            model_key = model_keys[0]
+            df = _fetch_one_model(model_key, target_date, site_id)
+            if df is not None:
+                frames.append(df)
+            else:
+                failed_models.append(model_key)
+            continue
         try:
-            raw = fetch_model(model_key, target_date, site_id)
-            frames.append(parse_hourly(raw, model_key))
+            raw = fetch_grouped_models(model_keys, target_date, site_id)
+            for model_key, model_raw in _split_grouped_response(raw, model_keys, site_id).items():
+                frames.append(parse_hourly(model_raw, model_key))
         except Exception as e:
-            log.warning(f"{model_key} pull failed: {e}")
+            # The grouped request failed as a whole -- rather than lose every
+            # model in the group to what might be one bad request, fall back
+            # to pulling each individually (the pre-grouping behavior), so a
+            # group failure degrades to "however many of these still work"
+            # instead of "all of them are gone this capture."
+            log.warning(f"{'+'.join(model_keys)} grouped pull failed ({e}) -- falling back to individual pulls")
+            for model_key in model_keys:
+                df = _fetch_one_model(model_key, target_date, site_id)
+                if df is not None:
+                    frames.append(df)
+                else:
+                    failed_models.append(model_key)
+
+    if failed_models:
+        log.warning(
+            f"{', '.join(failed_models)} still missing after immediate attempts + fallback -- "
+            f"waiting {SURGE_RETRY_WAIT_S // 60}min in case it's a transient Open-Meteo-side surge, then retrying once"
+        )
+        _sleep(SURGE_RETRY_WAIT_S)
+        still_failed = []
+        for model_key in failed_models:
+            df = _fetch_one_model(model_key, target_date, site_id)
+            if df is not None:
+                frames.append(df)
+            else:
+                still_failed.append(model_key)
+        if still_failed:
+            log.warning(f"{', '.join(still_failed)} still failed after the surge retry -- giving up for this capture")
+
     combined = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
     if not combined.empty:
         combined["target_date"] = target_date
