@@ -292,13 +292,17 @@
   .cloud-legend { margin-top: 12px; padding-top: 9px; border-top: 1px solid var(--border); }
   .cloud-legend .hot-key { display: flex; align-items: center; gap: 5px; font-size: 0.68rem; color: var(--hot-text); }
 
-  /* =============================== rain timeline ========================= */
-  /* Above the map, its own full-width row -- 11 slots (Prior day, Morning,
-     then 8am-4pm hourly), each a label stacked over a data cell. Reuses
-     .cloud-cell/.cloud-bar/.baseline/.bars/.range-num/.no-data wholesale
-     (cells get both classes) -- same per-model-bar visual language as the
-     cloud panel, not a separate look invented for rain. */
-  .rain-timeline {
+  /* ============================ weather timelines ========================= */
+  /* Above the map, each its own full-width row -- 11 slots (Prior day,
+     Morning, then 8am-4pm hourly), each a label stacked over a data cell.
+     Rain and temperature share this grid/cell shell (.rain- and .temp-
+     prefixed classes are two instances of the same shape, not two separate
+     designs) -- cells
+     also get .cloud-cell for .cloud-bar/.baseline/.bars/.range-num/.no-data,
+     the same per-model-bar visual language as the cloud panel. A future
+     cloud-panel timeline (if it moves down here too) would join this same
+     combined-selector list rather than getting a third copy. */
+  .rain-timeline, .temp-timeline {
     margin-bottom: 14px; padding: 10px 12px;
     background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px;
     /* 11 columns have no room to compress into on a phone-width screen --
@@ -309,11 +313,11 @@
        crushing every column below what its own text needs. */
     overflow-x: auto;
   }
-  .rain-timeline-title {
+  .rain-timeline-title, .temp-timeline-title {
     font-size: 0.78rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.03em;
     margin-bottom: 8px;
   }
-  .rain-grid {
+  .rain-grid, .temp-grid {
     display: grid;
     grid-auto-flow: column;
     grid-template-rows: auto 1fr;
@@ -328,13 +332,30 @@
        a 16px row-gap to leave it room. Same fix needed here. */
     column-gap: 5px; row-gap: 16px;
   }
-  .rain-cell-label { font-size: 0.62rem; color: var(--text-secondary); text-align: center; line-height: 1.2; }
-  .rain-cell-label b { display: block; color: var(--text-primary); font-size: 0.68rem; font-weight: 600; }
+  .rain-cell-label, .temp-cell-label { font-size: 0.62rem; color: var(--text-secondary); text-align: center; line-height: 1.2; }
+  .rain-cell-label b, .temp-cell-label b { display: block; color: var(--text-primary); font-size: 0.68rem; font-weight: 600; }
   /* Same hours as SPLASH_HOURS_LOCAL/the rest of the viewer's hour toggle --
      highlighted so they read as those specific hours, not just "some of the
      nine columns." */
-  .rain-cell-label.marked b { color: var(--accent); }
-  .rain-cell { height: 64px; }
+  .rain-cell-label.marked b, .temp-cell-label.marked b { color: var(--accent); }
+  .rain-cell, .temp-cell { height: 64px; }
+  /* Temperature has no fixed bar scale (see app.js's renderTempTimeline())
+     -- the axis shows this capture's own computed min/max instead of a
+     baked-in range. Sticky, not a plain first column: the row scrolls
+     horizontally on mobile, and a min/max reference that scrolls away
+     right when comparing a far-right hour defeats the point of having one.
+     Needs its own background (not transparent) since sticky content still
+     paints over whatever scrolls underneath it. */
+  .temp-axis {
+    position: sticky; left: 0; z-index: 2;
+    background: var(--surface-1);
+  }
+  .temp-axis-max, .temp-axis-min {
+    position: absolute; left: 0; right: 0; text-align: center;
+    font-size: 0.62rem; color: var(--text-muted); font-variant-numeric: tabular-nums;
+  }
+  .temp-axis-max { top: 0; }
+  .temp-axis-min { bottom: 0; }
 
   /* =========================== burn-ban status =========================== */
   /* Quiet by default (clear is the common case, most days) -- a small chip.

@@ -1359,6 +1359,141 @@ function renderRainTimeline() {
   });
 }
 
+// --- temperature timeline (below the rain one; see splash_zones.py's
+// build_temperature_data()) -- same 11-slot row shell as rain (shared
+// .rain-grid/.temp-grid CSS), but two real differences: no fixed bar scale
+// (temperature swings dramatically by season/site -- a Texas August capture
+// and a South Dakota April one have nothing in common -- so a fixed range
+// like RAIN_BAR_MAX_IN would either flatten one into a sliver or clip the
+// other), and no "confirmed zero" state to special-case (unlike rain amount
+// or cloud %, a temperature reading has no natural zero point, so there's
+// nothing for appendValueBar()'s null/zero/real split to do here -- just
+// null-or-real).
+//
+// Scale is computed fresh from this capture's own data (every real value
+// across the whole row, padded and rounded to a clean 5-degree span) and
+// shown as an axis -- sticky-positioned so it stays in view while the row
+// scrolls horizontally on mobile, otherwise the one reference for "how tall
+// is tall" would scroll away exactly when comparing a far-right hour.
+function addTempAxis(row, minV, maxV) {
+  const lab = document.createElement('div');
+  lab.className = 'temp-cell-label';
+  lab.innerHTML = '<b>°F</b>';
+  row.appendChild(lab);
+
+  const cell = document.createElement('div');
+  cell.className = 'temp-cell temp-axis';
+  const maxLabel = document.createElement('div');
+  maxLabel.className = 'temp-axis-max';
+  maxLabel.textContent = Math.round(maxV);
+  cell.appendChild(maxLabel);
+  const minLabel = document.createElement('div');
+  minLabel.className = 'temp-axis-min';
+  minLabel.textContent = Math.round(minV);
+  cell.appendChild(minLabel);
+  row.appendChild(cell);
+}
+
+function addTempCell(row, label, cellData, marked, scaleMin, scaleMax) {
+  const lab = document.createElement('div');
+  lab.className = 'temp-cell-label' + (marked ? ' marked' : '');
+  lab.innerHTML = `<b>${label}</b>`;
+  row.appendChild(lab);
+
+  const cell = document.createElement('div');
+  cell.className = 'cloud-cell temp-cell' + (marked ? ' marked' : '');
+
+  const baseline = document.createElement('div');
+  baseline.className = 'baseline';
+  cell.appendChild(baseline);
+
+  const vals = CLOUD_MODELS.map(m => ({ m, v: (cellData[m] ?? null) }));
+  const real = vals.filter(x => x.v !== null);
+
+  if (real.length) {
+    const nums = real.map(x => x.v);
+    const lo = Math.min(...nums), hi = Math.max(...nums);
+    const rangeNum = document.createElement('div');
+    rangeNum.className = 'range-num';
+    rangeNum.textContent = lo === hi ? `${Math.round(lo)}°` : `${Math.round(lo)}-${Math.round(hi)}°`;
+    cell.appendChild(rangeNum);
+  }
+
+  const bars = document.createElement('div');
+  bars.className = 'bars';
+  cell.appendChild(bars);
+  const span = scaleMax - scaleMin;
+  vals.forEach(({ m, v }) => {
+    const bar = document.createElement('div');
+    if (v === null) {
+      bar.className = 'cloud-bar bar-nodata';
+    } else {
+      bar.className = 'cloud-bar';
+      bar.style.height = Math.max(0, Math.min(100, ((v - scaleMin) / span) * 100)) + '%';
+      bar.style.background = MODEL_COLORS_HEX[m];
+    }
+    bars.appendChild(bar);
+  });
+
+  if (!real.length) {
+    const nodata = document.createElement('div');
+    nodata.className = 'no-data';
+    cell.appendChild(nodata);
+  }
+
+  cell.addEventListener('mousemove', evt => {
+    const rows = vals.map(({ m, v }) =>
+      `<div class="tt-model-name"><b>${MODEL_LABELS[m] || m.toUpperCase()}</b></div>` +
+      `<div class="tt-model-pct">${v === null ? 'no data' : Math.round(v) + '°F'}</div>`
+    ).join('');
+    tooltip.innerHTML = `<div class="tt-cloud-grid">${rows}</div>` +
+      `<div class="tt-cloud-footer" style="color:var(--text-muted);">${label} temperature forecast</div>`;
+    tooltip.style.display = 'block';
+    positionTooltip(evt);
+  });
+  cell.addEventListener('mouseleave', hideTooltip);
+
+  row.appendChild(cell);
+}
+
+function renderTempTimeline() {
+  const container = document.getElementById('temp-timeline');
+  if (!DATA.temperature) { container.style.display = 'none'; return; } // pre-feature captures never regenerated
+  container.style.display = '';
+  container.innerHTML = '';
+
+  const title = document.createElement('div');
+  title.className = 'temp-timeline-title';
+  title.textContent = 'Temperature forecast';
+  container.appendChild(title);
+
+  const row = document.createElement('div');
+  row.className = 'temp-grid';
+  container.appendChild(row);
+
+  const allVals = [];
+  Object.values(DATA.temperature.prior_day).forEach(v => { if (v !== null) allVals.push(v); });
+  Object.values(DATA.temperature.morning).forEach(v => { if (v !== null) allVals.push(v); });
+  Object.values(DATA.temperature.hourly).forEach(models => {
+    Object.values(models).forEach(v => { if (v !== null) allVals.push(v); });
+  });
+  let scaleMin = 32, scaleMax = 100; // fallback for the (unlikely) all-missing case
+  if (allVals.length) {
+    scaleMin = Math.floor(Math.min(...allVals) / 5) * 5;
+    scaleMax = Math.ceil(Math.max(...allVals) / 5) * 5;
+    if (scaleMin === scaleMax) { scaleMin -= 5; scaleMax += 5; } // a perfectly flat reading still needs a real span to divide by
+  }
+
+  addTempAxis(row, scaleMin, scaleMax);
+  addTempCell(row, 'Prior day', DATA.temperature.prior_day, false, scaleMin, scaleMax);
+  addTempCell(row, 'Morning', DATA.temperature.morning, false, scaleMin, scaleMax);
+
+  const hourKeys = Object.keys(DATA.temperature.hourly).map(Number).sort((a, b) => a - b);
+  hourKeys.forEach(h => {
+    addTempCell(row, hourAmPm(h), DATA.temperature.hourly[h], RAIN_MARKED_HOURS.has(h), scaleMin, scaleMax);
+  });
+}
+
 // --- burn-ban status (see pull_live_forecast.py's fetch_burn_ban()) --------
 // Tri-state, matching the pipeline exactly: DATA.burn_ban is null (checked,
 // but the request failed -- status genuinely unknown, so no chip at all,
@@ -2515,6 +2650,7 @@ function initFromData() {
   banDismissed = false; // a dismiss on a previous site/date shouldn't suppress a genuinely new ban
   renderCloudPanel();
   renderRainTimeline();
+  renderTempTimeline();
   renderBanStatus();
   render();
 }

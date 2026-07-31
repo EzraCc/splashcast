@@ -504,6 +504,64 @@ def build_rain_data(df: pd.DataFrame, target_date: date) -> dict:
     return out
 
 
+# --- Temperature, per model/hour (viewer's timeline, below the rain one) ---
+# Same rationale as build_rain_data() above: sourced from the raw captured
+# dataframe, never passed through the drift sim. Already pulled for every
+# model (temperature_2m is in _hourly_variables()'s base list) and already
+# used pipeline-side (window_stats()'s temp_min/temp_max for the CLI
+# summary) -- this just publishes the same data to the viewer, not a new
+# pull.
+#
+# Structurally simpler than build_rain_data(): temperature has no
+# "chance"-equivalent second field (no probability concept the way rain
+# has), and -- unlike rain amount or cloud % -- has no natural zero point,
+# so there's no "confirmed zero" state to special-case. A cell here is just
+# a plain Fahrenheit float (or None if a model reports no rows for that
+# window), not a dict.
+
+def build_temperature_data(df: pd.DataFrame, target_date: date) -> dict:
+    """{"prior_day": {model: degF|None}, "morning": {model: degF|None},
+    "hourly": {hour: {model: degF|None}}}. hourly covers config.RAIN_WINDOW_
+    START through END_HOUR_LOCAL inclusive (8am-4pm, 9 hours), same time
+    axis as build_rain_data() so the two timelines line up. Each hourly cell
+    is that single hour's own reading, not an aggregate (matches rain's
+    hourly cells being one hour's own value).
+
+    prior_day/morning use each window's MAX, not a mean -- multi-hour spans
+    reduced to one number, and peak heat is the more safety-relevant read
+    (gear/propellant left out, crew heat exposure) than an average that
+    smooths over a spike.
+
+    Restricted to LIVE_PROFILE_MODELS, same as build_rain_data()/
+    build_cloud_data() -- the model set/color legend used everywhere else in
+    the viewer.
+    """
+    prior_day_start = datetime.combine(target_date - timedelta(days=1), dtime(0, 0))
+    prior_day_end = datetime.combine(target_date, dtime(0, 0))
+    morning_start = datetime.combine(target_date, dtime(0, 0))
+    morning_end = datetime.combine(target_date, dtime(config.RAIN_WINDOW_START_HOUR_LOCAL, 0))
+    hours = list(range(config.RAIN_WINDOW_START_HOUR_LOCAL, config.RAIN_WINDOW_END_HOUR_LOCAL + 1))
+
+    def window_max(m_df: pd.DataFrame, start: datetime, end: datetime) -> float | None:
+        w = m_df[(m_df["valid_time_local"] >= start) & (m_df["valid_time_local"] < end)]
+        return round(float(w["value"].max()), 1) if len(w) else None
+
+    def hour_value(m_df: pd.DataFrame, hdt: datetime) -> float | None:
+        w = m_df[m_df["valid_time_local"] == hdt]
+        return round(float(w["value"].iloc[0]), 1) if len(w) else None
+
+    out: dict = {"prior_day": {}, "morning": {}, "hourly": {h: {} for h in hours}}
+    for m in config.LIVE_PROFILE_MODELS:
+        m_df = df[(df["model"] == m) & (df["variable"] == "temperature") & (df["level_type"] == "height") & (df["level_value"] == 2.0)]
+        if m_df.empty:
+            continue
+        out["prior_day"][m] = window_max(m_df, prior_day_start, prior_day_end)
+        out["morning"][m] = window_max(m_df, morning_start, morning_end)
+        for h in hours:
+            out["hourly"][h][m] = hour_value(m_df, datetime.combine(target_date, dtime(h, 0)))
+    return out
+
+
 # --- Manifest (drives the viewer's launch-date selector) -------------------
 
 def _latest_capture(target_dir: Path) -> date | None:
@@ -652,6 +710,7 @@ def run(target_date: date, site_id: str = "hutto") -> None:
     zone_data["cloud_nogo_pct"] = config.CLOUD_COVER_NOGO_PCT
 
     zone_data["rain"] = build_rain_data(df, target_date)
+    zone_data["temperature"] = build_temperature_data(df, target_date)
 
     # config.BURN_BAN_COUNTY_BY_SITE is authoritative here, not just "does a
     # _burnban.json file exist" -- captures pulled before the per-site fix
