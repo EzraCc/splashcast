@@ -1011,6 +1011,29 @@ function isCloudHot(vals) {
   return atOrAbove / real.length >= 0.5;
 }
 
+// Shared by addCloudRow() and addRainCell() -- three states per model:
+// null (no data -- hollow dashed mark), 0 (confirmed zero -- a small dot
+// lifted clear of the baseline, not a colored sliver sitting on it, since a
+// min-height bar at 0% was easy to mistake for "a small amount" rather than
+// "checked, reported exactly zero"), and a real nonzero value (a colored
+// bar, bottom flush with the baseline, height via the caller's own
+// heightPct -- cloud's is the value itself, rain's is scaled against
+// RAIN_BAR_MAX_IN).
+function appendValueBar(bars, m, v, heightPct) {
+  const bar = document.createElement('div');
+  if (v === null) {
+    bar.className = 'cloud-bar bar-nodata';
+  } else if (v === 0) {
+    bar.className = 'cloud-bar bar-zero';
+    bar.style.background = MODEL_COLORS_HEX[m];
+  } else {
+    bar.className = 'cloud-bar';
+    bar.style.height = heightPct + '%';
+    bar.style.background = MODEL_COLORS_HEX[m];
+  }
+  bars.appendChild(bar);
+}
+
 function addCloudRow(grid, layerKey, label, sub, beyondWaiver) {
   const lab = document.createElement('div');
   lab.className = 'cloud-layer-label' + (beyondWaiver ? ' beyond-waiver' : '');
@@ -1039,21 +1062,7 @@ function addCloudRow(grid, layerKey, label, sub, beyondWaiver) {
 
     const bars = document.createElement('div');
     bars.className = 'bars';
-    vals.forEach(({ m, v }) => {
-      const bar = document.createElement('div');
-      if (v === null) {
-        bar.className = 'cloud-bar bar-nodata';
-      } else {
-        bar.className = 'cloud-bar';
-        // Height is proportional to %, but CSS min-height keeps a 0% bar a
-        // real visible colored sliver -- 0% is a model saying "clear", which
-        // is data, and must read differently than "no data" (the dashed
-        // hollow mark for a null value).
-        bar.style.height = v + '%';
-        bar.style.background = MODEL_COLORS_HEX[m];
-      }
-      bars.appendChild(bar);
-    });
+    vals.forEach(({ m, v }) => appendValueBar(bars, m, v, v));
     cell.appendChild(bars);
 
     if (!real.length) {
@@ -1242,17 +1251,7 @@ function addRainCell(row, label, sub, cellData, marked) {
 
   const bars = document.createElement('div');
   bars.className = 'bars';
-  vals.forEach(({ m, amount }) => {
-    const bar = document.createElement('div');
-    if (amount === null) {
-      bar.className = 'cloud-bar bar-nodata';
-    } else {
-      bar.className = 'cloud-bar';
-      bar.style.height = Math.min(100, (amount / RAIN_BAR_MAX_IN) * 100) + '%';
-      bar.style.background = MODEL_COLORS_HEX[m];
-    }
-    bars.appendChild(bar);
-  });
+  vals.forEach(({ m, amount }) => appendValueBar(bars, m, amount, amount === null ? null : Math.min(100, (amount / RAIN_BAR_MAX_IN) * 100)));
   cell.appendChild(bars);
 
   if (!real.length) {
@@ -1274,7 +1273,7 @@ function addRainCell(row, label, sub, cellData, marked) {
     ).join('');
     tooltip.innerHTML =
       `<div class="tt-rain-grid"><div class="tt-rain-head">Model</div><div class="tt-rain-head">Chance</div><div class="tt-rain-head">Amount</div>${rows}</div>` +
-      `<div class="tt-cloud-footer" style="color:var(--text-muted);">${label}${sub ? ' ' + sub : ''}</div>`;
+      `<div class="tt-cloud-footer" style="color:var(--text-muted);">${label}${sub ? ' ' + sub : ''} rain forecast</div>`;
     tooltip.style.left = (evt.clientX + 14) + 'px';
     tooltip.style.top = (evt.clientY + 14) + 'px';
     tooltip.style.display = 'block';
@@ -1289,6 +1288,11 @@ function renderRainTimeline() {
   if (!DATA.rain) { container.style.display = 'none'; return; } // pre-feature captures never regenerated
   container.style.display = '';
   container.innerHTML = '';
+
+  const title = document.createElement('div');
+  title.className = 'rain-timeline-title';
+  title.textContent = 'Rain forecast';
+  container.appendChild(title);
 
   const row = document.createElement('div');
   row.className = 'rain-grid';

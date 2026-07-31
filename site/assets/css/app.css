@@ -231,12 +231,21 @@
     font-size: 0.62rem; color: var(--text-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
   .cloud-cell .baseline { position: absolute; left: 2px; right: 2px; bottom: 0; height: 1px; background: var(--border); }
   .cloud-cell .bars { position: absolute; inset: 0; display: flex; align-items: flex-end; justify-content: center; gap: 2.5px; }
-  /* A model's value bar always renders with a real minimum height, even at
-     0% -- 0% is a model reporting "clear", which is data; it must look
-     different from a model that reported nothing at all. */
-  .cloud-bar { width: 7px; border-radius: 2px 2px 1px 1px; min-height: 6px; }
+  /* Real, nonzero data only -- bottom corners square (not rounded), flush
+     against .baseline with nothing rendering below it (below the line is
+     0, not a real value). min-height is just enough to keep a genuinely
+     tiny-but-real value clickable/visible, not a floor 0% would also hit --
+     0% doesn't use this class at all anymore, see .bar-zero below. */
+  .cloud-bar { width: 7px; border-radius: 2px 2px 0 0; min-height: 2px; }
   .cloud-bar.bar-nodata { width: 7px; height: 7px !important; min-height: 0; border-radius: 50%;
     background: none; border: 1.5px dashed var(--text-muted); align-self: flex-end; }
+  /* Confirmed zero -- a small filled dot lifted clear of the baseline, not
+     a colored sliver sitting on it. A min-height bar at 0% used to be
+     visually indistinguishable from a genuinely small nonzero value (both
+     hit the same floor height); a dot floating above the bars reads as its
+     own distinct state instead of "the smallest possible amount of data." */
+  .cloud-bar.bar-zero { width: 6px; height: 6px !important; min-height: 0; border-radius: 50%;
+    align-self: flex-end; margin-bottom: 14px; }
   .cloud-cell .no-data { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
     font-size: 0.64rem; color: var(--text-muted); }
   /* "Pop" state: a majority of reporting models agree this layer/hour is
@@ -270,6 +279,10 @@
   .rain-timeline {
     margin-bottom: 14px; padding: 10px 12px;
     background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px;
+  }
+  .rain-timeline-title {
+    font-size: 0.78rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.03em;
+    margin-bottom: 8px;
   }
   .rain-grid {
     display: grid;
