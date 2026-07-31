@@ -132,6 +132,14 @@
   .map-col-notes { grid-area: notes; }
   .accuracy-section { grid-area: accuracy; min-width: 0; }
 
+  /* Wraps .map-wrap + .cloud-overlay tightly -- the positioned ancestor for
+     .cloud-overlay's absolute corner placement on desktop, but unlike
+     .map-wrap itself (fixed aspect-ratio, overflow:hidden for the square
+     satellite crop), this has no height constraint of its own, so the panel
+     can drop to static/full-width flow below the map on mobile without
+     fighting .map-wrap's box. */
+  .map-frame { position: relative; }
+
   .map-wrap {
     position: relative;
     width: 100%;
@@ -174,16 +182,7 @@
      same % are still two visibly distinct bars instead of one dot hiding
      behind another at the same pixel position. */
   .cloud-overlay {
-    position: absolute; right: 10px; top: 10px; z-index: 5;
-    /* min(), not a flat 260px + one mobile breakpoint override -- verified
-       directly that a fixed-width panel collides with .layer-toggle at
-       narrow map sizes (a 375px viewport's map-wrap renders ~335px wide;
-       260px -- or even the old 200px mobile override -- left too little
-       room for the layer buttons beside it, a real ~16px overlap measured).
-       Scaling with the container's own width instead of a second hardcoded
-       number means it keeps working continuously as the map narrows,
-       rather than only being correct at whatever one width was tested. */
-    width: min(260px, 48%);
+    position: absolute; right: 10px; top: 10px; z-index: 5; width: 260px;
     background: color-mix(in srgb, var(--surface-2) 92%, transparent);
     backdrop-filter: blur(3px); border: 1px solid var(--border); border-radius: 10px;
     padding: 10px 12px 8px; box-shadow: 0 1px 4px rgba(0,0,0,0.15);
@@ -390,7 +389,20 @@
   }
 
   @media (max-width: 760px) {
-    .cloud-overlay { padding: 8px 9px 6px; }
+    /* Drops from a map-corner overlay to a full-width block below the map
+       -- confirmed directly that no width could satisfy both "wide enough
+       for the panel's own 4-column content" and "narrow enough not to
+       overlap .layer-toggle" at real phone widths (320-375px); the two
+       constraints are mathematically incompatible side by side. Full width
+       in normal flow sidesteps the conflict instead of tuning around it.
+       .map-frame (not .map-wrap) is what makes this possible -- .map-wrap's
+       own fixed aspect-ratio + overflow:hidden (for the square satellite
+       crop) can't grow to fit a stacked panel, but .map-frame has no such
+       constraint. */
+    .cloud-overlay {
+      position: static; width: 100%; margin-top: 10px;
+      padding: 8px 9px 6px;
+    }
   }
 
   .zone-buffer { stroke: none; pointer-events: none; }
