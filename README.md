@@ -25,6 +25,7 @@ For each launch site and upcoming launch date, Splashcast:
 - Pulls current wind forecasts from 6 independent weather models and simulates the descent (apogee to ground) for every combination of time-of-day, deploy type (single/dual), descent rate (fast/slow), and apogee altitude up to that site's waiver.
 - Shows the resulting landing points as a **convex-hull zone** per altitude/time — not a single predicted point — plus a boost-angle buffer band accounting for non-vertical launches and weathercocking.
 - Re-pulls daily in the week leading up to a launch, so you can see how the forecast (and the projected splash zone) has drifted as the launch date approaches — the **History** view mode.
+- Shows per-model cloud cover by altitude band (low/mid/high, waiver-aware) in a map-corner panel, flagging an hour where a majority of models agree it's at/above the safety-code cloud-cover threshold, and a burn-ban status chip/overlay for sites with a real per-county feed to check.
 - Once a launch date has passed, pulls NOAA's own HRRR analysis (its data-assimilation output, the closest free proxy to "what actually happened") and plots it as a star marker against every model's prior forecasts, with a per-model accuracy table.
 - Lets you toggle satellite vs. road map imagery, drag the launch pad to try a nearby setup spot, and adjust the boost-angle buffer live — all client-side, no server.
 
@@ -61,7 +62,7 @@ Both jobs commit their output (`pipeline/data/`, `site/data/`, `site/maps/`) str
 
 Both are also runnable on demand via the Actions tab's "Run workflow" button (`workflow_dispatch`, with a `live`/`actuals`/`both` picker) if you don't want to wait for the schedule.
 
-The live pull is resilient to transient Open-Meteo failures at a few layers: models sharing one endpoint are requested together to cut request count, a group that fails as a whole falls back to pulling each model individually, and any model still missing after that gets one retry after a 15-minute wait in case it's a short-lived surge on Open-Meteo's side rather than a real outage — bounded to a single extra pass per run, since the next scheduled run is at most 6h away regardless. See `pull_live_forecast.py`'s `run()` and `SURGE_RETRY_WAIT_S`.
+The live pull is resilient to transient Open-Meteo failures at a few layers: models sharing one endpoint are requested together to cut request count, a group that fails as a whole falls back to pulling each model individually, and any model still missing after that gets polled every 60s (up to a 15-minute ceiling) in case it's a short-lived surge on Open-Meteo's side rather than a real outage — recovers as soon as the surge actually clears instead of always waiting out the full ceiling, but still bounded, since the next scheduled run is at most 6h away regardless. Sites are pulled strictly sequentially, not in parallel (parallel would only load Open-Meteo's shared endpoint harder), so a slow site's retries do delay whatever's queued after it in the same run. See `pull_live_forecast.py`'s `run()` and `SURGE_RETRY_POLL_S`/`SURGE_RETRY_MAX_WAIT_S`.
 
 ## Project layout
 
