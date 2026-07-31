@@ -4,6 +4,9 @@ Dated, terse log of notable changes. For the full design rationale and decision 
 
 ## 2026-07-31
 
+**Rain figures now show a space before "in" (e.g. "0.00 in")**
+- User preference: easier to scan a number with the unit set off by a space when there's no surrounding sentence/math for the unit to get lost in. Both the timeline's range-num display and the hover tooltip's amount column.
+
 **Confirmed-zero marks moved below the baseline, not above it -- the first fix (below) got the direction wrong**
 - Direct user correction: lifting the zero-dot above the baseline (below's fix) reads backwards to a human -- above the line is where positive values live, so a mark up there implies "some amount," not "confirmed zero." Rain/cloud-% can never be negative, so the space *below* the line is the one place a mark can never be mistaken for a real positive measurement -- that's where zero belongs.
 - Reworked the cell layout to make room for it properly rather than faking it with a negative margin: `.cloud-cell`/`.rain-cell` are both 8px taller, `.baseline` moved up to `bottom: 8px` (was `bottom: 0`), and a new `.bars-below` flex row occupies that reserved 8px strip underneath it. `appendValueBar()` now takes both the above-line and below-line containers and routes each model into exactly one (a real nonzero bar above, a confirmed-zero flat square below, `no data`'s hollow mark stays above/unchanged) -- the other row gets an invisible same-width `.cloud-bar-slot` placeholder so per-model columns stay aligned between the two rows regardless of which one is empty for a given model. Verified against real data, light + dark theme: a mixed cell now reads as flat squares sitting under the line for every model reporting zero, with real measurements rising above it -- the "up = positive, down = confirmed zero" split reads correctly at a glance.

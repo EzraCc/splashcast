@@ -1258,7 +1258,7 @@ function addRainCell(row, label, sub, cellData, marked) {
     const lo = Math.min(...nums), hi = Math.max(...nums);
     const rangeNum = document.createElement('div');
     rangeNum.className = 'range-num';
-    rangeNum.textContent = lo === hi ? `${lo.toFixed(2)}in` : `${lo.toFixed(2)}-${hi.toFixed(2)}in`;
+    rangeNum.textContent = lo === hi ? `${lo.toFixed(2)} in` : `${lo.toFixed(2)}-${hi.toFixed(2)} in`;
     cell.appendChild(rangeNum);
   }
 
@@ -1285,7 +1285,7 @@ function addRainCell(row, label, sub, cellData, marked) {
     const rows = vals.map(({ m, amount, chance }) =>
       `<div class="tt-model-name"><b>${MODEL_LABELS[m] || m.toUpperCase()}</b></div>` +
       `<div class="tt-model-pct">${chance === null ? 'n/a' : chance + '%'}</div>` +
-      `<div class="tt-model-pct">${amount === null ? 'no data' : amount.toFixed(2) + 'in'}</div>`
+      `<div class="tt-model-pct">${amount === null ? 'no data' : amount.toFixed(2) + ' in'}</div>`
     ).join('');
     tooltip.innerHTML =
       `<div class="tt-rain-grid"><div class="tt-rain-head">Model</div><div class="tt-rain-head">Chance</div><div class="tt-rain-head">Amount</div>${rows}</div>` +
