@@ -187,7 +187,7 @@ function initialMapLayer() {
 let mapLayer = initialMapLayer();
 const HOUR_LABELS = { 9: '9am', 11: '11am', 13: '1pm', 15: '3pm' };
 const DEPLOY_LABELS = { single: 'Single', dual: 'Dual' };
-const MODEL_LABELS = { arpege: 'ARPEGE', ecmwf: 'ECMWF', gem: 'GEM', gfs: 'GFS', hrrr: 'HRRR', icon: 'ICON' };
+const MODEL_LABELS = { gfs: 'GFS', hrrr: 'HRRR', ecmwf: 'ECMWF', icon: 'ICON', arpege: 'ARPEGE', gem: 'GEM' };
 // "History" not "Drift" -- Driftcast (the tool this project extends) already
 // owns that word for the wind-drift calc itself; reusing it here would be
 // confusing even though it'd otherwise fit.
@@ -204,8 +204,8 @@ const MODE_LABELS = { byAltitude: 'By altitude', byTime: 'By time of day', byHis
 // secondary encoding, which this page already has (model name in every
 // tooltip, text-labeled legend, white/dark stroke outline on every marker).
 const MODEL_COLORS_HEX = {
-  arpege: '#1baf7a', ecmwf: '#4a3aa7', gem: '#e34948',
-  gfs: '#2a78d6', hrrr: '#008300', icon: '#eda100',
+  gfs: '#2a78d6', hrrr: '#008300', ecmwf: '#4a3aa7',
+  icon: '#eda100', arpege: '#1baf7a', gem: '#e34948',
 };
 // Legend display order only (color assignments above are unaffected --
 // this just controls what order buildModelLegend() lists them in): longest
@@ -227,7 +227,7 @@ const MODEL_LEGEND_ORDER = ['gfs', 'ecmwf', 'gem', 'icon', 'arpege', 'hrrr'];
 // so it doesn't need a channel here. "star" is deliberately not assigned to
 // any model -- reserved for the actual-landing marker (see renderHistory())
 // so it's never ambiguous with a model's projection.
-const MODEL_SHAPES = { arpege: 'triangle-down', ecmwf: 'square', gem: 'triangle-up', gfs: 'circle', hrrr: 'plus', icon: 'diamond' };
+const MODEL_SHAPES = { gfs: 'circle', ecmwf: 'square', gem: 'triangle-up', icon: 'diamond', arpege: 'triangle-down', hrrr: 'plus' };
 // Circle = the faster rate, square = the slower one, so fast/slow reads at a
 // glance without needing to hover -- covers both naming schemes (single
 // deploy's 10/20fps, dual deploy's slow/fast).
