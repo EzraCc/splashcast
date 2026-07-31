@@ -1067,11 +1067,16 @@ function addCloudRow(grid, layerKey, label, sub, beyondWaiver) {
     // whichever mark happens to be under the cursor -- same real .tooltip
     // used everywhere else in the viewer.
     cell.addEventListener('mousemove', evt => {
+      // Two-column grid (name | %), not one row per model -- a stacked list
+      // with a divider between every single model line read as a long,
+      // slow-to-scan column of near-identical rows. Right-aligning the %
+      // column lets the numbers themselves line up for a quick vertical read.
       const rows = vals.map(({ m, v }) =>
-        `<div class="tt-row"><b>${MODEL_LABELS[m] || m.toUpperCase()}</b> ${v === null ? 'no data this hour' : v + '%'}</div>`
+        `<div class="tt-model-name"><b>${MODEL_LABELS[m] || m.toUpperCase()}</b></div><div class="tt-model-pct">${v === null ? 'no data' : v + '%'}</div>`
       ).join('');
       const hotNames = hot ? real.filter(x => x.v >= DATA.cloud_nogo_pct).map(x => MODEL_LABELS[x.m] || x.m.toUpperCase()).join(', ') : '';
-      tooltip.innerHTML = rows + `<div class="tt-row" style="color:var(--text-muted);">${label} · ${HOUR_LABELS[h]}${hot ? ` · ≥50%: ${hotNames}` : ''}</div>`;
+      tooltip.innerHTML = `<div class="tt-cloud-grid">${rows}</div>` +
+        `<div class="tt-cloud-footer" style="color:var(--text-muted);">${label} · ${HOUR_LABELS[h]}${hot ? ` · ≥50%: ${hotNames}` : ''}</div>`;
       tooltip.style.left = (evt.clientX + 14) + 'px';
       tooltip.style.top = (evt.clientY + 14) + 'px';
       tooltip.style.display = 'block';
@@ -1157,21 +1162,11 @@ function renderCloudPanel() {
   const rowsToShow = cloudAltitudesExpanded ? CLOUD_LAYERS : CLOUD_LAYERS.filter(l => relevantLayers.includes(l.key));
   rowsToShow.forEach(l => addCloudRow(grid, l.key, l.label, l.sub, cloudAltitudesExpanded && !relevantLayers.includes(l.key)));
 
+  // No per-model color key here -- the main "Model" legend in the side
+  // column already maps every model to this same color (MODEL_COLORS_HEX),
+  // so repeating it in every collapsible panel would just be noise.
   const legend = document.createElement('div');
   legend.className = 'cloud-legend';
-  const modelLegend = document.createElement('div');
-  modelLegend.className = 'cloud-model-legend';
-  CLOUD_MODELS.forEach(m => {
-    const li = document.createElement('div');
-    li.className = 'li';
-    const sw = document.createElement('div');
-    sw.className = 'sw';
-    sw.style.background = MODEL_COLORS_HEX[m];
-    li.appendChild(sw);
-    li.appendChild(document.createTextNode(MODEL_LABELS[m] || m.toUpperCase()));
-    modelLegend.appendChild(li);
-  });
-  legend.appendChild(modelLegend);
   const hotKey = document.createElement('div');
   hotKey.className = 'hot-key';
   hotKey.innerHTML = `<span class="cloud-badge">&#9888;</span> majority ≥${DATA.cloud_nogo_pct}% covered`;
