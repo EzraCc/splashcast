@@ -1184,6 +1184,128 @@ function renderCloudPanel() {
   container.appendChild(legend);
 }
 
+// --- rain timeline (above the map; see splash_zones.py's build_rain_data())
+// One row: "Prior day" + "Morning" aggregate cells, then one cell per hour
+// 8am-4pm (config.RAIN_WINDOW_START/END_HOUR_LOCAL on the pipeline side) --
+// reuses the cloud panel's per-model-bar-per-cell pattern (same real-zero-
+// vs-no-data distinction, same one-tooltip-per-cell), not a line graph:
+// precip is bursty/discontinuous hour to hour (checked against real data --
+// models routinely disagree on which hour carries a spike, not just how
+// much), so connecting points with a line would imply a gradual ramp that
+// isn't real and wouldn't read as more than 8 overlapping near-zero lines.
+function hourAmPm(h) {
+  const period = h < 12 ? 'am' : 'pm';
+  return `${h % 12 || 12}${period}`;
+}
+// Any amount at/above this fills the bar -- real per-hour rain at a launch
+// site rarely approaches this; a launch is a clear no-go well before the bar
+// would need to go higher, so there's no value in a taller scale that just
+// leaves everything looking small on an ordinary rainy hour.
+const RAIN_BAR_MAX_IN = 0.3;
+// Same hours as SPLASH_HOURS_LOCAL/DATA.hours -- marked in the timeline so
+// they read as the same "9/11/1/3" the rest of the viewer already uses, not
+// a separate unrelated set of times.
+const RAIN_MARKED_HOURS = new Set([9, 11, 13, 15]);
+
+function addRainCell(row, label, sub, cellData, marked) {
+  // `sub` (the exact window, e.g. "12am-8am") only appears in the tooltip
+  // footer below, not stacked under the visible label -- the cell's own
+  // range-num floats up into that same space (cloud grid's -14px trick,
+  // which only avoids collision there because labels and cells sit in
+  // separate columns; here every slot's label sits directly above its own
+  // cell), so a second label line would overlap it. Hover for the exact
+  // window instead, same "spell it out in the help, not the label" call
+  // already made for the hourly buckets.
+  const lab = document.createElement('div');
+  lab.className = 'rain-cell-label' + (marked ? ' marked' : '');
+  lab.innerHTML = `<b>${label}</b>`;
+  row.appendChild(lab);
+
+  const cell = document.createElement('div');
+  cell.className = 'cloud-cell rain-cell' + (marked ? ' marked' : '');
+
+  const baseline = document.createElement('div');
+  baseline.className = 'baseline';
+  cell.appendChild(baseline);
+
+  const vals = CLOUD_MODELS.map(m => ({ m, ...(cellData[m] || { amount: null, chance: null }) }));
+  const real = vals.filter(x => x.amount !== null);
+
+  if (real.length) {
+    const nums = real.map(x => x.amount);
+    const lo = Math.min(...nums), hi = Math.max(...nums);
+    const rangeNum = document.createElement('div');
+    rangeNum.className = 'range-num';
+    rangeNum.textContent = lo === hi ? `${lo.toFixed(2)}in` : `${lo.toFixed(2)}-${hi.toFixed(2)}in`;
+    cell.appendChild(rangeNum);
+  }
+
+  const bars = document.createElement('div');
+  bars.className = 'bars';
+  vals.forEach(({ m, amount }) => {
+    const bar = document.createElement('div');
+    if (amount === null) {
+      bar.className = 'cloud-bar bar-nodata';
+    } else {
+      bar.className = 'cloud-bar';
+      bar.style.height = Math.min(100, (amount / RAIN_BAR_MAX_IN) * 100) + '%';
+      bar.style.background = MODEL_COLORS_HEX[m];
+    }
+    bars.appendChild(bar);
+  });
+  cell.appendChild(bars);
+
+  if (!real.length) {
+    const nodata = document.createElement('div');
+    nodata.className = 'no-data';
+    cell.appendChild(nodata);
+  }
+
+  // Same tooltip element as everywhere else, 3 columns (model | chance |
+  // amount) instead of cloud's 2 -- chance is "n/a" rather than "no data"
+  // for a model that never reports precipitation_probability at all
+  // (ARPEGE on live Open-Meteo), distinct from a hole in an hour's amount
+  // data (genuinely missing, beyond that model's horizon).
+  cell.addEventListener('mousemove', evt => {
+    const rows = vals.map(({ m, amount, chance }) =>
+      `<div class="tt-model-name"><b>${MODEL_LABELS[m] || m.toUpperCase()}</b></div>` +
+      `<div class="tt-model-pct">${chance === null ? 'n/a' : chance + '%'}</div>` +
+      `<div class="tt-model-pct">${amount === null ? 'no data' : amount.toFixed(2) + 'in'}</div>`
+    ).join('');
+    tooltip.innerHTML =
+      `<div class="tt-rain-grid"><div class="tt-rain-head">Model</div><div class="tt-rain-head">Chance</div><div class="tt-rain-head">Amount</div>${rows}</div>` +
+      `<div class="tt-cloud-footer" style="color:var(--text-muted);">${label}${sub ? ' ' + sub : ''}</div>`;
+    tooltip.style.left = (evt.clientX + 14) + 'px';
+    tooltip.style.top = (evt.clientY + 14) + 'px';
+    tooltip.style.display = 'block';
+  });
+  cell.addEventListener('mouseleave', hideTooltip);
+
+  row.appendChild(cell);
+}
+
+function renderRainTimeline() {
+  const container = document.getElementById('rain-timeline');
+  if (!DATA.rain) { container.style.display = 'none'; return; } // pre-feature captures never regenerated
+  container.style.display = '';
+  container.innerHTML = '';
+
+  const row = document.createElement('div');
+  row.className = 'rain-grid';
+  container.appendChild(row);
+
+  const hourKeys = Object.keys(DATA.rain.hourly).map(Number).sort((a, b) => a - b);
+  // First hourly key is the timeline's own start (config.RAIN_WINDOW_START_
+  // HOUR_LOCAL on the pipeline side) -- read from the data rather than
+  // hardcoded here too, so the two can't drift out of sync.
+  addRainCell(row, 'Prior day', '', DATA.rain.prior_day, false);
+  addRainCell(row, 'Morning', `12am–${hourAmPm(hourKeys[0])}`, DATA.rain.morning, false);
+
+  hourKeys.forEach(h => {
+    addRainCell(row, hourAmPm(h), '', DATA.rain.hourly[h], RAIN_MARKED_HOURS.has(h));
+  });
+}
+
 // --- burn-ban status (see pull_live_forecast.py's fetch_burn_ban()) --------
 // Tri-state, matching the pipeline exactly: DATA.burn_ban is null (checked,
 // but the request failed -- status genuinely unknown, so no chip at all,
@@ -2301,6 +2423,7 @@ function initFromData() {
   buildRateLegend();
   banDismissed = false; // a dismiss on a previous site/date shouldn't suppress a genuinely new ban
   renderCloudPanel();
+  renderRainTimeline();
   renderBanStatus();
   render();
 }

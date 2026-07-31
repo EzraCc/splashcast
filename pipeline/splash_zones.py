@@ -22,7 +22,7 @@ public.
 
 import json
 import math
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from datetime import time as dtime
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -444,6 +444,66 @@ def build_cloud_data(df: pd.DataFrame, target_date: date) -> dict:
     return out
 
 
+# --- Rain, per model/hour (viewer's above-map rain timeline) ---------------
+# Same rationale as build_cloud_data() above: sourced from the raw captured
+# dataframe, never passed through the drift sim -- rain doesn't move the
+# splash zone, it's a separate go/no-go signal (can't fly in rain; wet
+# fields/access roads can cancel a launch even on a dry launch day).
+
+def build_rain_data(df: pd.DataFrame, target_date: date) -> dict:
+    """{"prior_day": {model: cell}, "morning": {model: cell}, "hourly":
+    {hour: {model: cell}}} where cell = {"amount": inches|None, "chance":
+    pct|None}. hourly covers every hour from config.RAIN_WINDOW_START through
+    END_HOUR_LOCAL inclusive (8am-4pm, 9 hours) -- finer-grained than
+    pull_live_forecast.py's own CLI rain_stats() (which pairs hours into 4
+    buckets around the SPLASH_HOURS_LOCAL sample points for a terse log
+    line); the timeline wants each raw hour for a real "when does it clear
+    up" read, not a compact summary.
+
+    Restricted to LIVE_PROFILE_MODELS, same as build_cloud_data() -- the
+    model set/color legend used everywhere else in the viewer, and it
+    happens to remove one of the two models missing real
+    precipitation_probability data on live Open-Meteo (NAM; ARPEGE is the
+    remaining gap and reports "chance": None throughout).
+
+    "chance" for the two aggregate cells (prior_day/morning, each spanning
+    many hours) is the MAX hourly probability within that window, not a mean
+    or sum -- summing percentages isn't meaningful, and a launch director
+    cares whether the window ever carried real risk, not an average that
+    undersells a short, sharp threat.
+
+    "amount"/"chance" are both None (not 0) when a model reports no rows at
+    all for that window -- same "missing, not zero" convention as
+    build_cloud_data()'s layer values.
+    """
+    prior_day_start = datetime.combine(target_date - timedelta(days=1), dtime(0, 0))
+    prior_day_end = datetime.combine(target_date, dtime(0, 0))
+    morning_start = datetime.combine(target_date, dtime(0, 0))
+    morning_end = datetime.combine(target_date, dtime(config.RAIN_WINDOW_START_HOUR_LOCAL, 0))
+    hours = list(range(config.RAIN_WINDOW_START_HOUR_LOCAL, config.RAIN_WINDOW_END_HOUR_LOCAL + 1))
+
+    def cell(m_df: pd.DataFrame, start: datetime, end: datetime) -> dict:
+        w = m_df[(m_df["valid_time_local"] >= start) & (m_df["valid_time_local"] < end)]
+        amt = w[w["variable"] == "precipitation"]
+        prob = w[w["variable"] == "precipitation_probability"]
+        return {
+            "amount": round(float(amt["value"].sum()), 2) if len(amt) else None,
+            "chance": int(round(prob["value"].max())) if len(prob) else None,
+        }
+
+    out: dict = {"prior_day": {}, "morning": {}, "hourly": {h: {} for h in hours}}
+    for m in config.LIVE_PROFILE_MODELS:
+        m_df = df[df["model"] == m]
+        if m_df.empty:
+            continue
+        out["prior_day"][m] = cell(m_df, prior_day_start, prior_day_end)
+        out["morning"][m] = cell(m_df, morning_start, morning_end)
+        for h in hours:
+            hdt = datetime.combine(target_date, dtime(h, 0))
+            out["hourly"][h][m] = cell(m_df, hdt, hdt + timedelta(hours=1))
+    return out
+
+
 # --- Manifest (drives the viewer's launch-date selector) -------------------
 
 def _latest_capture(target_dir: Path) -> date | None:
@@ -591,6 +651,8 @@ def run(target_date: date, site_id: str = "hutto") -> None:
     zone_data["cloud_relevant_layers"] = config.CLOUD_LAYERS_BY_SITE[site_id]
     zone_data["cloud_nogo_pct"] = config.CLOUD_COVER_NOGO_PCT
 
+    zone_data["rain"] = build_rain_data(df, target_date)
+
     # config.BURN_BAN_COUNTY_BY_SITE is authoritative here, not just "does a
     # _burnban.json file exist" -- captures pulled before the per-site fix
     # landed have a real file for every site, including KS/SD ones, stamped
@@ -608,11 +670,16 @@ def run(target_date: date, site_id: str = "hutto") -> None:
         # dropped -- useful for pipeline-side debugging, not something the
         # viewer needs to ship publicly.
         burn_ban_path = pipeline_dir / f"captured_{capture_date}_burnban.json"
-        if burn_ban_path.exists():
-            raw_burn_ban = json.loads(burn_ban_path.read_text())
-            zone_data["burn_ban"] = {k: v for k, v in raw_burn_ban.items() if k != "counties_under_ban"}
-        else:
+        # A file that exists but contains literal `null` is real, not a bug
+        # to guard against here -- save_capture() writes whatever burn_ban
+        # it was given unconditionally, including None from run()'s own
+        # "the check itself failed" case, so the file existing doesn't
+        # guarantee real content. Same tri-state either way: unknown.
+        raw_burn_ban = json.loads(burn_ban_path.read_text()) if burn_ban_path.exists() else None
+        if raw_burn_ban is None:
             zone_data["burn_ban"] = None
+        else:
+            zone_data["burn_ban"] = {k: v for k, v in raw_burn_ban.items() if k != "counties_under_ban"}
 
     published_live_dir = config.SITE_DIR / "data" / site_id / "live" / str(target_date)
     published_live_dir.mkdir(parents=True, exist_ok=True)

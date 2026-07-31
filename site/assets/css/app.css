@@ -261,6 +261,37 @@
   .cloud-legend { margin-top: 12px; padding-top: 9px; border-top: 1px solid var(--border); }
   .cloud-legend .hot-key { display: flex; align-items: center; gap: 5px; font-size: 0.68rem; color: var(--hot-text); }
 
+  /* =============================== rain timeline ========================= */
+  /* Above the map, its own full-width row -- 11 slots (Prior day, Morning,
+     then 8am-4pm hourly), each a label stacked over a data cell. Reuses
+     .cloud-cell/.cloud-bar/.baseline/.bars/.range-num/.no-data wholesale
+     (cells get both classes) -- same per-model-bar visual language as the
+     cloud panel, not a separate look invented for rain. */
+  .rain-timeline {
+    margin-bottom: 14px; padding: 10px 12px;
+    background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px;
+  }
+  .rain-grid {
+    display: grid;
+    grid-auto-flow: column;
+    grid-template-rows: auto 1fr;
+    grid-auto-columns: 1fr;
+    /* row-gap 16px, not 5 -- .cloud-cell .range-num floats to -14px above
+       its own cell (escapes into whatever's above it via `position:
+       absolute` relative to .cloud-cell), which only avoids colliding with
+       the label row in the original cloud grid because that grid also uses
+       a 16px row-gap to leave it room. Same fix needed here. */
+    column-gap: 5px; row-gap: 16px;
+  }
+  .rain-cell-label { font-size: 0.62rem; color: var(--text-secondary); text-align: center; line-height: 1.2; }
+  .rain-cell-label b { display: block; color: var(--text-primary); font-size: 0.68rem; font-weight: 600; }
+  /* Same hours as SPLASH_HOURS_LOCAL/the rest of the viewer's hour toggle --
+     highlighted so they read as those specific hours, not just "some of the
+     nine columns." */
+  .rain-cell-label.marked b { color: var(--accent); }
+  .rain-cell { height: 56px; }
+  .rain-cell.marked { box-shadow: inset 0 0 0 1px var(--accent); }
+
   /* =========================== burn-ban status =========================== */
   /* Quiet by default (clear is the common case, most days) -- a small chip.
      Active is the opposite: unmissable, because "flew during an active ban"
@@ -441,6 +472,13 @@
      "pop" state so the two read as the same signal. */
   .tooltip .tt-model-pct.pct-high { font-weight: 700; color: var(--hot-text); }
   .tooltip .tt-cloud-footer { margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--border, #dedcd6); display: flex; align-items: center; }
+  /* Rain-cell hover: model|chance|amount, same right-aligned-numbers idea as
+     the cloud grid above but a 3rd column -- probability and amount are
+     different units, so they get separate columns rather than one combined
+     string. */
+  .tooltip .tt-rain-grid { display: grid; grid-template-columns: auto auto auto; column-gap: 12px; row-gap: 3px; }
+  .tooltip .tt-rain-head { font-size: 0.68rem; color: var(--text-muted); font-weight: 600; text-align: right; }
+  .tooltip .tt-rain-head:first-child { text-align: left; }
 
   /* Real-flight info box: same fixed/positioned-at-cursor mechanism as
      .tooltip, but stays open once pinned (see realFlightPinned in app.js) --
