@@ -326,6 +326,8 @@ function freshState() {
     if (rate === 'fast' || rate === 'slow') base.pinnedRate = rate;
     const alt = Number(URL_PARAMS.get('alt'));
     if (DATA.altitudes.includes(alt)) base.pinnedAlt = alt;
+    const model = URL_PARAMS.get('model');
+    if (Object.keys(MODEL_LABELS).includes(model)) base.pinnedModel = model;
     const compare = Number(URL_PARAMS.get('compare'));
     if (DATA.altitudes.includes(compare)) base.compareAlt = compare;
     const capture = URL_PARAMS.get('capture');
@@ -1013,7 +1015,7 @@ const CLOUD_LAYERS = [
   { key: 'low', label: 'Low', sub: '0–9,800ft' },
 ];
 let cloudPanelCollapsed = false;
-let cloudAltitudesExpanded = false;
+let cloudAltitudesExpanded = URL_PARAMS.get('clouds') === 'all';
 
 function isCloudHot(vals) {
   // "Tends to agree" = a majority of models that actually reported this
@@ -1165,7 +1167,7 @@ function renderCloudPanel() {
     expandBtn.className = 'cloud-expand-btn';
     expandBtn.type = 'button';
     expandBtn.textContent = cloudAltitudesExpanded ? 'Show waiver altitudes only' : 'Show all altitudes';
-    expandBtn.addEventListener('click', () => { cloudAltitudesExpanded = !cloudAltitudesExpanded; renderCloudPanel(); });
+    expandBtn.addEventListener('click', () => { cloudAltitudesExpanded = !cloudAltitudesExpanded; renderCloudPanel(); syncUrl(); });
     head.appendChild(expandBtn);
   }
   container.appendChild(head);
@@ -1382,7 +1384,7 @@ function renderRainTimeline() {
 // number, not two separate fields) -- a toggle switches which one the bars
 // show, default apparent since "does this feel dangerous" is closer to
 // what a launch director actually needs than raw air temperature alone.
-let tempShowApparent = true;
+let tempShowApparent = URL_PARAMS.get('temp') !== 'actual';
 
 function addTempAxis(row, minV, maxV) {
   const lab = document.createElement('div');
@@ -1497,6 +1499,7 @@ function renderTempTimeline() {
       if (isActive) return;
       tempShowApparent = (mode === 'apparent');
       renderTempTimeline();
+      syncUrl();
     });
     modeToggle.appendChild(btn);
   });
@@ -2499,6 +2502,9 @@ function buildPermalinkParams(includeDate) {
   if (deployExplicitlyChosen) p.set('deploy', state.deploy);
   if (boostAngleExplicitlyChosen) p.set('boost', boostAngleDeg);
   if (state.pinnedRate) p.set('rate', state.pinnedRate);
+  if (state.pinnedModel) p.set('model', state.pinnedModel);
+  if (!tempShowApparent) p.set('temp', 'actual');
+  if (cloudAltitudesExpanded) p.set('clouds', 'all');
   // Altitude is a URL param on every view -- just under a different state
   // field/param name depending which one that view actually uses: byAltitude's
   // pin/isolate selection (pinnedAlt) via `alt`, or the "which altitude to
