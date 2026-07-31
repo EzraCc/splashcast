@@ -1335,6 +1335,42 @@ function renderRainTimeline() {
 // actually checked would claim a status that isn't real.
 let banDismissed = false;
 
+// checked_at is UTC but not always explicitly marked as such -- captures
+// pulled before the ISO-with-offset fix land still carry the old naive
+// "YYYY-MM-DD HH:MM:SS.ffffff" format (no zone at all), which browsers are
+// free to guess is local time rather than UTC. Treat anything without an
+// explicit offset/Z as UTC instead of letting that guess happen.
+function parseUtcTimestamp(s) {
+  const hasOffset = /[Zz]$|[+-]\d\d:?\d\d$/.test(s);
+  return new Date(hasOffset ? s : s.replace(' ', 'T') + 'Z');
+}
+function formatCheckedAt(s) {
+  const d = parseUtcTimestamp(s);
+  return isNaN(d) ? s : d.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+}
+
+// Hover or click (touch has no hover) -- shows when this was last checked
+// and against which county, so a real mismatch (the wrong county
+// resurrected from a stale/pre-fix file, the exact bug class the per-site
+// burn-ban fix exists to prevent) is visible at a glance instead of trusted
+// blind. Reuses the same fixed-at-cursor #tooltip element as everywhere
+// else in the viewer.
+function showBanTooltip(evt) {
+  const burnBan = DATA.burn_ban;
+  if (!burnBan || !burnBan.supported) return;
+  const site = regionalSites?.sites?.[currentSiteId];
+  const countyTitleCase = `${burnBan.county.charAt(0)}${burnBan.county.slice(1).toLowerCase()}`;
+  tooltip.innerHTML =
+    `<div class="tt-row"><b>${site ? siteLabel(site) : currentSiteId}</b> — ${countyTitleCase} County</div>` +
+    `<div class="tt-row">Checked ${formatCheckedAt(burnBan.checked_at)}</div>` +
+    `<div class="tt-row" style="color:var(--text-muted);">Feed: ${burnBan.feed_header}</div>`;
+  tooltip.style.left = (evt.clientX + 14) + 'px';
+  tooltip.style.top = (evt.clientY + 14) + 'px';
+  tooltip.style.display = 'block';
+}
+document.getElementById('burn-ban-chip').addEventListener('mousemove', showBanTooltip);
+document.getElementById('burn-ban-chip').addEventListener('mouseleave', hideTooltip);
+
 function renderBanStatus() {
   const chip = document.getElementById('burn-ban-chip');
   const overlay = document.getElementById('ban-overlay');
@@ -1356,9 +1392,12 @@ function renderBanStatus() {
 }
 document.getElementById('ban-dismiss').addEventListener('click', () => { banDismissed = true; renderBanStatus(); });
 // Clicking the small "banned" chip (once dismissed) reopens the full overlay
-// -- dismiss only ever hides it, never discards the state.
-document.getElementById('burn-ban-chip').addEventListener('click', () => {
+// -- dismiss only ever hides it, never discards the state. Also shows the
+// checked-at/county tooltip regardless of state, same content mousemove
+// gives desktop -- touch has no hover, so click is the only way to reach it.
+document.getElementById('burn-ban-chip').addEventListener('click', evt => {
   if (document.getElementById('burn-ban-chip').classList.contains('banned')) { banDismissed = false; renderBanStatus(); }
+  showBanTooltip(evt);
 });
 
 // --- real-flight info box (see analyze_real_flight.py) ---------------------

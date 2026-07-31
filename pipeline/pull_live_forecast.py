@@ -391,7 +391,14 @@ def fetch_burn_ban(county: str, attempts: int = 3, timeout: int = BURN_BAN_TIMEO
             counties = set(lines[1:])
             return {
                 "supported": True,
-                "checked_at": datetime.utcnow(),
+                # Explicit .isoformat() (with tzinfo, not the naive
+                # datetime.utcnow() this used to be) -- guarantees a real
+                # offset marker in the published JSON (json.dump's
+                # default=str fallback on a naive datetime produced an
+                # ambiguous "2026-07-31 14:33:53.253923" with no timezone at
+                # all), so the viewer can parse it reliably instead of
+                # guessing which zone a bare string is in.
+                "checked_at": datetime.now(timezone.utc).isoformat(),
                 "feed_header": lines[0] if lines else "",
                 "county": county,
                 "active": county in counties,
