@@ -1375,6 +1375,15 @@ function renderRainTimeline() {
 // shown as an axis -- sticky-positioned so it stays in view while the row
 // scrolls horizontally on mobile, otherwise the one reference for "how tall
 // is tall" would scroll away exactly when comparing a far-right hour.
+//
+// Each cell carries both "actual" (raw temperature_2m) and "apparent"
+// (Open-Meteo's own combined wind+humidity+temperature "feels like" figure
+// -- covers both heat-index-when-hot and wind-chill-when-cold in one
+// number, not two separate fields) -- a toggle switches which one the bars
+// show, default apparent since "does this feel dangerous" is closer to
+// what a launch director actually needs than raw air temperature alone.
+let tempShowApparent = true;
+
 function addTempAxis(row, minV, maxV) {
   const lab = document.createElement('div');
   lab.className = 'temp-cell-label';
@@ -1407,7 +1416,8 @@ function addTempCell(row, label, cellData, marked, scaleMin, scaleMax) {
   baseline.className = 'baseline';
   cell.appendChild(baseline);
 
-  const vals = CLOUD_MODELS.map(m => ({ m, v: (cellData[m] ?? null) }));
+  const field = tempShowApparent ? 'apparent' : 'actual';
+  const vals = CLOUD_MODELS.map(m => ({ m, v: cellData[m]?.[field] ?? null }));
   const real = vals.filter(x => x.v !== null);
 
   if (real.length) {
@@ -1446,8 +1456,9 @@ function addTempCell(row, label, cellData, marked, scaleMin, scaleMax) {
       `<div class="tt-model-name"><b>${MODEL_LABELS[m] || m.toUpperCase()}</b></div>` +
       `<div class="tt-model-pct">${v === null ? 'no data' : Math.round(v) + '°F'}</div>`
     ).join('');
+    const modeLabel = tempShowApparent ? 'feels like' : 'actual';
     tooltip.innerHTML = `<div class="tt-cloud-grid">${rows}</div>` +
-      `<div class="tt-cloud-footer" style="color:var(--text-muted);">${label} temperature forecast</div>`;
+      `<div class="tt-cloud-footer" style="color:var(--text-muted);">${label} temperature forecast (${modeLabel})</div>`;
     tooltip.style.display = 'block';
     positionTooltip(evt);
   });
@@ -1462,20 +1473,33 @@ function renderTempTimeline() {
   container.style.display = '';
   container.innerHTML = '';
 
+  const head = document.createElement('div');
+  head.className = 'temp-head';
   const title = document.createElement('div');
   title.className = 'temp-timeline-title';
   title.textContent = 'Temperature forecast';
-  container.appendChild(title);
+  head.appendChild(title);
+  // Same "button names what clicking it does" convention as the cloud
+  // panel's "Show all altitudes" -- describes the OTHER mode, not the
+  // current one.
+  const toggleBtn = document.createElement('button');
+  toggleBtn.className = 'temp-toggle-btn';
+  toggleBtn.type = 'button';
+  toggleBtn.textContent = tempShowApparent ? 'Show actual temp' : 'Show feels-like temp';
+  toggleBtn.addEventListener('click', () => { tempShowApparent = !tempShowApparent; renderTempTimeline(); });
+  head.appendChild(toggleBtn);
+  container.appendChild(head);
 
   const row = document.createElement('div');
   row.className = 'temp-grid';
   container.appendChild(row);
 
+  const field = tempShowApparent ? 'apparent' : 'actual';
   const allVals = [];
-  Object.values(DATA.temperature.prior_day).forEach(v => { if (v !== null) allVals.push(v); });
-  Object.values(DATA.temperature.morning).forEach(v => { if (v !== null) allVals.push(v); });
+  Object.values(DATA.temperature.prior_day).forEach(c => { if (c[field] !== null) allVals.push(c[field]); });
+  Object.values(DATA.temperature.morning).forEach(c => { if (c[field] !== null) allVals.push(c[field]); });
   Object.values(DATA.temperature.hourly).forEach(models => {
-    Object.values(models).forEach(v => { if (v !== null) allVals.push(v); });
+    Object.values(models).forEach(c => { if (c[field] !== null) allVals.push(c[field]); });
   });
   let scaleMin = 32, scaleMax = 100; // fallback for the (unlikely) all-missing case
   if (allVals.length) {

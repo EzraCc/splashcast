@@ -520,17 +520,26 @@ def build_rain_data(df: pd.DataFrame, target_date: date) -> dict:
 # window), not a dict.
 
 def build_temperature_data(df: pd.DataFrame, target_date: date) -> dict:
-    """{"prior_day": {model: degF|None}, "morning": {model: degF|None},
-    "hourly": {hour: {model: degF|None}}}. hourly covers config.RAIN_WINDOW_
-    START through END_HOUR_LOCAL inclusive (8am-4pm, 9 hours), same time
-    axis as build_rain_data() so the two timelines line up. Each hourly cell
-    is that single hour's own reading, not an aggregate (matches rain's
-    hourly cells being one hour's own value).
+    """{"prior_day": {model: cell}, "morning": {model: cell}, "hourly":
+    {hour: {model: cell}}} where cell = {"actual": degF|None, "apparent":
+    degF|None}. hourly covers config.RAIN_WINDOW_START through
+    END_HOUR_LOCAL inclusive (8am-4pm, 9 hours), same time axis as
+    build_rain_data() so the two timelines line up. Each hourly cell is that
+    single hour's own reading, not an aggregate (matches rain's hourly cells
+    being one hour's own value).
+
+    "apparent" is Open-Meteo's own apparent_temperature -- one combined
+    "feels like" figure (folds in wind + humidity, not just temperature),
+    covering both heat-index-when-hot and wind-chill-when-cold in a single
+    number rather than needing two separate fields. Viewer defaults to
+    showing this, with "actual" (raw temperature_2m) as a toggle-away
+    option -- see app.js's renderTempTimeline().
 
     prior_day/morning use each window's MAX, not a mean -- multi-hour spans
     reduced to one number, and peak heat is the more safety-relevant read
     (gear/propellant left out, crew heat exposure) than an average that
-    smooths over a spike.
+    smooths over a spike. Same MAX treatment for "apparent" too, for the
+    same reason.
 
     Restricted to LIVE_PROFILE_MODELS, same as build_rain_data()/
     build_cloud_data() -- the model set/color legend used everywhere else in
@@ -542,23 +551,33 @@ def build_temperature_data(df: pd.DataFrame, target_date: date) -> dict:
     morning_end = datetime.combine(target_date, dtime(config.RAIN_WINDOW_START_HOUR_LOCAL, 0))
     hours = list(range(config.RAIN_WINDOW_START_HOUR_LOCAL, config.RAIN_WINDOW_END_HOUR_LOCAL + 1))
 
-    def window_max(m_df: pd.DataFrame, start: datetime, end: datetime) -> float | None:
-        w = m_df[(m_df["valid_time_local"] >= start) & (m_df["valid_time_local"] < end)]
+    def window_max(m_df: pd.DataFrame, var: str, start: datetime, end: datetime) -> float | None:
+        w = m_df[(m_df["variable"] == var) & (m_df["valid_time_local"] >= start) & (m_df["valid_time_local"] < end)]
         return round(float(w["value"].max()), 1) if len(w) else None
 
-    def hour_value(m_df: pd.DataFrame, hdt: datetime) -> float | None:
-        w = m_df[m_df["valid_time_local"] == hdt]
+    def hour_value(m_df: pd.DataFrame, var: str, hdt: datetime) -> float | None:
+        w = m_df[(m_df["variable"] == var) & (m_df["valid_time_local"] == hdt)]
         return round(float(w["value"].iloc[0]), 1) if len(w) else None
 
     out: dict = {"prior_day": {}, "morning": {}, "hourly": {h: {} for h in hours}}
     for m in config.LIVE_PROFILE_MODELS:
-        m_df = df[(df["model"] == m) & (df["variable"] == "temperature") & (df["level_type"] == "height") & (df["level_value"] == 2.0)]
+        m_df = df[df["model"] == m]
         if m_df.empty:
             continue
-        out["prior_day"][m] = window_max(m_df, prior_day_start, prior_day_end)
-        out["morning"][m] = window_max(m_df, morning_start, morning_end)
+        out["prior_day"][m] = {
+            "actual": window_max(m_df, "temperature", prior_day_start, prior_day_end),
+            "apparent": window_max(m_df, "apparent_temperature", prior_day_start, prior_day_end),
+        }
+        out["morning"][m] = {
+            "actual": window_max(m_df, "temperature", morning_start, morning_end),
+            "apparent": window_max(m_df, "apparent_temperature", morning_start, morning_end),
+        }
         for h in hours:
-            out["hourly"][h][m] = hour_value(m_df, datetime.combine(target_date, dtime(h, 0)))
+            hdt = datetime.combine(target_date, dtime(h, 0))
+            out["hourly"][h][m] = {
+                "actual": hour_value(m_df, "temperature", hdt),
+                "apparent": hour_value(m_df, "apparent_temperature", hdt),
+            }
     return out
 
 

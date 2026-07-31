@@ -315,8 +315,18 @@
   }
   .rain-timeline-title, .temp-timeline-title {
     font-size: 0.78rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.03em;
-    margin-bottom: 8px;
   }
+  /* Rain has no toggle, so its title carries its own spacing to the grid
+     below; temp's title sits in .temp-head instead (with the actual/
+     feels-like toggle beside it), which carries that spacing itself -- same
+     .cloud-head/.cloud-expand-btn pattern the cloud panel already uses. */
+  .rain-timeline-title { margin-bottom: 8px; }
+  .temp-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+  .temp-toggle-btn {
+    border: none; background: none; color: var(--accent); font-size: 0.7rem;
+    font-weight: 600; cursor: pointer; padding: 2px 0; white-space: nowrap;
+  }
+  .temp-toggle-btn:hover { text-decoration: underline; }
   .rain-grid, .temp-grid {
     display: grid;
     grid-auto-flow: column;

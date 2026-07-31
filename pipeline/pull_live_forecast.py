@@ -79,7 +79,7 @@ def _hourly_variables(model_key: str, site_id: str) -> list[str]:
         "wind_speed_10m", "wind_direction_10m",
         "cloud_cover", "cloud_cover_low", "cloud_cover_mid", "cloud_cover_high",
         "precipitation", "rain", "showers", "precipitation_probability",
-        "temperature_2m", "cape",
+        "temperature_2m", "apparent_temperature", "cape",
     ]
     if model_key == "nbm":
         for h in config.LIVE_NBM_HEIGHTS_M:
