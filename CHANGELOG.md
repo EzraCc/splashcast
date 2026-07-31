@@ -2,6 +2,13 @@
 
 Dated, terse log of notable changes. For the full design rationale and decision history, see [docs/spec.md](docs/spec.md).
 
+## 2026-07-31
+
+**Rain accounting (`pull_live_forecast.py`'s new `rain_stats()`), for a go/no-go call broader than "is it raining on launch day"**
+- Four figures per model, all derived from the `precipitation` hourly values every model already pulls (no new API request): `morning_precip` (target date, midnight-8am, before setup), `launch_precip` (`config.RAIN_WINDOW_START/END_HOUR_LOCAL`, 8am-4pm -- a deliberately separate window from the existing `window_stats()`'s wider 8am-5pm `LAUNCH_WINDOW`, which also drives wind/cloud/temp/CAPE stats and `delta_report()`'s day-over-day drift tracking and wasn't touched here), `day_before_precip` (the full calendar day immediately before target date -- a ground-wetness signal independent of whether target date itself sees rain), and `hourly_precip` (one per `SPLASH_HOURS_LOCAL` sample hour -- 9/11/1/3 -- each summing that hour's own bucket plus the one before it, e.g. "9am" = the 8:00 and 9:00 values, read as "around 9am" not "starting at 9am").
+- Confirmed live against the real API that none of this needed a wider pull: `past_days=1` (already requested for T-0 captures) returns a complete, non-truncated prior calendar day (verified: exactly 24 hourly rows, not partial), and for T-1..T-7 captures "the day before launch" is always today-or-later relative to the capture, already inside the normal forward forecast horizon. A real multi-day trailing accumulation (considered and rejected first) would have needed actual extra past-day requests; this doesn't.
+- Printed as its own block in `summarize()`'s CLI output, separate from the existing per-model wind/cloud/temp/CAPE/window-precip line (which still uses the older, wider window -- kept as-is rather than merged, to avoid changing `delta_report()`'s existing drift comparison). Verified against a real hutto/2026-08-01 capture: each model's four hourly buckets sum to exactly its own `launch_precip` figure (e.g. ECMWF's 0.01+0.00+0.00+0.06 = 0.07in), confirming the bucket boundaries and the window sum agree. Not yet published to the site/viewer -- pipeline-only for now.
+
 ## 2026-07-30
 
 **Open-Meteo request timeout cut 30s -> 10s, one more retry, explicit connection cancellation**

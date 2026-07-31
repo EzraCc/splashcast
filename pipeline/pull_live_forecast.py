@@ -626,6 +626,85 @@ def window_stats(df: pd.DataFrame, target_date: date) -> dict[str, dict | None]:
     return out
 
 
+def _hour_ampm(h: int) -> str:
+    return f"{h % 12 or 12}{'am' if h < 12 else 'pm'}"
+
+
+def rain_stats(df: pd.DataFrame, target_date: date) -> dict[str, dict | None]:
+    """Per-model rain accounting for a cancel/no-go call -- can't fly in
+    rain, and wet fields (soaked grass/dirt access roads) can cancel a
+    launch even on a dry launch day if it rained heavily beforehand. All
+    four figures are sums of the same hourly `precipitation` values already
+    pulled for every model (no extra request needed -- it's in every
+    capture's base variable list regardless of this function).
+
+    - morning_precip: midnight-8am target_date (before setup starts).
+    - launch_precip: config.RAIN_WINDOW_START/END_HOUR_LOCAL (8am-4pm),
+      distinct from window_stats()'s wider 8am-5pm LAUNCH_WINDOW -- see that
+      constant's own comment for why they're deliberately different.
+    - day_before_precip: the full calendar day immediately before
+      target_date (local midnight to midnight) -- ground-wetness signal,
+      independent of whether target_date itself sees any rain at all.
+    - hourly_precip: one figure per config.SPLASH_HOURS_LOCAL hour (the same
+      9/11/1/3 slots shown throughout the viewer), each summing that hour's
+      own bucket plus the one before it -- e.g. "9am" sums the 8:00 and 9:00
+      hourly values (which together cover rain fallen 8:00-10:00 local,
+      since each hourly value is precip *during* that clock hour) -- read as
+      "around 9am," not "starting at 9am."
+    """
+    morning_start = datetime.combine(target_date, time(0, 0))
+    morning_end = datetime.combine(target_date, time(config.RAIN_WINDOW_START_HOUR_LOCAL, 0))
+    launch_start = datetime.combine(target_date, time(config.RAIN_WINDOW_START_HOUR_LOCAL, 0))
+    launch_end = datetime.combine(target_date, time(config.RAIN_WINDOW_END_HOUR_LOCAL, 0))
+    day_before_start = datetime.combine(target_date - timedelta(days=1), time(0, 0))
+    day_before_end = datetime.combine(target_date, time(0, 0))
+
+    out: dict[str, dict | None] = {}
+    if df.empty:
+        return out
+    for model_key in df["model"].unique():
+        m = df[(df["model"] == model_key) & (df["variable"] == "precipitation")]
+        if m.empty:
+            out[model_key] = None
+            continue
+
+        def window_sum(start, end):
+            w = m[(m["valid_time_local"] >= start) & (m["valid_time_local"] < end)]
+            return float(w["value"].sum())
+
+        hourly_precip = {}
+        for h in config.SPLASH_HOURS_LOCAL:
+            same_day = m["valid_time_local"].dt.date == target_date
+            bucket = m[same_day & m["valid_time_local"].dt.hour.isin([h - 1, h])]
+            hourly_precip[h] = float(bucket["value"].sum())
+
+        out[model_key] = {
+            "morning_precip": window_sum(morning_start, morning_end),
+            "launch_precip": window_sum(launch_start, launch_end),
+            "day_before_precip": window_sum(day_before_start, day_before_end),
+            "hourly_precip": hourly_precip,
+        }
+    return out
+
+
+def format_rain_summary(rain: dict[str, dict | None]) -> str:
+    lines = [
+        f"Rain (in): morning 12am-{_hour_ampm(config.RAIN_WINDOW_START_HOUR_LOCAL)} | "
+        f"launch {_hour_ampm(config.RAIN_WINDOW_START_HOUR_LOCAL)}-{_hour_ampm(config.RAIN_WINDOW_END_HOUR_LOCAL)} | "
+        "day before (full day) | around each sampled hour (±1hr bucket)"
+    ]
+    for model_key, r in rain.items():
+        if r is None:
+            lines.append(f"[{model_key}] no precip data")
+            continue
+        hourly_str = " / ".join(f"{_hour_ampm(h)} {r['hourly_precip'][h]:.2f}" for h in config.SPLASH_HOURS_LOCAL)
+        lines.append(
+            f"[{model_key}] morning {r['morning_precip']:.2f} | launch {r['launch_precip']:.2f} | "
+            f"day before {r['day_before_precip']:.2f} | {hourly_str}"
+        )
+    return "\n".join(lines)
+
+
 _COMPASS_POINTS = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"]
 
 
@@ -785,6 +864,9 @@ def summarize(df: pd.DataFrame, target_date: date, burn_ban: dict | None) -> str
             f"window precip {s['window_precip']:.2f}in | day-before precip {s['prior_precip']:.2f}in | "
             f"CAPE max {fmt(s['cape_max'], ' J/kg')}"
         )
+
+    lines.append("")
+    lines.append(format_rain_summary(rain_stats(df, target_date)))
     return "\n".join(lines)
 
 

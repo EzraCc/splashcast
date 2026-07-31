@@ -239,6 +239,17 @@ LIVE_PROFILE_MODELS = ["gfs", "hrrr", "ecmwf", "icon", "arpege", "gem"]
 LAUNCH_WINDOW_START_HOUR_LOCAL = 8
 LAUNCH_WINDOW_END_HOUR_LOCAL = 17
 
+# Rain-specific window for pull_live_forecast.py's rain_stats() -- 8am-4pm,
+# a deliberately separate figure from LAUNCH_WINDOW_START/END_HOUR_LOCAL
+# above (which also drives wind/cloud/temp/CAPE stats and day-over-day drift
+# tracking in delta_report() -- not touched here, so changing this doesn't
+# ripple into those). Starts at setup (8am, same reasoning as the general
+# window) but ends at 4pm rather than 5pm: teardown matters for "is the
+# field/gear getting rained on," not the extra hour the general window
+# widens for weather-delay contingency.
+RAIN_WINDOW_START_HOUR_LOCAL = 8
+RAIN_WINDOW_END_HOUR_LOCAL = 16
+
 # Wind-agreement thresholds: a model's wind for a given hour/level is called
 # out separately (not folded into the consensus group) unless mutually within
 # this of every other model in that group -- see _split_consensus() in
