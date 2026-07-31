@@ -2,40 +2,59 @@
     color-scheme: light;
     --surface-1:      #fcfcfb;
     --surface-2:      #f2f1ee;
+    --surface-3:      #e8e6e0;
     --text-primary:   #0b0b0b;
     --text-secondary: #52514e;
     --text-muted:     #83817a;
     --border:         #dedcd6;
     --accent:         #2a78d6;
+    --track:          #d8d6cf;
     --point-fill:     #21201c;
     --point-stroke:   #ffffff;
     --map-bg:         #f2efe9;
+    /* Cloud-panel "models agree it's cloudy" flag -- a semantic amber,
+       distinct from --accent and from the burn-ban overlay's red, so the
+       three colored states in the map corner (accent UI, cloud warning,
+       burn ban) never get confused for each other. */
+    --hot-bg:         #fbe9d0;
+    --hot-border:     #c17a17;
+    --hot-text:       #8a5a10;
   }
   @media (prefers-color-scheme: dark) {
     :root:where(:not([data-theme="light"])) .viz-root {
       color-scheme: dark;
       --surface-1:      #1a1a19;
       --surface-2:      #232320;
+      --surface-3:      #2b2b27;
       --text-primary:   #ffffff;
       --text-secondary: #c3c2b7;
       --text-muted:     #8f8d84;
       --border:         #3a3936;
       --accent:         #3987e5;
+      --track:          #3f3e39;
       --point-fill:     #f5f4f0;
       --point-stroke:   #1a1a19;
+      --hot-bg:         #3d2e12;
+      --hot-border:     #e0a542;
+      --hot-text:       #f0c27a;
     }
   }
   :root[data-theme="dark"] .viz-root {
     color-scheme: dark;
     --surface-1:      #1a1a19;
     --surface-2:      #232320;
+    --surface-3:      #2b2b27;
     --text-primary:   #ffffff;
     --text-secondary: #c3c2b7;
     --text-muted:     #8f8d84;
     --border:         #3a3936;
     --accent:         #3987e5;
+    --track:          #3f3e39;
     --point-fill:     #f5f4f0;
     --point-stroke:   #1a1a19;
+    --hot-bg:         #3d2e12;
+    --hot-border:     #e0a542;
+    --hot-text:       #f0c27a;
   }
 
   * { box-sizing: border-box; }
@@ -137,6 +156,155 @@
   .layer-toggle button:last-child { border-right: none; }
   .layer-toggle button.active { background: var(--accent); color: #fff; font-weight: 600; }
   .layer-toggle button:hover:not(.active) { background: var(--surface-2); }
+
+  /* =========================== cloud panel (map-corner overlay) =========================== */
+  /* Bars, not dots on a shared line -- coverage % reads as bar HEIGHT (a
+     vertical axis), each model in its own lane, so two models landing on the
+     same % are still two visibly distinct bars instead of one dot hiding
+     behind another at the same pixel position. */
+  .cloud-overlay {
+    position: absolute; right: 10px; top: 10px; z-index: 5; width: 260px;
+    background: color-mix(in srgb, var(--surface-2) 92%, transparent);
+    backdrop-filter: blur(3px); border: 1px solid var(--border); border-radius: 10px;
+    padding: 10px 12px 8px; box-shadow: 0 1px 4px rgba(0,0,0,0.15);
+  }
+  .cloud-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 2px; }
+  /* Only the title+chevron toggles the whole panel, not the header row's
+     other controls (the altitude-band expand button lives beside it, not
+     inside it). */
+  .cloud-title-toggle {
+    font-size: 0.78rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.03em;
+    display: flex; align-items: center; gap: 6px; cursor: pointer; user-select: none; border-radius: 4px;
+  }
+  .cloud-title-toggle:hover { color: var(--text-secondary); }
+  .cloud-title-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .cloud-chevron { font-size: 0.62rem; transition: transform 0.15s ease; display: inline-block; }
+  .cloud-chevron.collapsed { transform: rotate(-90deg); }
+  .waiver-note { font-size: 0.68rem; color: var(--text-muted); margin-bottom: 8px; }
+  .waiver-note b { color: var(--text-secondary); font-weight: 600; }
+  .cloud-expand-btn {
+    border: none; background: none; color: var(--accent); font-size: 0.7rem;
+    font-weight: 600; cursor: pointer; padding: 2px 0; white-space: nowrap;
+  }
+  .cloud-expand-btn:hover { text-decoration: underline; }
+
+  /* margin-bottom clears the first grid row's range-num text, which is
+     positioned 14px above its own cell (.cloud-cell .range-num) -- interior
+     rows get that clearance for free from cloud-grid's row-gap, but the
+     very first row has nothing above it except this header. */
+  .cloud-hours { display: grid; grid-template-columns: 42px repeat(4, 1fr); gap: 0 6px; margin-bottom: 16px; }
+  .cloud-hours .hr-label { font-size: 0.68rem; color: var(--text-muted); text-align: center; padding-bottom: 4px; }
+  .cloud-grid { display: grid; grid-template-columns: 42px repeat(4, 1fr); row-gap: 16px; column-gap: 6px; align-items: end; }
+  .cloud-layer-label { font-size: 0.68rem; color: var(--text-secondary); line-height: 1.2; align-self: end; padding-bottom: 4px; }
+  .cloud-layer-label b { display: block; color: var(--text-primary); font-size: 0.72rem; font-weight: 600; }
+  .cloud-layer-label.beyond-waiver { opacity: 0.55; }
+  .cloud-layer-label.beyond-waiver b { font-weight: 500; }
+  /* Padding, not just a rule -- each row needs to read as its own distinct
+     zone, not a cell boundary between otherwise-touching rows. */
+  .cloud-layer-divider { grid-column: 1 / -1; border-top: 1px dashed var(--border); margin: 2px 0 4px; }
+
+  .cloud-cell { position: relative; height: 44px; cursor: pointer; border-radius: 5px; transition: background-color 0.15s; }
+  .cloud-cell:hover { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+  /* white-space: nowrap -- a two-digit low bound ("24-100%") is one
+     character wider than a one-digit one ("0-100%"), just enough to wrap
+     to a 2nd line at this column width; wrapped, it grows upward past its
+     single-line -14px offset and collides with whatever is above it
+     (cloud-hours' header row, for the grid's first row). Overflowing
+     sideways into the column-gap reads far better than growing into a
+     different row entirely. */
+  .cloud-cell .range-num { position: absolute; left: 0; right: 0; top: -14px; text-align: center;
+    font-size: 0.62rem; color: var(--text-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .cloud-cell .baseline { position: absolute; left: 2px; right: 2px; bottom: 0; height: 1px; background: var(--border); }
+  .cloud-cell .bars { position: absolute; inset: 0; display: flex; align-items: flex-end; justify-content: center; gap: 2.5px; }
+  /* A model's value bar always renders with a real minimum height, even at
+     0% -- 0% is a model reporting "clear", which is data; it must look
+     different from a model that reported nothing at all. */
+  .cloud-bar { width: 7px; border-radius: 2px 2px 1px 1px; min-height: 6px; }
+  .cloud-bar.bar-nodata { width: 7px; height: 7px !important; min-height: 0; border-radius: 50%;
+    background: none; border: 1.5px dashed var(--text-muted); align-self: flex-end; }
+  .cloud-cell .no-data { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    font-size: 0.64rem; color: var(--text-muted); }
+  /* "Pop" state: a majority of reporting models agree this layer/hour is
+     >=50% covered (config.CLOUD_COVER_NOGO_PCT, Tripoli Unified Safety Code
+     9-5/9-6) -- the safety-relevant threshold clubs actually watch for, not
+     just a design accent. A solid badge, not a bare glyph -- a plain small
+     "!" character was easy to miss entirely scanning a grid of cells. */
+  .cloud-badge, .cloud-cell.cell-hot::after {
+    display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0;
+    width: 17px; height: 17px; border-radius: 50%;
+    background: var(--hot-border); color: #fff; font-size: 0.68rem; font-weight: 700;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.4), 0 0 0 2px var(--surface-2);
+  }
+  .cloud-cell.cell-hot { background: var(--hot-bg); }
+  .cloud-cell.cell-hot .baseline { background: var(--hot-border); }
+  /* Anchored just inside the cell's own top-right, not up in the -14px band
+     the range-num text occupies above the cell -- a wide range ("0-100%")
+     spans close to the full cell width there, and the two would otherwise
+     overlap. */
+  .cloud-cell.cell-hot::after { content: "\26A0"; position: absolute; right: -4px; top: 2px; z-index: 2; }
+
+  .cloud-legend { margin-top: 12px; padding-top: 9px; border-top: 1px solid var(--border); }
+  .cloud-model-legend { display: flex; flex-wrap: wrap; gap: 7px 11px; }
+  .cloud-legend .li { display: flex; align-items: center; gap: 5px; font-size: 0.68rem; color: var(--text-secondary); }
+  .cloud-legend .sw { width: 8px; height: 8px; border-radius: 2px; flex-shrink: 0; }
+  /* Its own row, its own top rule -- this describes a CELL state (a majority
+     of models agreeing), not a model. Sharing a line with the model swatches
+     read as if it were annotating whichever model rendered last. */
+  .cloud-legend .hot-key { display: flex; align-items: center; gap: 5px; font-size: 0.68rem;
+    color: var(--hot-text); margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--border); }
+
+  /* =========================== burn-ban status =========================== */
+  /* Quiet by default (clear is the common case, most days) -- a small chip.
+     Active is the opposite: unmissable, because "flew during an active ban"
+     is a real liability, not a UX inconvenience -- but still dismissable,
+     since some clubs do fly under a real exception and shouldn't be stuck
+     fighting a fixed banner. No coverage for this site's state (Kansas,
+     South Dakota -- no statewide feed exists) means no chip at all, never a
+     quiet green one, since that would claim a status never actually checked. */
+  .burn-ban-chip {
+    /* top:10px is .layer-toggle's own spot -- stacked below it, not on it. */
+    position: absolute; left: 10px; top: 48px; z-index: 5;
+    display: inline-flex; align-items: center; gap: 7px; font-size: 0.78rem;
+    padding: 5px 10px; border-radius: 999px; border: 1px solid var(--border);
+    background: var(--surface-1); color: var(--text-secondary);
+    box-shadow: 0 1px 4px rgba(0,0,0,0.15);
+  }
+  .burn-ban-chip .sw { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .burn-ban-chip.clear .sw { background: #2e9e4f; }
+  .burn-ban-chip.banned {
+    cursor: pointer; font-weight: 600;
+    background: color-mix(in srgb, #d1332c 16%, var(--surface-1)); color: #b5281f;
+    border-color: color-mix(in srgb, #d1332c 45%, var(--border));
+  }
+  .burn-ban-chip.banned .sw { background: #d1332c; }
+  :root[data-theme="dark"] .burn-ban-chip.banned { color: #ff8a80; }
+  @media (prefers-color-scheme: dark) {
+    :root:where(:not([data-theme="light"])) .burn-ban-chip.banned { color: #ff8a80; }
+  }
+
+  .ban-overlay {
+    position: absolute; inset: 0; display: none; flex-direction: column; align-items: center;
+    justify-content: center; gap: 8px; text-align: center; padding: 24px;
+    background: color-mix(in srgb, #7a1712 84%, transparent); color: #fff; z-index: 20;
+  }
+  .ban-overlay.show { display: flex; }
+  .ban-overlay .flame { font-size: 3rem; line-height: 1; }
+  .ban-overlay .headline { font-size: 1.3rem; font-weight: 800; letter-spacing: 0.01em; text-wrap: balance; }
+  .ban-overlay .sub { font-size: 0.85rem; opacity: 0.92; max-width: 42ch; line-height: 1.5; }
+  .ban-overlay .dismiss {
+    margin-top: 4px; border: 1px solid rgba(255,255,255,0.55); background: rgba(0,0,0,0.15);
+    color: #fff; padding: 7px 16px; border-radius: 8px; font-size: 0.82rem; cursor: pointer;
+  }
+  .ban-overlay .dismiss:hover { background: rgba(0,0,0,0.3); }
+  @media (prefers-reduced-motion: no-preference) { .ban-overlay.show { animation: ban-pulse 1.4s ease-in-out infinite; } }
+  @keyframes ban-pulse {
+    0%, 100% { background-color: color-mix(in srgb, #7a1712 84%, transparent); }
+    50% { background-color: color-mix(in srgb, #b3241c 90%, transparent); }
+  }
+
+  @media (max-width: 760px) {
+    .cloud-overlay { width: 200px; padding: 8px 9px 6px; }
+  }
 
   .zone-buffer { stroke: none; pointer-events: none; }
   .zone-core { stroke-width: 3; pointer-events: none; }

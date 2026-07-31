@@ -784,7 +784,7 @@ window.addEventListener('pointercancel', endPadDrag);
 // applied here at the container level so every button inside inherits it
 // without needing its own listener. Any *new* button added inside #map-wrap
 // needs to be covered by this selector or the same bug recurs.
-document.querySelectorAll('.zoom-btns, .layer-toggle').forEach(el => {
+document.querySelectorAll('.zoom-btns, .layer-toggle, .cloud-overlay, .burn-ban-chip, .ban-overlay').forEach(el => {
   el.addEventListener('pointerdown', evt => evt.stopPropagation());
 });
 
@@ -979,6 +979,240 @@ function showTooltip(evt, hoveredPt) {
   }).join('');
 }
 function hideTooltip() { tooltip.style.display = 'none'; }
+
+// --- cloud panel (see splash_zones.py's build_cloud_data()) -----------------
+// Map-corner overlay, waiver-aware: collapsed to just the altitude bands a
+// site's own waiver actually reaches (DATA.cloud_relevant_layers), with
+// "Show all altitudes" revealing the rest (dimmed) plus the independently-
+// computed Total -- Total is never shown by default, at any site (even a
+// 50k-waiver one where every band shows), since a whole-sky "wall of
+// clouds" number commonly reads scary on a day where the altitudes a site
+// can actually fly through are clear, discouraging people from prepping and
+// showing up over nothing.
+const CLOUD_MODELS = Object.keys(MODEL_COLORS_HEX);
+const CLOUD_LAYERS = [
+  { key: 'high', label: 'High', sub: '26,200ft+' },
+  { key: 'mid', label: 'Mid', sub: '9,800–26,200ft' },
+  { key: 'low', label: 'Low', sub: '0–9,800ft' },
+];
+let cloudPanelCollapsed = false;
+let cloudAltitudesExpanded = false;
+
+function isCloudHot(vals) {
+  // "Tends to agree" = a majority of models that actually reported this
+  // hour/layer put it at or above the safety-code threshold
+  // (DATA.cloud_nogo_pct -- config.CLOUD_COVER_NOGO_PCT, Tripoli Unified
+  // Safety Code 9-5/9-6), not an average of the raw values (a handful of
+  // models near the line individually clearing it counts; one outlier
+  // dragging a low-consensus mean over the line does not).
+  const real = vals.filter(x => x.v !== null);
+  if (!real.length) return false;
+  const atOrAbove = real.filter(x => x.v >= DATA.cloud_nogo_pct).length;
+  return atOrAbove / real.length >= 0.5;
+}
+
+function addCloudRow(grid, layerKey, label, sub, beyondWaiver) {
+  const lab = document.createElement('div');
+  lab.className = 'cloud-layer-label' + (beyondWaiver ? ' beyond-waiver' : '');
+  lab.innerHTML = `<b>${label}</b>${sub}`;
+  grid.appendChild(lab);
+
+  DATA.hours.forEach(h => {
+    const cell = document.createElement('div');
+    const vals = CLOUD_MODELS.map(m => ({ m, v: DATA.clouds[m][h] ? DATA.clouds[m][h][layerKey] : null }));
+    const real = vals.filter(x => x.v !== null);
+    const hot = isCloudHot(vals);
+    cell.className = 'cloud-cell' + (hot ? ' cell-hot' : '');
+
+    const baseline = document.createElement('div');
+    baseline.className = 'baseline';
+    cell.appendChild(baseline);
+
+    if (real.length) {
+      const nums = real.map(x => x.v);
+      const lo = Math.min(...nums), hi = Math.max(...nums);
+      const rangeNum = document.createElement('div');
+      rangeNum.className = 'range-num';
+      rangeNum.textContent = lo === hi ? `${lo}%` : `${lo}–${hi}%`;
+      cell.appendChild(rangeNum);
+    }
+
+    const bars = document.createElement('div');
+    bars.className = 'bars';
+    vals.forEach(({ m, v }) => {
+      const bar = document.createElement('div');
+      if (v === null) {
+        bar.className = 'cloud-bar bar-nodata';
+      } else {
+        bar.className = 'cloud-bar';
+        // Height is proportional to %, but CSS min-height keeps a 0% bar a
+        // real visible colored sliver -- 0% is a model saying "clear", which
+        // is data, and must read differently than "no data" (the dashed
+        // hollow mark for a null value).
+        bar.style.height = v + '%';
+        bar.style.background = MODEL_COLORS_HEX[m];
+      }
+      bars.appendChild(bar);
+    });
+    cell.appendChild(bars);
+
+    if (!real.length) {
+      const nodata = document.createElement('div');
+      nodata.className = 'no-data';
+      cell.appendChild(nodata);
+    }
+
+    // One listener on the whole cell (not per-bar) so models with identical
+    // or near-identical values are all listed together, never hidden behind
+    // whichever mark happens to be under the cursor -- same real .tooltip
+    // used everywhere else in the viewer.
+    cell.addEventListener('mousemove', evt => {
+      const rows = vals.map(({ m, v }) =>
+        `<div class="tt-row"><b>${MODEL_LABELS[m] || m.toUpperCase()}</b> ${v === null ? 'no data this hour' : v + '%'}</div>`
+      ).join('');
+      const hotNames = hot ? real.filter(x => x.v >= DATA.cloud_nogo_pct).map(x => MODEL_LABELS[x.m] || x.m.toUpperCase()).join(', ') : '';
+      tooltip.innerHTML = rows + `<div class="tt-row" style="color:var(--text-muted);">${label} · ${HOUR_LABELS[h]}${hot ? ` · ≥50%: ${hotNames}` : ''}</div>`;
+      tooltip.style.left = (evt.clientX + 14) + 'px';
+      tooltip.style.top = (evt.clientY + 14) + 'px';
+      tooltip.style.display = 'block';
+    });
+    cell.addEventListener('mouseleave', hideTooltip);
+
+    grid.appendChild(cell);
+  });
+}
+
+function renderCloudPanel() {
+  const container = document.getElementById('cloud-overlay');
+  if (!DATA.clouds) { container.style.display = 'none'; return; } // pre-feature captures never regenerated
+  container.style.display = '';
+  container.innerHTML = '';
+
+  const head = document.createElement('div');
+  head.className = 'cloud-head';
+
+  const title = document.createElement('div');
+  title.className = 'cloud-title-toggle';
+  title.tabIndex = 0;
+  title.setAttribute('role', 'button');
+  title.setAttribute('aria-expanded', String(!cloudPanelCollapsed));
+  title.innerHTML = `Clouds <span class="cloud-chevron${cloudPanelCollapsed ? ' collapsed' : ''}">&#9660;</span>`;
+  const toggleCollapsed = () => { cloudPanelCollapsed = !cloudPanelCollapsed; renderCloudPanel(); };
+  title.addEventListener('click', toggleCollapsed);
+  title.addEventListener('keydown', evt => {
+    if (evt.key === 'Enter' || evt.key === ' ') { evt.preventDefault(); toggleCollapsed(); }
+  });
+  head.appendChild(title);
+
+  const relevantLayers = DATA.cloud_relevant_layers || ['low', 'mid', 'high'];
+  if (!cloudPanelCollapsed) {
+    const expandBtn = document.createElement('button');
+    expandBtn.className = 'cloud-expand-btn';
+    expandBtn.type = 'button';
+    expandBtn.textContent = cloudAltitudesExpanded ? 'Show waiver altitudes only' : 'Show all altitudes';
+    expandBtn.addEventListener('click', () => { cloudAltitudesExpanded = !cloudAltitudesExpanded; renderCloudPanel(); });
+    head.appendChild(expandBtn);
+  }
+  container.appendChild(head);
+
+  if (cloudPanelCollapsed) return;
+
+  const site = regionalSites?.sites?.[currentSiteId];
+  const waiverNote = document.createElement('div');
+  waiverNote.className = 'waiver-note';
+  const shownLayers = cloudAltitudesExpanded ? CLOUD_LAYERS.map(l => l.key) : relevantLayers;
+  const shownLabel = shownLayers.map(k => CLOUD_LAYERS.find(l => l.key === k).label).join(' + ');
+  if (site) {
+    waiverNote.innerHTML = `<b>${siteLabel(site)}</b> — ${site.waiver_ft.toLocaleString()}ft waiver, showing ${shownLabel}`;
+  } else {
+    waiverNote.textContent = `Showing ${shownLabel}`;
+  }
+  container.appendChild(waiverNote);
+
+  const hoursRow = document.createElement('div');
+  hoursRow.className = 'cloud-hours';
+  hoursRow.appendChild(document.createElement('div'));
+  DATA.hours.forEach(h => {
+    const d = document.createElement('div');
+    d.className = 'hr-label';
+    d.textContent = HOUR_LABELS[h];
+    hoursRow.appendChild(d);
+  });
+  container.appendChild(hoursRow);
+
+  const grid = document.createElement('div');
+  grid.className = 'cloud-grid';
+  container.appendChild(grid);
+
+  // Total is independently-computed whole-sky cover, not low+mid+high summed
+  // -- placed above High (never mixed in with the altitude bands
+  // themselves) so it reads as the big picture, not the headline number.
+  if (cloudAltitudesExpanded) {
+    addCloudRow(grid, 'total', 'Total', 'all layers', false);
+    const totalDivider = document.createElement('div');
+    totalDivider.className = 'cloud-layer-divider';
+    grid.appendChild(totalDivider);
+  }
+
+  const rowsToShow = cloudAltitudesExpanded ? CLOUD_LAYERS : CLOUD_LAYERS.filter(l => relevantLayers.includes(l.key));
+  rowsToShow.forEach(l => addCloudRow(grid, l.key, l.label, l.sub, cloudAltitudesExpanded && !relevantLayers.includes(l.key)));
+
+  const legend = document.createElement('div');
+  legend.className = 'cloud-legend';
+  const modelLegend = document.createElement('div');
+  modelLegend.className = 'cloud-model-legend';
+  CLOUD_MODELS.forEach(m => {
+    const li = document.createElement('div');
+    li.className = 'li';
+    const sw = document.createElement('div');
+    sw.className = 'sw';
+    sw.style.background = MODEL_COLORS_HEX[m];
+    li.appendChild(sw);
+    li.appendChild(document.createTextNode(MODEL_LABELS[m] || m.toUpperCase()));
+    modelLegend.appendChild(li);
+  });
+  legend.appendChild(modelLegend);
+  const hotKey = document.createElement('div');
+  hotKey.className = 'hot-key';
+  hotKey.innerHTML = `<span class="cloud-badge">&#9888;</span> majority ≥${DATA.cloud_nogo_pct}% covered`;
+  legend.appendChild(hotKey);
+  container.appendChild(legend);
+}
+
+// --- burn-ban status (see pull_live_forecast.py's fetch_burn_ban()) --------
+// Tri-state, matching the pipeline exactly: DATA.burn_ban is null (checked,
+// but the request failed -- status genuinely unknown, so no chip at all,
+// same as "not supported"), {supported:false} (Kansas/South Dakota -- no
+// statewide feed exists to check), or a real checked result. Only the last
+// case ever shows a chip -- a green "clear" chip for a site we never
+// actually checked would claim a status that isn't real.
+let banDismissed = false;
+
+function renderBanStatus() {
+  const chip = document.getElementById('burn-ban-chip');
+  const overlay = document.getElementById('ban-overlay');
+  const burnBan = DATA.burn_ban;
+  if (!burnBan || !burnBan.supported) {
+    chip.style.display = 'none';
+    overlay.classList.remove('show');
+    return;
+  }
+  const active = burnBan.active;
+  overlay.classList.toggle('show', active && !banDismissed);
+  document.getElementById('ban-headline').textContent = `Burn ban active — ${burnBan.county.charAt(0)}${burnBan.county.slice(1).toLowerCase()} County`;
+  chip.style.display = '';
+  chip.classList.toggle('clear', !active);
+  chip.classList.toggle('banned', active);
+  chip.innerHTML = active
+    ? `<span class="sw"></span>Burn ban active — ${burnBan.county}`
+    : `<span class="sw"></span>No burn ban`;
+}
+document.getElementById('ban-dismiss').addEventListener('click', () => { banDismissed = true; renderBanStatus(); });
+// Clicking the small "banned" chip (once dismissed) reopens the full overlay
+// -- dismiss only ever hides it, never discards the state.
+document.getElementById('burn-ban-chip').addEventListener('click', () => {
+  if (document.getElementById('burn-ban-chip').classList.contains('banned')) { banDismissed = false; renderBanStatus(); }
+});
 
 // --- real-flight info box (see analyze_real_flight.py) ---------------------
 // Same fixed-at-cursor mechanism as the point tooltip above, but supports
@@ -2060,6 +2294,9 @@ function initFromData() {
   buildAltList();
   buildModelLegend();
   buildRateLegend();
+  banDismissed = false; // a dismiss on a previous site/date shouldn't suppress a genuinely new ban
+  renderCloudPanel();
+  renderBanStatus();
   render();
 }
 

@@ -260,11 +260,50 @@ WIND_SPEED_AGREEMENT_MPH = 6
 # GFS/HRRR/NAM all support the by-layer fields.
 CLOUD_COVER_NOGO_PCT = 50
 
+# Which of Open-Meteo's low/mid/high cloud bands (surface-9,800ft /
+# 9,800-26,200ft / 26,200ft+) are actually relevant to display by default for
+# each site's waiver -- shown collapsed to just these in the viewer, with the
+# rest available (dimmed) via "Show all altitudes". Not a strict "waiver_ft >
+# band ceiling" formula: Hutto/Apache Pass's 10,000ft waiver sits only ~200ft
+# over the low/mid boundary (itself a rounded conversion of Open-Meteo's 3km
+# cutoff), not meaningfully into Mid, so it's treated as a Low-only site
+# rather than technically-also-Mid.
+CLOUD_LAYERS_BY_SITE = {
+    "hutto": ["low"],
+    "apache_pass": ["low"],
+    "gunter": ["low"],
+    "hearne": ["low", "mid"],
+    "tripoli_houston_south": ["low", "mid"],
+    "sd_rocket_jockies": ["low", "mid"],
+    "seymour": ["low", "mid", "high"],
+    "argonia": ["low", "mid", "high"],
+}
+
 # Texas A&M Forest Service's live per-county burn-ban list (plain text,
 # UTF-16 encoded, no auth). County name must match its ALL-CAPS spelling in
 # that feed exactly.
 BURN_BAN_URL = "http://tfsfrp.tamu.edu/WILDFIRES/BURNBAN.txt"
-BURN_BAN_COUNTY = "WILLIAMSON"
+# Texas A&M Forest Service's feed is Texas-only and county-level -- there's no
+# equivalent statewide, machine-readable burn-ban feed for Kansas (argonia) or
+# South Dakota (sd_rocket_jockies): both states leave burn bans to individual
+# county commissioners with no central aggregator, so there's nothing to point
+# at. Sites simply absent from this dict get no burn-ban check at all (see
+# pull_live_forecast.run()'s "supported" handling) instead of silently being
+# checked against some other site's county.
+#
+# County names verified via FCC's Census Area API
+# (geo.fcc.gov/api/census/area?lat=..&lon=..), not guessed from the site
+# names -- Apache Pass and Gunter in particular sit in different counties
+# than their nearest city name might suggest. Spelling/case matched to how
+# BURNBAN.txt itself lists them (bare uppercase county name, no "COUNTY" suffix).
+BURN_BAN_COUNTY_BY_SITE = {
+    "hutto": "WILLIAMSON",
+    "apache_pass": "MILAM",
+    "hearne": "ROBERTSON",
+    "tripoli_houston_south": "BRAZORIA",
+    "gunter": "GRAYSON",
+    "seymour": "BAYLOR",
+}
 
 # --- Splash-zone drift calc (ad-hoc analysis, not yet a permanent script) ---
 # Boost-phase uncertainty: apogee isn't fixed directly above the pad -- a

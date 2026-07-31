@@ -412,6 +412,38 @@ def build_zone_data(pts: pd.DataFrame, site_meta: dict, site_id: str) -> dict:
     return output
 
 
+# --- Cloud cover, per model/hour (viewer's map-corner cloud panel) ---------
+# Sourced from the same raw captured dataframe compute_splash_points() reads
+# for wind, but never passed through it -- clouds don't feed the drift sim,
+# they're a separate go/no-go signal (config.CLOUD_COVER_NOGO_PCT, Tripoli
+# Unified Safety Code 9-5/9-6) that the viewer displays alongside it.
+
+def build_cloud_data(df: pd.DataFrame, target_date: date) -> dict:
+    """{model: {hour: {"total": .., "low": .., "mid": .., "high": ..}}} for
+    the 6 LIVE_PROFILE_MODELS at each SPLASH_HOURS_LOCAL hour -- hour keyed
+    as a plain int (JSON-serializes to a string key, but matches app.js's own
+    HOUR_LABELS/DATA.hours convention, not a separate "HH:MM" format only
+    this one field would use). NAM/NBM excluded here too, for consistency
+    with the model set used everywhere else in the viewer (NBM in particular
+    has no low/mid/high breakdown at all, only a blended total). A layer
+    value is None when that model didn't report cloud data for that hour
+    (beyond its forecast horizon), same "missing, not zero" convention
+    build_profile_single() uses for wind."""
+    layer_vars = {"total": "cloud_cover", "low": "cloud_cover_low", "mid": "cloud_cover_mid", "high": "cloud_cover_high"}
+    out: dict[str, dict[int, dict[str, float | None]]] = {}
+    for m in config.LIVE_PROFILE_MODELS:
+        model_out = {}
+        for h in config.SPLASH_HOURS_LOCAL:
+            hdt = datetime.combine(target_date, dtime(h, 0))
+            layer_out = {}
+            for layer, var in layer_vars.items():
+                cell = df[(df["valid_time_local"] == hdt) & (df["model"] == m) & (df["variable"] == var)]
+                layer_out[layer] = int(round(cell["value"].iloc[0])) if len(cell) else None
+            model_out[h] = layer_out
+        out[m] = model_out
+    return out
+
+
 # --- Manifest (drives the viewer's launch-date selector) -------------------
 
 def _latest_capture(target_dir: Path) -> date | None:
@@ -554,6 +586,33 @@ def run(target_date: date, site_id: str = "hutto") -> None:
     with open(config.SITE_DIR / "maps" / site_id / "site.json") as f:
         site_meta = json.load(f)
     zone_data = build_zone_data(pts, site_meta, site_id)
+
+    zone_data["clouds"] = build_cloud_data(df, target_date)
+    zone_data["cloud_relevant_layers"] = config.CLOUD_LAYERS_BY_SITE[site_id]
+    zone_data["cloud_nogo_pct"] = config.CLOUD_COVER_NOGO_PCT
+
+    # config.BURN_BAN_COUNTY_BY_SITE is authoritative here, not just "does a
+    # _burnban.json file exist" -- captures pulled before the per-site fix
+    # landed have a real file for every site, including KS/SD ones, stamped
+    # with Williamson County's result (the old bug: one hardcoded county
+    # checked for every site regardless of where it actually was). A site
+    # absent from that dict always publishes {"supported": False}, even if a
+    # stale pre-fix file is sitting right there on disk.
+    if site_id not in config.BURN_BAN_COUNTY_BY_SITE:
+        zone_data["burn_ban"] = {"supported": False}
+    else:
+        # Not every capture has a burn-ban file (older captures predate the
+        # feature entirely) -- None here means "checked, but we don't know,"
+        # same tri-state pull_live_forecast.run() already established.
+        # counties_under_ban (all ~90 Texas counties currently listed) is
+        # dropped -- useful for pipeline-side debugging, not something the
+        # viewer needs to ship publicly.
+        burn_ban_path = pipeline_dir / f"captured_{capture_date}_burnban.json"
+        if burn_ban_path.exists():
+            raw_burn_ban = json.loads(burn_ban_path.read_text())
+            zone_data["burn_ban"] = {k: v for k, v in raw_burn_ban.items() if k != "counties_under_ban"}
+        else:
+            zone_data["burn_ban"] = None
 
     published_live_dir = config.SITE_DIR / "data" / site_id / "live" / str(target_date)
     published_live_dir.mkdir(parents=True, exist_ok=True)

@@ -285,7 +285,7 @@ def parse_hourly(raw: dict, model_key: str) -> pd.DataFrame:
 BURN_BAN_TIMEOUT_S = 5
 
 
-def fetch_burn_ban(attempts: int = 3, timeout: int = BURN_BAN_TIMEOUT_S) -> dict:
+def fetch_burn_ban(county: str, attempts: int = 3, timeout: int = BURN_BAN_TIMEOUT_S) -> dict:
     # This endpoint has been observed to time out intermittently (not a one-off
     # in testing) -- more than one attempt is worth it before giving up to
     # run()'s own try/except.
@@ -301,10 +301,11 @@ def fetch_burn_ban(attempts: int = 3, timeout: int = BURN_BAN_TIMEOUT_S) -> dict
             lines = [line.strip() for line in text.splitlines() if line.strip()]
             counties = set(lines[1:])
             return {
+                "supported": True,
                 "checked_at": datetime.utcnow(),
                 "feed_header": lines[0] if lines else "",
-                "county": config.BURN_BAN_COUNTY,
-                "active": config.BURN_BAN_COUNTY in counties,
+                "county": county,
+                "active": county in counties,
                 "counties_under_ban": sorted(counties),
             }
         except Exception as e:
@@ -343,14 +344,23 @@ def run(target_date: date, site_id: str = "hutto") -> tuple[pd.DataFrame, dict |
         combined["capture_date"] = capture_date
         combined["lead_time_days"] = (target_date - capture_date).days
 
-    # Burn-ban check stays Williamson-County/Hutto-specific regardless of
-    # site_id -- config.BURN_BAN_COUNTY isn't a per-site field (no other site
-    # needs this yet). Worth revisiting once a non-Hutto site actually pulls.
-    try:
-        burn_ban = fetch_burn_ban()
-    except Exception as e:
-        log.warning(f"burn ban check failed: {e}")
-        burn_ban = None
+    # Every Texas site maps to its own real county (config.BURN_BAN_COUNTY_BY_SITE);
+    # Kansas/South Dakota sites have no equivalent statewide feed to check at
+    # all, so they get an explicit "not supported" marker rather than either
+    # silently reusing another site's county or a bare None -- None is reserved
+    # for "we tried to check and the request itself failed" (status genuinely
+    # unknown), which is a different situation from "there's nothing to check
+    # here" and downstream (summarize(), delta_report(), and eventually the
+    # site UI) needs to tell them apart instead of showing a false green/red.
+    county = config.BURN_BAN_COUNTY_BY_SITE.get(site_id)
+    if county is None:
+        burn_ban = {"supported": False}
+    else:
+        try:
+            burn_ban = fetch_burn_ban(county)
+        except Exception as e:
+            log.warning(f"burn ban check failed: {e}")
+            burn_ban = None
 
     return combined, burn_ban, capture_date
 
@@ -557,7 +567,9 @@ def hourly_wind_table(df: pd.DataFrame, target_date: date) -> str:
 def summarize(df: pd.DataFrame, target_date: date, burn_ban: dict | None) -> str:
     lines = [f"=== Splashcast live forecast for {target_date} ({config.LAUNCH_WINDOW_START_HOUR_LOCAL}am-{config.LAUNCH_WINDOW_END_HOUR_LOCAL - 12}pm Central) ==="]
     if burn_ban is None:
-        lines.append(f"Burn ban ({config.BURN_BAN_COUNTY}): check failed (see warning above) -- status unknown")
+        lines.append("Burn ban: check failed (see warning above) -- status unknown")
+    elif not burn_ban.get("supported", True):
+        lines.append("Burn ban: not tracked for this site (no statewide feed for this state)")
     else:
         lines.append(
             f"Burn ban ({burn_ban['county']}): {'ACTIVE' if burn_ban['active'] else 'not active'} "
@@ -610,7 +622,11 @@ def delta_report(
     lead_today = (target_date - capture_date).days
     lines = [f"--- Delta vs {prev_capture_date} capture (T-{lead_prev}d -> T-{lead_today}d) ---"]
 
-    if burn_ban_today is None or burn_ban_prev is None:
+    today_unsupported = burn_ban_today is not None and not burn_ban_today.get("supported", True)
+    prev_unsupported = burn_ban_prev is not None and not burn_ban_prev.get("supported", True)
+    if today_unsupported or prev_unsupported:
+        pass  # nothing to compare -- this site has no burn-ban coverage, not an error
+    elif burn_ban_today is None or burn_ban_prev is None:
         lines.append("(burn ban comparison unavailable -- a check failed on one of the two days)")
     elif burn_ban_today["active"] != burn_ban_prev["active"]:
         was = "ACTIVE" if burn_ban_prev["active"] else "not active"
