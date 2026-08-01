@@ -2,6 +2,17 @@
 
 Dated, terse log of notable changes. For the full design rationale and decision history, see [docs/spec.md](docs/spec.md).
 
+## 2026-08-01
+
+**Draggable launch-pad "what-if" position added as a permalink param, encoded as real GPS not a raw ft offset**
+- Follow-up to 2026-07-31's permalink audit, which flagged `padOffsetFt` as a real candidate but deliberately held it for a separate pass. Explicit design constraint from direction given this round: encode as GPS coordinates, not the raw ft offset, because this site's own surveyed launch-pad lat/lon has been corrected more than once in this project's history -- an offset alone would silently point at the wrong ground spot if that ever happens again, while a GPS coordinate re-resolves against whatever the current default is.
+- `splash_zones.py:build_zone_data()` now publishes `site_lat`/`site_lon` (previously computed server-side only, inside the pre-existing `ft_to_px()` closure, and never exposed to the viewer). Backfilled onto every already-published capture: regenerated the 19 latest-capture JSONs via `splash_zones.py <date> --site <site>` (site_lat/site_lon come from static per-site config, not that day's live pull, so this is safe to do for any already-captured date without touching zone/rain/cloud/temperature data). The 32 older intermediate captures within those same target-date folders (T-2, T-3, etc., not touched by a `run()` call since it only regenerates the latest capture) were patched directly with just the two new fields, sourced from each site's static `maps/<site>/site.json` -- confirmed via diff this touched nothing else in those files. All 52 published captures now carry `site_lat`/`site_lon`.
+- `app.js`: added `padFtToLatLon()`/`padLatLonToFt()`, mirroring `splash_zones.py`'s existing flat-earth formula (`111320 m/deg lat`, `cos(site_lat)`-scaled for lon, `0.3048` ft-to-m) exactly. `buildPermalinkParams()` writes `pad=<lat>,<lon>` only when the pad has actually moved; read side converts back to ft and applies through the existing `setPadOffsetClamped()`, so a hand-edited or stale URL still respects `MAX_PAD_MOVE_FT` the same as a live drag.
+- Verified round-trip with Playwright: a 150ft E / 80ft S drag produces `pad=30.613709,-97.495977` in the URL; loading that URL back resolves to `{x: 149.93, y: -79.98}` ft (float round-trip, not exact 150/-80 -- expected). A pad param corresponding to a 1-degree-lat offset (~365,000 ft) correctly clamps to the site's `MAX_PAD_MOVE_FT` (2000ft) on load, same cap manual dragging respects. Resetting the pad to `{0,0}` removes the `pad` param from the URL rather than leaving a stale `0,0`.
+
+**Rain and thermometer icons added to the two timeline headers**
+- `renderRainTimeline()`/`renderTempTimeline()` titles changed to "🌧️ Rain forecast" / "🌡️ Temperature forecast" -- purely cosmetic, no behavior change. Confirmed both render via Playwright's DOM text content (`document.querySelector('.rain-timeline').textContent`); the icons show as placeholder boxes in this session's headless Linux test browser specifically because that environment has no color-emoji font installed, not an app bug -- real browsers on Windows/Mac/mobile/most Linux desktops render these normally.
+
 ## 2026-07-31
 
 **Permalink audit: three real gaps closed (model pin, temperature mode, cloud altitude-expand)**

@@ -302,6 +302,12 @@ let deployExplicitlyChosen = URL_PARAMS.has('deploy');
 // URL once the slider's actually been touched (initFromData()'s own read of
 // this flag) or arrived via a link that already had ?boost= on it.
 let boostAngleExplicitlyChosen = URL_PARAMS.has('boost');
+// pad needs DATA.site_lat/site_lon (to convert the URL's GPS coordinate
+// back to a ft offset) which isn't available until initFromData() runs, so
+// unlike the flags above this can't just be read into a plain boolean here
+// -- applied once, gated by this same sentinel, right where MAX_PAD_MOVE_FT
+// is set (see initFromData()).
+let padUrlApplied = false;
 
 function freshState() {
   const base = {
@@ -737,6 +743,32 @@ function setPadOffsetClamped(newX, newY) {
   } else {
     padOffsetFt = { x: newX, y: newY };
   }
+}
+
+// ft offset <-> real GPS, for the permalink's `pad` param -- same flat-earth
+// approximation splash_zones.py's own ft_to_px() uses server-side (not a
+// full geodesic, but consistent with how this app already treats the local
+// area, e.g. ft_to_px_scale). Encoding the drag as a GPS coordinate rather
+// than the raw ft offset means an old shared link still points at the same
+// real ground spot even if this site's own surveyed lat/lon is corrected
+// later (DATA.site_lat/site_lon is always read fresh at load time, so the
+// offset re-resolves against whatever the CURRENT default is).
+const M_PER_DEG_LAT = 111320;
+function padFtToLatLon(x_ft, y_ft) {
+  const mPerDegLon = M_PER_DEG_LAT * Math.cos(DATA.site_lat * Math.PI / 180);
+  const ftToM = 0.3048;
+  return {
+    lat: DATA.site_lat + (y_ft * ftToM) / M_PER_DEG_LAT,
+    lon: DATA.site_lon + (x_ft * ftToM) / mPerDegLon,
+  };
+}
+function padLatLonToFt(lat, lon) {
+  const mPerDegLon = M_PER_DEG_LAT * Math.cos(DATA.site_lat * Math.PI / 180);
+  const ftToM = 0.3048;
+  return {
+    x: ((lon - DATA.site_lon) * mPerDegLon) / ftToM,
+    y: ((lat - DATA.site_lat) * M_PER_DEG_LAT) / ftToM,
+  };
 }
 
 // See padOffsetBeforeRealFlightSnap's own declaration -- called on a normal
@@ -1342,7 +1374,7 @@ function renderRainTimeline() {
 
   const title = document.createElement('div');
   title.className = 'rain-timeline-title';
-  title.textContent = 'Rain forecast';
+  title.textContent = '🌧️ Rain forecast';
   container.appendChild(title);
 
   const row = document.createElement('div');
@@ -1479,7 +1511,7 @@ function renderTempTimeline() {
   head.className = 'temp-head';
   const title = document.createElement('div');
   title.className = 'temp-timeline-title';
-  title.textContent = 'Temperature forecast';
+  title.textContent = '🌡️ Temperature forecast';
   head.appendChild(title);
   // Radio-style pair (same .toggle-btns visual language as TIME/View/
   // Deploy in the controls bar, scaled down for this header) -- both
@@ -2505,6 +2537,10 @@ function buildPermalinkParams(includeDate) {
   if (state.pinnedModel) p.set('model', state.pinnedModel);
   if (!tempShowApparent) p.set('temp', 'actual');
   if (cloudAltitudesExpanded) p.set('clouds', 'all');
+  if (padOffsetFt.x !== 0 || padOffsetFt.y !== 0) {
+    const { lat, lon } = padFtToLatLon(padOffsetFt.x, padOffsetFt.y);
+    p.set('pad', `${lat.toFixed(6)},${lon.toFixed(6)}`);
+  }
   // Altitude is a URL param on every view -- just under a different state
   // field/param name depending which one that view actually uses: byAltitude's
   // pin/isolate selection (pinnedAlt) via `alt`, or the "which altitude to
@@ -2682,6 +2718,18 @@ function initFromData() {
   // Every load, not just first -- see MAX_PAD_MOVE_FT's own declaration.
   MAX_PAD_MOVE_FT = DATA.max_pad_move_ft ?? 2000;
   padHint.textContent = `Drag the crosshair on the map to try a nearby setup spot (capped at ${MAX_PAD_MOVE_FT.toLocaleString()} ft from the surveyed point -- everything shifts with it).`;
+  if (!padUrlApplied) {
+    padUrlApplied = true;
+    const urlPad = URL_PARAMS.get('pad');
+    if (urlPad && DATA.site_lat !== undefined) {
+      const [latStr, lonStr] = urlPad.split(',');
+      const lat = Number(latStr), lon = Number(lonStr);
+      if (!Number.isNaN(lat) && !Number.isNaN(lon)) {
+        const { x, y } = padLatLonToFt(lat, lon);
+        setPadOffsetClamped(x, y); // same cap manual dragging respects -- a hand-edited URL could carry anything
+      }
+    }
+  }
 
   buildToggle('mode-toggle', ['byAltitude', 'byTime', 'byHistory'], MODE_LABELS, 'mode', () => setMode(state.mode));
   buildToggle('hour-toggle', DATA.hours, HOUR_LABELS, 'hour', () => { hourExplicitlyChosen = true; });

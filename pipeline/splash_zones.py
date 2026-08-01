@@ -360,6 +360,15 @@ def build_zone_data(pts: pd.DataFrame, site_meta: dict, site_id: str) -> dict:
         "ft_to_px_scale": {"x": round(px_per_ft_x, 6), "y": round(px_per_ft_y, 6)},
         "boost_angle_deg": config.BOOST_ANGLE_OFF_VERTICAL_DEG,
         "max_pad_move_ft": config.SITES[site_id]["max_pad_move_ft"],
+        # Published so the viewer can round-trip a dragged pad position as a
+        # real GPS coordinate (permalink's `pad` param) instead of a raw ft
+        # offset -- an offset alone breaks silently if this site's own
+        # surveyed lat/lon is ever corrected later (has happened more than
+        # once in this project's history), since the same offset would then
+        # describe a different real spot. A GPS coordinate re-resolves
+        # against whatever the CURRENT site_lat/site_lon is at load time,
+        # so an old shared link still points at the same real ground spot.
+        "site_lat": site_lat, "site_lon": site_lon,
         "data": {},
     }
 
