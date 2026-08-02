@@ -22,7 +22,7 @@ import json
 import math
 import os
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import pandas as pd
@@ -444,7 +444,8 @@ def analyze(site_id: str, target_date: date, samples: list[FlightSample], ground
 
 def analyze_no_gps(site_id: str, target_date: date, samples: list[FlightSample],
                     rail_lat: float, rail_lon: float, landing_lat: float, landing_lon: float,
-                    wind_hour_a: int = 11, wind_hour_b: int = 13, altitude_bucket: int | None = None) -> dict:
+                    wind_hour_a: int = 11, wind_hour_b: int = 13, altitude_bucket: int | None = None,
+                    landing_note: str = "Hand-recorded GPS pin at the recovery site (this altimeter has no onboard GPS) -- not extrapolated from a track.") -> dict:
     """Same reusable core as analyze() -- segmentation, ground-referenced
     descent-rate derivation, wind-time blending, re-simulation, scoring --
     for altimeters with no GPS at all (e.g. a BlueRaven; see
@@ -452,9 +453,15 @@ def analyze_no_gps(site_id: str, target_date: date, samples: list[FlightSample],
     only -- lat/lon are unused placeholders, since find_apogee_index()/
     find_liftoff_index()/find_main_deploy_index()/implied_ground_rate()/
     check_density_scaling() only ever touch .t/.agl_ft. Real launch-rail and
-    landing positions come from hand-recorded GPS pins passed in directly
+    landing positions are usually hand-recorded GPS pins passed in directly
     (a phone/handheld reading at the pad and at the recovery site), since
-    there's no track to derive them from.
+    there's normally no track to derive them from -- but not always: see
+    load_fluctus_fbb(), where rail_lat/rail_lon/landing_lat/landing_lon are
+    instead the tracker's own real fixes from confirmed-clean moments (that
+    altimeter has GPS, just not a trustworthy one at apogee specifically).
+    `landing_note` defaults to the hand-pin phrasing but should be overridden
+    for a case like that one, where it'd otherwise misdescribe real device
+    GPS as a hand-recorded pin.
 
     Without a real apogee GPS fix, boost-phase drift can't be *measured* --
     it's *estimated* here, by assuming the wind-only descent simulation
@@ -583,7 +590,7 @@ def analyze_no_gps(site_id: str, target_date: date, samples: list[FlightSample],
         "landing": {
             "lat": round(landing_lat, 6), "lon": round(landing_lon, 6),
             "offset_from_pad_ft": {"x": round(real_x_ft, 1), "y": round(real_y_ft, 1), "dist": round(real_dist_ft, 1)},
-            "note": "Hand-recorded GPS pin at the recovery site (this altimeter has no onboard GPS) -- not extrapolated from a track.",
+            "note": landing_note,
         },
         # Estimated apogee + descent sim -- lands exactly on the real
         # landing point by construction. See the docstring above.
@@ -748,6 +755,119 @@ def load_blueraven_lr_csv(path: str) -> list[FlightSample]:
     return samples[::step]
 
 
+def load_fluctus_fbb(path: str, launch_time_local: str, target_date: date) -> tuple[list[FlightSample], float, float, float, float, float]:
+    """A Fluctus Blackbox (.fbb) export, parsed directly -- NOT the companion
+    CSV export some Fluctus devices also produce. Confirmed on the first real
+    flight run through this that the CSV silently *backward*-fills its own
+    first ~28 samples' GPS columns with the flight's first genuinely real fix
+    (which itself lands 40ms before liftoff, not at power-on) instead of
+    leaving them honestly blank -- reading the source file sidesteps that,
+    and the raw file already uses plain `.` decimals (no locale reformatting
+    to undo either).
+
+    Format: `version|counter|export_timestamp|<colon-separated header>|<preamble>|<records>`.
+    <records> is a `!`-delimited sequence of the same colon-separated columns
+    as the header, sparse-encoded: an empty field means "unchanged since the
+    last sample," observed here only on gpsLat/gpsLng (they update off the
+    GPS receiver's own fix rate, asynchronous to the ~50Hz IMU/baro sample
+    clock everything else runs on). A handful of records carry a
+    firmware-tagged event name in place of a bare timestamp, e.g.
+    `#Launch#892996` -- used directly for liftoff/touchdown below rather than
+    re-derived by threshold, since they're a more authoritative primary
+    source than post-hoc inference. `export_timestamp` (top of the file)
+    looks like it should anchor the ms clock to a real wall-clock time, but
+    doesn't -- confirmed wrong against this same flight (flier reported done
+    flying by 4pm; the header read 16:11), almost certainly this file's
+    download/export time rather than the flight's. `launch_time_local`
+    ("HH:MM" or "HH:MM:SS", real reported liftoff time) is what actually
+    anchors it instead.
+
+    baro-altitude (m) is already zeroed to the pad at power-up, same
+    convention as every other loader here.
+
+    Returns (samples, ground_agl_baseline, rail_lat, rail_lon, landing_lat,
+    landing_lon) -- feeds analyze_no_gps(), not analyze(): this altimeter's
+    ascent-phase GPS never got a real 3D lock at all (gpsAltMSL sits frozen
+    at ground level through the entire climb even as baro passes 2600m), and
+    there's a genuine ~33s dropout spanning apogee and drogue deploy, so
+    treating any position from that stretch as "measured" would overstate
+    this data's real quality -- same reasoning load_blueraven_lr_csv() uses,
+    just because of a real gap rather than a device with no GPS at all.
+    rail_lat/rail_lon and landing_lat/landing_lon are NOT hand-recorded pins
+    the way they are for a true no-GPS altimeter, though -- they're this
+    file's own real fixes, taken only from confirmed-clean moments: the last
+    fix before the device's own tagged Launch (10 sats, still on the pad,
+    40ms before liftoff) and the real fix closest to the device's own tagged
+    Touchdown (10 sats, matching baro's own return to ~ground level).
+    samples[].lat/.lon are 0.0 placeholders, same as load_blueraven_lr_csv()
+    -- analyze_no_gps() never reads them.
+
+    Decimated to ~1 sample/sec, same reasoning as load_blueraven_lr_csv():
+    find_main_deploy_index()'s windowing is tuned against roughly-1Hz data.
+    Doesn't rely on the P1/P2 pyro-channel fire events (confirmed separately
+    to read 23.43s/138.53s past Launch, matching the auto-detected apogee and
+    a clean regime change in the decimated baro profile) -- kept as an
+    independent cross-check against find_main_deploy_index()'s own detection
+    rather than fed in directly, so a real disagreement between "pyro fired"
+    and "descent rate changed" wouldn't silently go unnoticed.
+    """
+    import re
+
+    with open(path, encoding="utf-8", errors="replace") as f:
+        content = f.read()
+    _version, _counter, _export_timestamp, header_line, rest = content.split("|", 4)
+    columns = header_line.split(":")
+    raw_records = rest[rest.index("!"):].split("!")[1:]
+
+    lat_i, lng_i = columns.index("gpsLat"), columns.index("gpsLng")
+    baro_i = columns.index("baro-altitude (m)")
+
+    records = []
+    tags = {}
+    for raw in raw_records:
+        if raw.startswith("#BBox end"):
+            break
+        fields = raw.split(":")
+        tfield = fields[0]
+        if tfield.startswith("#"):
+            m = re.match(r"#(.*)#(\d+)", tfield)
+            t_ms = int(m.group(2))
+            tags[m.group(1)] = len(records)
+        else:
+            t_ms = int(tfield)
+        records.append(dict(
+            t_ms=t_ms, baro_m=float(fields[baro_i]),
+            lat=float(fields[lat_i]) if fields[lat_i] else None,
+            lng=float(fields[lng_i]) if fields[lng_i] else None,
+        ))
+
+    launch_idx, touchdown_idx = tags["Launch"], tags["Touchdown"]
+    launch_t_ms = records[launch_idx]["t_ms"]
+    touchdown_t_ms = records[touchdown_idx]["t_ms"]
+
+    rail_fix = next(r for r in reversed(records[:launch_idx]) if r["lat"] is not None)
+    landing_fix = min((r for r in records if r["lat"] is not None), key=lambda r: abs(r["t_ms"] - touchdown_t_ms))
+
+    ground_agl_baseline = sum(r["baro_m"] for r in records[:launch_idx]) / launch_idx * 3.28084
+
+    launch_dt = datetime.strptime(launch_time_local, "%H:%M:%S" if launch_time_local.count(":") == 2 else "%H:%M")
+    anchor = datetime.combine(target_date, launch_dt.time())
+
+    samples = [
+        FlightSample(
+            t=anchor + timedelta(seconds=(r["t_ms"] - launch_t_ms) / 1000.0),
+            agl_ft=r["baro_m"] * 3.28084,
+            lat=0.0, lon=0.0,
+        )
+        for r in records
+    ]
+    sample_interval_s = (samples[1].t - samples[0].t).total_seconds()
+    step = max(1, round(1.0 / sample_interval_s))
+    samples = samples[::step]
+
+    return samples, ground_agl_baseline, rail_fix["lat"], rail_fix["lng"], landing_fix["lat"], landing_fix["lng"]
+
+
 if __name__ == "__main__":
     import argparse
 
@@ -785,6 +905,14 @@ if __name__ == "__main__":
     p_aim.add_argument("--label", default=None, help="distinguishes multiple same-day flights in the output filename, e.g. a motor designation like J270")
     p_aim.add_argument("--out", default=None)
 
+    p_fluctus = sub.add_parser("fluctus", help="Fluctus Blackbox (.fbb) export -- barometer-only reconstruction (this altimeter's ascent-phase GPS never gets a real 3D lock); rail/landing GPS come from the file's own real fixes near its Launch/Touchdown tags, not hand pins")
+    p_fluctus.add_argument("fbb_path")
+    p_fluctus.add_argument("--site", required=True, choices=list(config.SITES))
+    p_fluctus.add_argument("--date", required=True, type=date.fromisoformat)
+    p_fluctus.add_argument("--launch-time-local", required=True, help="HH:MM or HH:MM:SS -- real reported liftoff time; the .fbb header's own timestamp is unreliable (confirmed wrong against this pipeline's first real flight)")
+    p_fluctus.add_argument("--label", default=None, help="distinguishes multiple same-day flights in the output filename, e.g. a motor designation like J270")
+    p_fluctus.add_argument("--out", default=None)
+
     args = parser.parse_args()
 
     out_path = out_path_for(args.site, args.date, args.out, getattr(args, "label", None))
@@ -805,7 +933,7 @@ if __name__ == "__main__":
         print(f"apogee {summary['apogee']['altitude_agl_ft']}ft, "
               f"landing {summary['landing']['offset_from_pad_ft']['dist']}ft from pad, "
               f"boost-adjusted error {headline['ft']}ft ({headline['pct_of_descent_drift']}% of actual descent drift)")
-    else:
+    elif args.tracker == "blueraven":
         samples = load_blueraven_lr_csv(args.lr_csv_path)
         summary = analyze_no_gps(args.site, args.date, samples, args.rail_lat, args.rail_lon, args.landing_lat, args.landing_lon)
         write_summary(out_path, summary)
@@ -816,4 +944,18 @@ if __name__ == "__main__":
               f"(estimated apogee offset {apogee['offset_from_pad_ft']['dist']}ft -- no GPS on this flight, "
               f"see apogee.position_estimation_note; no self-simulated accuracy figure, "
               f"see delta_from_predictions -- only the T-0 model-forecast comparisons are independent scoring here)")
+    else:
+        samples, ground_baseline, rail_lat, rail_lon, landing_lat, landing_lon = load_fluctus_fbb(args.fbb_path, args.launch_time_local, args.date)
+        summary = analyze_no_gps(args.site, args.date, samples, rail_lat, rail_lon, landing_lat, landing_lon,
+                                  landing_note="This altimeter's own real GPS fix closest to its firmware-tagged Touchdown event "
+                                               "(10 satellites, matching the barometer's own return to ~ground level) -- not a hand-recorded pin.")
+        write_summary(out_path, summary)
+        apogee = summary["apogee"]
+        print(f"apogee {summary['apogee']['altitude_agl_ft']}ft, "
+              f"landing {summary['landing']['offset_from_pad_ft']['dist']}ft from pad, "
+              f"estimated boost angle {apogee['boost_angle_from_vertical_deg']} deg off vertical "
+              f"(estimated apogee offset {apogee['offset_from_pad_ft']['dist']}ft -- ascent-phase GPS on this "
+              f"altimeter never got a real 3D lock, see apogee.position_estimation_note; no self-simulated "
+              f"accuracy figure, see delta_from_predictions -- only the T-0 model-forecast comparisons are "
+              f"independent scoring here)")
     print(f"-> {out_path}")

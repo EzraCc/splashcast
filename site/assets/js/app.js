@@ -1696,7 +1696,7 @@ function realFlightBoxHTML() {
   // landing star sits right on top of the real-landing marker (not a bug --
   // predicted landing is estimated apogee + descent sim, solved to match).
   const apogeeNote = rf.apogee.position_source && rf.apogee.position_source !== 'gps_measured'
-    ? `<div class="rf-note">No GPS on this flight -- apogee position (and the launch-angle direction) is calculated from wind models for this time of day, not measured. The predicted-landing star is that same estimate re-simulated, so it matches the real landing by construction -- a self-consistency check, not an independent prediction.</div>`
+    ? `<div class="rf-note">No usable GPS fix at apogee on this flight -- apogee position (and the launch-angle direction) is calculated from wind models for this time of day, not measured. The predicted-landing star is that same estimate re-simulated, so it matches the real landing by construction -- a self-consistency check, not an independent prediction.</div>`
     : '';
   return `
     <div class="rf-title">Real flight</div>
