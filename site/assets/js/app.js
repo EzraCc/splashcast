@@ -2093,6 +2093,15 @@ function updateActiveRealFlightOverlay() {
   const [predPx, predPy] = ftToPxAbsolute(predOffset.x, predOffset.y);
   predictedLandingStarEl = drawMarker(svg, 'star', predPx, predPy, 13, PREDICTED_LANDING_COLOR, PREDICTED_LANDING_STROKE);
   predictedLandingStarEl.style.display = 'none';
+  // Not interactive, same as apogeeMarkerEl/launchRailEl below -- matters
+  // more here than for those two: for a no-GPS-style flight (analyze_no_gps())
+  // this sits at the *exact same point* as the real landing marker beneath
+  // it (predicted landing = estimated apogee + descent sim, solved to match
+  // the real one), so without this the star's opaque fill silently eats
+  // clicks meant for that marker, leaving only a thin sliver of its ring
+  // clickable through the star's points -- confirmed directly: a real click
+  // dead-center on the landing marker didn't pin it until this was added.
+  predictedLandingStarEl.style.pointerEvents = 'none';
 
   // This flight's own apogee -- real if apogee.position_source is
   // 'gps_measured', otherwise estimated (see analyze_no_gps() and the info
