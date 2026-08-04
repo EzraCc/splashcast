@@ -604,6 +604,145 @@ def analyze_no_gps(site_id: str, target_date: date, samples: list[FlightSample],
 
 # --- Tracker-specific loaders (expect more of these / replacements later) ---
 
+def analyze_partial_gps(site_id: str, target_date: date, samples: list[FlightSample],
+                         rail_lat: float, rail_lon: float, landing_lat: float, landing_lon: float,
+                         anchor_t: datetime, anchor_agl_ft: float, anchor_lat: float, anchor_lon: float,
+                         wind_hour_a: int = 11, wind_hour_b: int = 13, altitude_bucket: int | None = None,
+                         landing_note: str = "Real GPS fix.") -> dict:
+    """Same reusable core as analyze()/analyze_no_gps() -- for an altimeter with SOME real GPS
+    during descent, just not at apogee itself (see load_fluctus_fbb(): this altimeter's
+    ascent-phase GPS never gets a real 3D lock, and a real gap happens to bracket apogee/
+    drogue-deploy too, but tracking resumes partway down the drogue descent).
+
+    Unlike analyze_no_gps() (zero GPS anywhere, so apogee must be backsolved from the real
+    *landing* point -- the only real position available, hundreds of seconds and possibly
+    several more gaps away), this backsolves apogee from `anchor_*` instead: a real GPS fix
+    taken partway down the drogue descent, above main-deploy altitude. Shorter, more locally-
+    accurate extrapolation -- fewer altitude bands of wind-shear assumption to bridge -- and
+    it means predicted_landing_offset_from_pad_ft is no longer tautological the way it is for
+    analyze_no_gps(): apogee's position here is solved to match the anchor, not the landing
+    point, so predicting forward from apogee all the way to the ground is a genuine, testable
+    prediction rather than landing exactly on the real point by construction. That's why this
+    DOES publish a self_simulated_boost_adjusted accuracy figure, same as the full-GPS analyze()
+    path -- analyze_no_gps() deliberately doesn't, for the opposite reason.
+
+    anchor_t/anchor_agl_ft must be above main-deploy altitude (still within the drogue phase) --
+    the partial simulation below only ever applies the drogue rate."""
+    site = config.SITES[site_id]
+    site_elev_ft = config.elev_ft_for_site(site_id)
+    pad_lat, pad_lon = site["lat"], site["lon"]
+
+    apogee_idx = find_apogee_index(samples)
+    apogee = samples[apogee_idx]
+    liftoff = samples[find_liftoff_index(samples, 0.0, apogee_idx)]
+    main_deploy_idx = find_main_deploy_index(samples, apogee_idx)
+    if main_deploy_idx is None:
+        raise ValueError("couldn't find a main-deploy changepoint -- inspect the flight data manually")
+    main_deploy = samples[main_deploy_idx]
+    if anchor_agl_ft <= main_deploy.agl_ft:
+        raise ValueError(f"apogee_anchor ({anchor_agl_ft}ft) must be above main-deploy altitude ({main_deploy.agl_ft}ft) -- it's meant to sit in the drogue phase")
+
+    rail_x_ft, rail_y_ft = latlon_to_ft(rail_lat, rail_lon, pad_lat, pad_lon)
+    rail_dist_ft = math.hypot(rail_x_ft, rail_y_ft)
+    real_x_ft, real_y_ft = latlon_to_ft(landing_lat, landing_lon, pad_lat, pad_lon)
+    real_dist_ft = math.hypot(real_x_ft, real_y_ft)
+    anchor_x_ft, anchor_y_ft = latlon_to_ft(anchor_lat, anchor_lon, pad_lat, pad_lon)
+
+    drogue_segment = samples[apogee_idx:main_deploy_idx + 1]
+    drogue_rate, dg_lo, dg_hi = implied_ground_rate(drogue_segment, site_elev_ft)
+    main_rate, mg_lo, mg_hi = implied_ground_rate(samples[main_deploy_idx:], site_elev_ft)
+    density_scaling_check = check_density_scaling(drogue_segment, main_deploy.agl_ft, site_elev_ft)
+
+    # Real wind profile, blended between the two bracketing HRRR-analysis
+    # hours to the real apogee time -- same as analyze()/analyze_no_gps().
+    raw_path = Path(config.DATA_DIR) / site_id / "raw" / f"{target_date}_actual.parquet"
+    raw = pd.read_parquet(raw_path)
+    hdt_a = sz.datetime.combine(target_date, sz.dtime(wind_hour_a, 0), tzinfo=sz._SITE_TZ).astimezone(sz.timezone.utc).replace(tzinfo=None)
+    hdt_b = sz.datetime.combine(target_date, sz.dtime(wind_hour_b, 0), tzinfo=sz._SITE_TZ).astimezone(sz.timezone.utc).replace(tzinfo=None)
+    profile_a = sz.build_actual_profile(raw[raw["valid_time"] == hdt_a], site_elev_ft)
+    profile_b = sz.build_actual_profile(raw[raw["valid_time"] == hdt_b], site_elev_ft)
+    span_s = (datetime.combine(date.min, sz.dtime(wind_hour_b, 0)) - datetime.combine(date.min, sz.dtime(wind_hour_a, 0))).total_seconds()
+    launch_offset_s = (apogee.t - datetime.combine(apogee.t.date(), sz.dtime(wind_hour_a, 0))).total_seconds()
+    weight_b = max(0.0, min(1.0, launch_offset_s / span_s))
+    blended_profile = blend_wind_profiles(profile_a, profile_b, weight_b)
+
+    # Apogee position: backsolved from the anchor (partial sim, apogee down
+    # to the anchor's altitude only, drogue rate) -- not from the landing
+    # point. See docstring for why this is preferred when an anchor exists.
+    anchor_sim_x, anchor_sim_y = sz.simulate(blended_profile, apogee.agl_ft, [(drogue_rate, apogee.agl_ft, anchor_agl_ft)], site_elev_ft)
+    est_x, est_y = float(anchor_x_ft - anchor_sim_x), float(anchor_y_ft - anchor_sim_y)
+    est_dist_ft = math.hypot(est_x, est_y)
+    estimated_boost_angle_deg = math.degrees(math.atan2(est_dist_ft, apogee.agl_ft))
+
+    # Full descent sim (apogee all the way to the ground) from that SAME
+    # estimated apogee -- a genuine prediction now, not solved to match
+    # anything at the ground. Scored against the real landing point below.
+    phases = [(drogue_rate, apogee.agl_ft, main_deploy.agl_ft), (main_rate, main_deploy.agl_ft, 0)]
+    sim_x, sim_y = sz.simulate(blended_profile, apogee.agl_ft, phases, site_elev_ft)
+    pred_x, pred_y = float(est_x + sim_x), float(est_y + sim_y)
+
+    # Denominator for the accuracy delta below: how far the wind actually
+    # carried the rocket from (estimated) apogee to the real landing --
+    # same framing analyze()'s own descent_drift_dist_ft uses, just against
+    # an estimated apogee instead of a measured one.
+    descent_drift_dist_ft = math.hypot(real_x_ft - est_x, real_y_ft - est_y)
+    boost_adjusted_delta = _delta(pred_x, pred_y, real_x_ft, real_y_ft, descent_drift_dist_ft, pct_key="pct_of_descent_drift")
+
+    if altitude_bucket is None:
+        altitudes = config.altitudes_for_site(site_id)
+        altitude_bucket = min(altitudes, key=lambda a: abs(a - apogee.agl_ft))
+    comparison = compare_to_pipeline(site_id, target_date, real_x_ft, real_y_ft, real_dist_ft, altitude_bucket, (wind_hour_a, wind_hour_b))
+    closest_hour = wind_hour_a if weight_b < 0.5 else wind_hour_b
+
+    return {
+        "site_id": site_id,
+        "target_date": str(target_date),
+        "deploy": "dual",
+        "closest_hour": closest_hour,
+        "launch": {
+            "time_local": liftoff.t.strftime("%H:%M:%S.%f")[:-3],
+            "offset_from_pad_ft": {"x": round(rail_x_ft, 1), "y": round(rail_y_ft, 1), "dist": round(rail_dist_ft, 1)},
+        },
+        "apogee": {
+            "time_local": apogee.t.strftime("%H:%M:%S.%f")[:-3],
+            "altitude_agl_ft": round(apogee.agl_ft, 1),
+            "offset_from_pad_ft": {"x": round(est_x, 1), "y": round(est_y, 1), "dist": round(est_dist_ft, 1)},
+            "boost_angle_from_vertical_deg": round(estimated_boost_angle_deg, 2),
+            "configured_boost_angle_deg": config.BOOST_ANGLE_OFF_VERTICAL_DEG,
+            "position_source": "estimated_from_descent_anchor_and_wind_model",
+            "position_estimation_note": (
+                "No usable GPS fix at apogee on this flight -- this position is *inferred*, not measured: it "
+                f"assumes the descent-only wind simulation (real derived drogue rate + the real wind profile "
+                f"for this flight's actual time of day) is accurate from apogee down to {anchor_agl_ft:.0f}ft AGL "
+                f"({anchor_t.strftime('%H:%M:%S')}), then backs the boost-phase offset out of the difference "
+                "between that simulation and a real GPS fix at that altitude -- not the real landing point, which "
+                "is farther away (in both time and additional GPS gaps) and would need a longer, less locally-"
+                "accurate extrapolation to bridge. Because apogee isn't solved to match the landing point here, "
+                "predicted_landing_offset_from_pad_ft is a genuine independent prediction, scored below "
+                "(self_simulated_boost_adjusted) -- unlike analyze_no_gps(), where it's a tautology by construction."
+            ),
+        },
+        "main_deploy": {"time_local": main_deploy.t.strftime("%H:%M:%S.%f")[:-3], "altitude_agl_ft": round(main_deploy.agl_ft, 1)},
+        "descent_rates_ground_equivalent_fps": {
+            "drogue": {"mean": round(drogue_rate, 1), "range": [round(dg_lo, 1), round(dg_hi, 1)]},
+            "main": {"mean": round(main_rate, 1), "range": [round(mg_lo, 1), round(mg_hi, 1)]},
+            "configured_dual_deploy_fps": config.DUAL_DEPLOY_RATES_FPS,
+        },
+        "density_scaling_check": density_scaling_check,
+        "landing": {
+            "lat": round(landing_lat, 6), "lon": round(landing_lon, 6),
+            "offset_from_pad_ft": {"x": round(real_x_ft, 1), "y": round(real_y_ft, 1), "dist": round(real_dist_ft, 1)},
+            "note": landing_note,
+        },
+        "predicted_landing_offset_from_pad_ft": {"x": round(pred_x, 1), "y": round(pred_y, 1)},
+        "delta_from_predictions": {
+            "self_simulated_boost_adjusted": boost_adjusted_delta,
+            "altitude_bucket_used_ft": altitude_bucket,
+            **comparison,
+        },
+    }
+
+
 def load_aim_xtra_csv(path: str) -> tuple[list[FlightSample], float]:
     """An AIM XTRA altimeter's simplified 20Hz CSV export (clock/time/lat/lon/
     alt (m)/altitude AGL (ft)/vertical speed (ft/min)/speed (m/s)/g force/
@@ -755,7 +894,7 @@ def load_blueraven_lr_csv(path: str) -> list[FlightSample]:
     return samples[::step]
 
 
-def load_fluctus_fbb(path: str, launch_time_local: str, target_date: date) -> tuple[list[FlightSample], float, float, float, float, float]:
+def load_fluctus_fbb(path: str, launch_time_local: str, target_date: date) -> tuple[list[FlightSample], float, float, float, float, float, datetime, float, float, float]:
     """A Fluctus Blackbox (.fbb) export, parsed directly -- NOT the companion
     CSV export some Fluctus devices also produce. Confirmed on the first real
     flight run through this that the CSV silently *backward*-fills its own
@@ -786,21 +925,34 @@ def load_fluctus_fbb(path: str, launch_time_local: str, target_date: date) -> tu
     convention as every other loader here.
 
     Returns (samples, ground_agl_baseline, rail_lat, rail_lon, landing_lat,
-    landing_lon) -- feeds analyze_no_gps(), not analyze(): this altimeter's
-    ascent-phase GPS never got a real 3D lock at all (gpsAltMSL sits frozen
-    at ground level through the entire climb even as baro passes 2600m), and
-    there's a genuine ~33s dropout spanning apogee and drogue deploy, so
-    treating any position from that stretch as "measured" would overstate
-    this data's real quality -- same reasoning load_blueraven_lr_csv() uses,
-    just because of a real gap rather than a device with no GPS at all.
-    rail_lat/rail_lon and landing_lat/landing_lon are NOT hand-recorded pins
-    the way they are for a true no-GPS altimeter, though -- they're this
-    file's own real fixes, taken only from confirmed-clean moments: the last
-    fix before the device's own tagged Launch (10 sats, still on the pad,
-    40ms before liftoff) and the real fix closest to the device's own tagged
-    Touchdown (10 sats, matching baro's own return to ~ground level).
+    landing_lon, anchor_t, anchor_agl_ft, anchor_lat, anchor_lon) -- feeds
+    analyze_partial_gps(), not analyze() or analyze_no_gps(): this
+    altimeter's ascent-phase GPS never got a real 3D lock at all (gpsAltMSL
+    sits frozen at ground level through the entire climb even as baro passes
+    2600m), and there's a genuine ~36s dropout spanning apogee and drogue
+    deploy, so treating any position from that stretch (or extrapolating it
+    from the far-away landing point) as reliable would overstate this data's
+    real quality -- but unlike a true no-GPS altimeter (load_blueraven_lr_csv()),
+    tracking DOES resume partway down the drogue descent, which
+    analyze_partial_gps() can anchor to directly instead. rail_lat/rail_lon
+    and landing_lat/landing_lon are NOT hand-recorded pins the way they are
+    for a true no-GPS altimeter, though -- they're this file's own real
+    fixes, taken only from confirmed-clean moments: the last fix before the
+    device's own tagged Launch (10 sats, still on the pad, 40ms before
+    liftoff) and the real fix closest to the device's own tagged Touchdown
+    (10 sats, matching baro's own return to ~ground level).
+
+    anchor_t/anchor_agl_ft/anchor_lat/anchor_lon: the first fix after the
+    apogee-area blackout where GPS altitude has actually caught up with the
+    barometer (within 100m), not just present -- tracking resumes with 11
+    satellites well before that, but altitude reads thousands of feet off
+    for the next several fixes while the receiver's fused solution is still
+    settling, and treating one of those as "signal reacquired" would anchor
+    the wind-model backsolve to a fix that isn't really trustworthy yet.
+
     samples[].lat/.lon are 0.0 placeholders, same as load_blueraven_lr_csv()
-    -- analyze_no_gps() never reads them.
+    -- analyze_partial_gps() never reads them (real positions come from the
+    four lat/lon values above and the anchor).
 
     Decimated to ~1 sample/sec, same reasoning as load_blueraven_lr_csv():
     find_main_deploy_index()'s windowing is tuned against roughly-1Hz data.
@@ -821,6 +973,7 @@ def load_fluctus_fbb(path: str, launch_time_local: str, target_date: date) -> tu
 
     lat_i, lng_i = columns.index("gpsLat"), columns.index("gpsLng")
     baro_i = columns.index("baro-altitude (m)")
+    altmsl_i = columns.index("gpsAltMSL")
 
     records = []
     tags = {}
@@ -839,6 +992,7 @@ def load_fluctus_fbb(path: str, launch_time_local: str, target_date: date) -> tu
             t_ms=t_ms, baro_m=float(fields[baro_i]),
             lat=float(fields[lat_i]) if fields[lat_i] else None,
             lng=float(fields[lng_i]) if fields[lng_i] else None,
+            altmsl=float(fields[altmsl_i]) if fields[altmsl_i] else None,
         ))
 
     launch_idx, touchdown_idx = tags["Launch"], tags["Touchdown"]
@@ -850,12 +1004,38 @@ def load_fluctus_fbb(path: str, launch_time_local: str, target_date: date) -> tu
 
     ground_agl_baseline = sum(r["baro_m"] for r in records[:launch_idx]) / launch_idx * 3.28084
 
+    # First fix after the apogee-area blackout where GPS altitude has
+    # actually caught up with the barometer (within 100m) -- see this
+    # function's own docstring for why "present" isn't the same as
+    # "trustworthy" here. Distinct real fixes only (records with the same
+    # lat/lon as their predecessor are forward-filled, not a new sample).
+    distinct_after_launch = []
+    prev_key = None
+    for r in records[launch_idx:]:
+        if r["lat"] is None:
+            continue
+        key = (r["lat"], r["lng"])
+        if key != prev_key:
+            distinct_after_launch.append(r)
+            prev_key = key
+    # Scanning from launch would false-positive during ascent: gpsAltMSL sits
+    # frozen near the pad's own ground elevation the whole climb (no real fix
+    # at all, not just a noisy one), and baro's climbing AGL value transiently
+    # passes within 100m of that frozen number purely by coincidence. Skip
+    # past the blackout itself (the biggest gap in the whole track) first, so
+    # the search only considers fixes after GPS has actually had a chance to
+    # reacquire.
+    biggest_gap_i = max(range(1, len(distinct_after_launch)),
+                         key=lambda i: distinct_after_launch[i]["t_ms"] - distinct_after_launch[i - 1]["t_ms"])
+    apogee_anchor_fix = next(r for r in distinct_after_launch[biggest_gap_i:]
+                              if r["altmsl"] is not None and abs(r["altmsl"] - r["baro_m"]) < 100)
+
     launch_dt = datetime.strptime(launch_time_local, "%H:%M:%S" if launch_time_local.count(":") == 2 else "%H:%M")
-    anchor = datetime.combine(target_date, launch_dt.time())
+    wall_clock_anchor = datetime.combine(target_date, launch_dt.time())
 
     samples = [
         FlightSample(
-            t=anchor + timedelta(seconds=(r["t_ms"] - launch_t_ms) / 1000.0),
+            t=wall_clock_anchor + timedelta(seconds=(r["t_ms"] - launch_t_ms) / 1000.0),
             agl_ft=r["baro_m"] * 3.28084,
             lat=0.0, lon=0.0,
         )
@@ -865,7 +1045,11 @@ def load_fluctus_fbb(path: str, launch_time_local: str, target_date: date) -> tu
     step = max(1, round(1.0 / sample_interval_s))
     samples = samples[::step]
 
-    return samples, ground_agl_baseline, rail_fix["lat"], rail_fix["lng"], landing_fix["lat"], landing_fix["lng"]
+    apogee_anchor_t = wall_clock_anchor + timedelta(seconds=(apogee_anchor_fix["t_ms"] - launch_t_ms) / 1000.0)
+    apogee_anchor_agl_ft = apogee_anchor_fix["baro_m"] * 3.28084
+
+    return (samples, ground_agl_baseline, rail_fix["lat"], rail_fix["lng"], landing_fix["lat"], landing_fix["lng"],
+            apogee_anchor_t, apogee_anchor_agl_ft, apogee_anchor_fix["lat"], apogee_anchor_fix["lng"])
 
 
 if __name__ == "__main__":
@@ -945,17 +1129,19 @@ if __name__ == "__main__":
               f"see apogee.position_estimation_note; no self-simulated accuracy figure, "
               f"see delta_from_predictions -- only the T-0 model-forecast comparisons are independent scoring here)")
     else:
-        samples, ground_baseline, rail_lat, rail_lon, landing_lat, landing_lon = load_fluctus_fbb(args.fbb_path, args.launch_time_local, args.date)
-        summary = analyze_no_gps(args.site, args.date, samples, rail_lat, rail_lon, landing_lat, landing_lon,
-                                  landing_note="This altimeter's own real GPS fix closest to its firmware-tagged Touchdown event "
-                                               "(10 satellites, matching the barometer's own return to ~ground level) -- not a hand-recorded pin.")
+        (samples, ground_baseline, rail_lat, rail_lon, landing_lat, landing_lon,
+         anchor_t, anchor_agl_ft, anchor_lat, anchor_lon) = load_fluctus_fbb(args.fbb_path, args.launch_time_local, args.date)
+        summary = analyze_partial_gps(args.site, args.date, samples, rail_lat, rail_lon, landing_lat, landing_lon,
+                                       anchor_t, anchor_agl_ft, anchor_lat, anchor_lon,
+                                       landing_note="This altimeter's own real GPS fix closest to its firmware-tagged Touchdown event "
+                                                    "(10 satellites, matching the barometer's own return to ~ground level) -- not a hand-recorded pin.")
         write_summary(out_path, summary)
         apogee = summary["apogee"]
+        headline = summary["delta_from_predictions"]["self_simulated_boost_adjusted"]
         print(f"apogee {summary['apogee']['altitude_agl_ft']}ft, "
               f"landing {summary['landing']['offset_from_pad_ft']['dist']}ft from pad, "
               f"estimated boost angle {apogee['boost_angle_from_vertical_deg']} deg off vertical "
-              f"(estimated apogee offset {apogee['offset_from_pad_ft']['dist']}ft -- ascent-phase GPS on this "
-              f"altimeter never got a real 3D lock, see apogee.position_estimation_note; no self-simulated "
-              f"accuracy figure, see delta_from_predictions -- only the T-0 model-forecast comparisons are "
-              f"independent scoring here)")
+              f"(estimated apogee offset {apogee['offset_from_pad_ft']['dist']}ft, backsolved from a real GPS fix "
+              f"partway down the drogue descent, not the far-away landing point -- see apogee.position_estimation_note; "
+              f"boost-adjusted error {headline['ft']}ft ({headline['pct_of_descent_drift']}% of actual descent drift))")
     print(f"-> {out_path}")

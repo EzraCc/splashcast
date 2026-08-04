@@ -15,14 +15,14 @@
     "time_local": "11:26:21.449",
     "altitude_agl_ft": 8625.3,
     "offset_from_pad_ft": {
-      "x": -226.4,
-      "y": 1625.1,
-      "dist": 1640.8
+      "x": -961.5,
+      "y": 1783.8,
+      "dist": 2026.4
     },
-    "boost_angle_from_vertical_deg": 10.77,
+    "boost_angle_from_vertical_deg": 13.22,
     "configured_boost_angle_deg": 10,
-    "position_source": "estimated_from_landing_and_wind_model",
-    "position_estimation_note": "No GPS on this altimeter -- this position is *inferred*, not measured: it assumes the descent-only wind simulation (real apogee altitude + real derived descent rates + the real wind profile for this flight's actual time of day) is accurate, then backs the boost-phase offset out of the difference between that simulation and the real recorded landing point. predicted_landing_offset_from_pad_ft is this same estimated apogee plus that same descent sim, so it lands exactly on the real landing point by construction -- a self-consistency check on the reconstructed flight, not an independent prediction (see delta_from_predictions, which has no self-simulated accuracy figure for this flight for the same reason)."
+    "position_source": "estimated_from_descent_anchor_and_wind_model",
+    "position_estimation_note": "No usable GPS fix at apogee on this flight -- this position is *inferred*, not measured: it assumes the descent-only wind simulation (real derived drogue rate + the real wind profile for this flight's actual time of day) is accurate from apogee down to 5525ft AGL (11:27:09), then backs the boost-phase offset out of the difference between that simulation and a real GPS fix at that altitude -- not the real landing point, which is farther away (in both time and additional GPS gaps) and would need a longer, less locally-accurate extrapolation to bridge. Because apogee isn't solved to match the landing point here, predicted_landing_offset_from_pad_ft is a genuine independent prediction, scored below (self_simulated_boost_adjusted) -- unlike analyze_no_gps(), where it's a tautology by construction."
   },
   "main_deploy": {
     "time_local": "11:28:20.449",
@@ -92,10 +92,14 @@
     "note": "This altimeter's own real GPS fix closest to its firmware-tagged Touchdown event (10 satellites, matching the barometer's own return to ~ground level) -- not a hand-recorded pin."
   },
   "predicted_landing_offset_from_pad_ft": {
-    "x": 825.4,
-    "y": 295.5
+    "x": 90.3,
+    "y": 454.1
   },
   "delta_from_predictions": {
+    "self_simulated_boost_adjusted": {
+      "ft": 752.0,
+      "pct_of_descent_drift": 32.3
+    },
     "altitude_bucket_used_ft": 8000,
     "forecast_capture_date_used": "2026-08-01",
     "model_forecasts": {

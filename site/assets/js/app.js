@@ -1690,13 +1690,19 @@ function realFlightBoxHTML() {
   const apogeeOff = rf.apogee.offset_from_pad_ft;
   const apogeeFt = Math.hypot(apogeeOff.x - padOffsetFt.x, apogeeOff.y - padOffsetFt.y);
   const apogeeAngleDeg = Math.atan2(apogeeFt, rf.apogee.altitude_agl_ft) * 180 / Math.PI;
-  // Only no-GPS flights (analyze_no_gps()) carry this -- see this function's
-  // own docstring and apogee.position_estimation_note in the summary JSON.
-  // Also explains why there's no delta line above, and why the predicted-
-  // landing star sits right on top of the real-landing marker (not a bug --
-  // predicted landing is estimated apogee + descent sim, solved to match).
+  // Carried by both no-GPS flights (analyze_no_gps()) and partial-GPS ones
+  // (analyze_partial_gps(), see apogee.position_source) -- see this
+  // function's own docstring and apogee.position_estimation_note in the
+  // summary JSON. The two differ in whether predicted landing is a genuine
+  // prediction: analyze_no_gps() solves apogee to match the real landing
+  // point exactly (no delta line above, predicted-landing star sits right
+  // on the real marker -- not a bug), where analyze_partial_gps() solves
+  // apogee against a real GPS fix mid-descent instead, so predicted landing
+  // is independent and does get scored (the delta line above).
   const apogeeNote = rf.apogee.position_source && rf.apogee.position_source !== 'gps_measured'
-    ? `<div class="rf-note">No usable GPS fix at apogee on this flight -- apogee position (and the launch-angle direction) is calculated from wind models for this time of day, not measured. The predicted-landing star is that same estimate re-simulated, so it matches the real landing by construction -- a self-consistency check, not an independent prediction.</div>`
+    ? (boostAdjusted
+        ? `<div class="rf-note">No usable GPS fix at apogee on this flight -- apogee position (and the launch-angle direction) is calculated from wind models for this time of day, not measured, anchored to a real GPS fix partway down the descent instead of the landing point. The predicted-landing star is that same estimate re-simulated all the way to the ground -- a genuine prediction, scored above, not forced to match the real landing.</div>`
+        : `<div class="rf-note">No usable GPS fix at apogee on this flight -- apogee position (and the launch-angle direction) is calculated from wind models for this time of day, not measured. The predicted-landing star is that same estimate re-simulated, so it matches the real landing by construction -- a self-consistency check, not an independent prediction.</div>`)
     : '';
   return `
     <div class="rf-title">Real flight</div>
