@@ -1080,6 +1080,7 @@ if __name__ == "__main__":
     p_br.add_argument("--rail-lon", required=True, type=float)
     p_br.add_argument("--landing-lat", required=True, type=float)
     p_br.add_argument("--landing-lon", required=True, type=float)
+    p_br.add_argument("--label", default=None, help="distinguishes multiple same-day flights in the output filename, e.g. a motor designation like J270")
     p_br.add_argument("--out", default=None)
 
     p_aim = sub.add_parser("aim_xtra", help="GPS-tracked flight (AIM XTRA simplified CSV) -- full boost+descent reconstruction, GPS through touchdown")

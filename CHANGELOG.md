@@ -2,6 +2,13 @@
 
 Dated, terse log of notable changes. For the full design rationale and decision history, see [docs/spec.md](docs/spec.md).
 
+## 2026-08-04
+
+**Second real flight published for hutto 2026-08-01: a BlueRaven LR (H128W), alongside the existing Fluctus flight**
+- Same launch day, different rocket/altimeter -- a genuinely separate flight at 11:53:56 local (vs. the Fluctus flight's 11:26), not a duplicate. Ran through the pre-existing `analyze_real_flight.py blueraven` path (unchanged): barometer-only reconstruction, `rail_lat`/`rail_lon`/`landing_lat`/`landing_lon` from hand-recorded GPS pins (30.614554,-97.496437 pad; 30.611984,-97.489214 recovery), feeding `analyze_no_gps()` since this altimeter has no GPS at all. Result: apogee 4,952.8ft (estimated position 1,265ft from pad, 14.3&deg; off vertical), landing 2,384ft from pad.
+- `analyze_real_flight.py`'s `blueraven` CLI subcommand was missing the `--label` flag that `aim_xtra`/`fluctus` already had, needed here specifically because this is the first date with two published flights -- without it the output filename would have collided with and overwritten the existing `2026-08-01_summary.json`. Added `--label`, used `H128W` (the motor designation, same convention the other trackers' `--label` docstring already suggests); output now `2026-08-01_H128W_summary.json`.
+- Manifest regeneration (`splash_zones.py:regenerate_manifest()`, unchanged -- already globs `{date}*_summary.json`) picked up both files automatically once re-run; no frontend changes needed. Verified in-browser via Playwright: History view's legend correctly reads "Real flights (2, ...)", both markers render at their real (very different) landing offsets, and hovering the new marker shows the correct no-GPS info-box note (the tautological "matches by construction" phrasing, correctly distinct from the Fluctus flight's genuine-prediction phrasing added 2026-08-03) -- no console errors.
+
 ## 2026-08-03
 
 **New `analyze_partial_gps()`: backsolves apogee from a real mid-descent GPS fix, not the far-away landing point**

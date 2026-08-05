@@ -1,6 +1,6 @@
 {
   "site_id": "hutto",
-  "generated_at": "2026-08-02T13:19:48",
+  "generated_at": "2026-08-04T19:44:06",
   "launch_dates": [
     {
       "target_date": "2026-08-01",
@@ -10,6 +10,7 @@
       "data_path": "data/hutto/live/2026-08-01/splash_zones_captured_2026-08-01.json",
       "history_path": "data/hutto/live/2026-08-01/points_history.json",
       "real_flight_paths": [
+        "data/hutto/real_flights/2026-08-01_H128W_summary.json",
         "data/hutto/real_flights/2026-08-01_summary.json"
       ]
     },

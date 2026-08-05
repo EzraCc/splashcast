@@ -1,0 +1,230 @@
+{
+  "site_id": "hutto",
+  "target_date": "2026-08-01",
+  "deploy": "dual",
+  "closest_hour": 11,
+  "launch": {
+    "time_local": "11:53:56.443",
+    "offset_from_pad_ft": {
+      "x": 5.3,
+      "y": 228.6,
+      "dist": 228.7
+    }
+  },
+  "apogee": {
+    "time_local": "11:54:12.443",
+    "altitude_agl_ft": 4952.8,
+    "offset_from_pad_ft": {
+      "x": 1250.7,
+      "y": 187.3,
+      "dist": 1264.6
+    },
+    "boost_angle_from_vertical_deg": 14.32,
+    "configured_boost_angle_deg": 10,
+    "position_source": "estimated_from_landing_and_wind_model",
+    "position_estimation_note": "No GPS on this altimeter -- this position is *inferred*, not measured: it assumes the descent-only wind simulation (real apogee altitude + real derived descent rates + the real wind profile for this flight's actual time of day) is accurate, then backs the boost-phase offset out of the difference between that simulation and the real recorded landing point. predicted_landing_offset_from_pad_ft is this same estimated apogee plus that same descent sim, so it lands exactly on the real landing point by construction -- a self-consistency check on the reconstructed flight, not an independent prediction (see delta_from_predictions, which has no self-simulated accuracy figure for this flight for the same reason)."
+  },
+  "main_deploy": {
+    "time_local": "11:55:46.443",
+    "altitude_agl_ft": 213.3
+  },
+  "descent_rates_ground_equivalent_fps": {
+    "drogue": {
+      "mean": 48.5,
+      "range": [
+        11.5,
+        79.0
+      ]
+    },
+    "main": {
+      "mean": 20.1,
+      "range": [
+        1.1,
+        31.0
+      ]
+    },
+    "configured_dual_deploy_fps": {
+      "slow": [
+        80.0,
+        10.0
+      ],
+      "fast": [
+        100.0,
+        20.0
+      ]
+    }
+  },
+  "density_scaling_check": {
+    "early_drogue": {
+      "mean_ground_equivalent_fps": 49.8,
+      "range": [
+        25.7,
+        76.7
+      ],
+      "altitude_range_agl_ft": [
+        2666,
+        4612
+      ],
+      "n_samples": 38
+    },
+    "late_drogue": {
+      "mean_ground_equivalent_fps": 50.1,
+      "range": [
+        26.4,
+        79.0
+      ],
+      "altitude_range_agl_ft": [
+        466,
+        2462
+      ],
+      "n_samples": 40
+    },
+    "pct_difference": 0.5
+  },
+  "landing": {
+    "lat": 30.611984,
+    "lon": -97.489214,
+    "offset_from_pad_ft": {
+      "x": 2275.7,
+      "y": -710.0,
+      "dist": 2383.8
+    },
+    "note": "Hand-recorded GPS pin at the recovery site (this altimeter has no onboard GPS) -- not extrapolated from a track."
+  },
+  "predicted_landing_offset_from_pad_ft": {
+    "x": 2275.7,
+    "y": -710.0
+  },
+  "delta_from_predictions": {
+    "altitude_bucket_used_ft": 4000,
+    "forecast_capture_date_used": "2026-08-01",
+    "model_forecasts": {
+      "11_dual_fast_4000": {
+        "gfs": {
+          "ft": 1427.3,
+          "pct_of_actual_drift": 59.9
+        },
+        "ecmwf": {
+          "ft": 1458.6,
+          "pct_of_actual_drift": 61.2
+        },
+        "gem": {
+          "ft": 1408.2,
+          "pct_of_actual_drift": 59.1
+        },
+        "icon": {
+          "ft": 1873.8,
+          "pct_of_actual_drift": 78.6
+        },
+        "arpege": {
+          "ft": 1528.5,
+          "pct_of_actual_drift": 64.1
+        },
+        "hrrr": {
+          "ft": 1720.2,
+          "pct_of_actual_drift": 72.2
+        }
+      },
+      "11_dual_slow_4000": {
+        "gfs": {
+          "ft": 805.4,
+          "pct_of_actual_drift": 33.8
+        },
+        "ecmwf": {
+          "ft": 955.0,
+          "pct_of_actual_drift": 40.1
+        },
+        "gem": {
+          "ft": 1003.9,
+          "pct_of_actual_drift": 42.1
+        },
+        "icon": {
+          "ft": 1847.3,
+          "pct_of_actual_drift": 77.5
+        },
+        "arpege": {
+          "ft": 1139.2,
+          "pct_of_actual_drift": 47.8
+        },
+        "hrrr": {
+          "ft": 1427.5,
+          "pct_of_actual_drift": 59.9
+        }
+      },
+      "13_dual_fast_4000": {
+        "gfs": {
+          "ft": 2059.3,
+          "pct_of_actual_drift": 86.4
+        },
+        "ecmwf": {
+          "ft": 1541.9,
+          "pct_of_actual_drift": 64.7
+        },
+        "gem": {
+          "ft": 1530.0,
+          "pct_of_actual_drift": 64.2
+        },
+        "icon": {
+          "ft": 2088.3,
+          "pct_of_actual_drift": 87.6
+        },
+        "arpege": {
+          "ft": 1956.5,
+          "pct_of_actual_drift": 82.1
+        },
+        "hrrr": {
+          "ft": 1516.1,
+          "pct_of_actual_drift": 63.6
+        }
+      },
+      "13_dual_slow_4000": {
+        "gfs": {
+          "ft": 2152.2,
+          "pct_of_actual_drift": 90.3
+        },
+        "ecmwf": {
+          "ft": 1045.8,
+          "pct_of_actual_drift": 43.9
+        },
+        "gem": {
+          "ft": 1094.8,
+          "pct_of_actual_drift": 45.9
+        },
+        "icon": {
+          "ft": 2259.6,
+          "pct_of_actual_drift": 94.8
+        },
+        "arpege": {
+          "ft": 1736.8,
+          "pct_of_actual_drift": 72.9
+        },
+        "hrrr": {
+          "ft": 1006.5,
+          "pct_of_actual_drift": 42.2
+        }
+      }
+    },
+    "hrrr_analysis_actual_proxy": {
+      "11_dual_fast_4000": {
+        "ft": 1723.7,
+        "pct_of_actual_drift": 72.3
+      },
+      "11_dual_slow_4000": {
+        "ft": 1436.9,
+        "pct_of_actual_drift": 60.3
+      },
+      "13_dual_fast_4000": {
+        "ft": 1665.6,
+        "pct_of_actual_drift": 69.9
+      },
+      "13_dual_slow_4000": {
+        "ft": 1282.5,
+        "pct_of_actual_drift": 53.8
+      }
+    },
+    "within_published_core_hull": {
+      "11": false,
+      "13": false
+    }
+  }
+}
