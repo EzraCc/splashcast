@@ -13,6 +13,25 @@
 // (pageshow's persisted flag) -- never while someone's actively mid-interaction.
 const CURRENT_VERSION = new URL(document.currentScript.src, location.href).searchParams.get('v');
 
+// Same cache-busting as app.js/app.css's own ?v=<commit-sha> above, applied
+// to every data fetch (manifest.json, and everything a manifest entry points
+// at -- data_path/history_path/real_flight_paths) -- added after a real
+// report that even a manual hard refresh kept serving a manifest.json from
+// before a same-day deploy that added a second real_flight_paths entry.
+// GitHub Pages' Cache-Control: max-age=600 was assumed short enough that any
+// real reload would just pick up a new deploy on its own (see this file's
+// very first comment) -- true for the HTML/JS/CSS a reload always re-fetches
+// fresh, apparently not reliably true for a fetch() the running JS issues at
+// runtime, whatever the exact browser/CDN mechanism. Tying the query string
+// to CURRENT_VERSION means it changes on every deploy (data-only pushes
+// redeploy too, see pages.yml's `on: push`) without needing `no-store`'s
+// "never cache, even within the same deploy" cost. No-ops (returns the URL
+// unchanged) during local dev, where CURRENT_VERSION is null.
+function withVersion(url) {
+  if (!CURRENT_VERSION) return url;
+  return url + (url.includes('?') ? '&' : '?') + 'v=' + CURRENT_VERSION;
+}
+
 async function checkForUpdate() {
   if (!CURRENT_VERSION) return;
   try {
@@ -2776,18 +2795,18 @@ function describeEntry(entry) {
 
 async function loadDataset(entry) {
   subtitleEl.textContent = 'Loading…';
-  const resp = await fetch(entry.data_path);
+  const resp = await fetch(withVersion(entry.data_path));
   DATA = await resp.json();
   // history_path is null for a target processed before this feature existed
   // -- HISTORY just stays null and the History view mode shows its own
   // "nothing published yet" state (see renderHistory()) instead of erroring.
-  HISTORY = entry.history_path ? await (await fetch(entry.history_path)).json() : null;
+  HISTORY = entry.history_path ? await (await fetch(withVersion(entry.history_path))).json() : null;
   // Empty for the overwhelming majority of targets -- a real GPS-tracked
   // flight is a rare, manually-fed-in thing (see analyze_real_flight.py),
   // not something every launch has. Usually 0 or 1 paths, occasionally more
   // than one (a site can fly more than one rocket the same day).
   REAL_FLIGHTS = entry.real_flight_paths?.length
-    ? await Promise.all(entry.real_flight_paths.map(p => fetch(p).then(r => r.json())))
+    ? await Promise.all(entry.real_flight_paths.map(p => fetch(withVersion(p)).then(r => r.json())))
     : [];
   pinnedRealFlightIndex = null;
   hoveredRealFlightIndex = null;
@@ -2812,7 +2831,7 @@ dateSelect.addEventListener('change', () => {
 let urlDateApplied = false;
 
 function loadSiteManifest(manifestPath) {
-  fetch(manifestPath)
+  fetch(withVersion(manifestPath))
     .then(r => r.json())
     .then(manifest => {
       manifestEntries = manifest.launch_dates;
@@ -2908,7 +2927,7 @@ function selectSite(siteId) {
 
 siteSelect.addEventListener('change', () => selectSite(siteSelect.value));
 
-fetch('maps/regional/sites.json')
+fetch(withVersion('maps/regional/sites.json'))
   .then(r => r.json())
   .then(data => {
     regionalSites = data;
