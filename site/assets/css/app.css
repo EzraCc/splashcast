@@ -460,7 +460,18 @@
   .pad-marker.moved circle, .pad-marker.moved line { stroke: #e0b400; }
   .map-wrap.dragging-pad, .map-wrap.dragging-pad .pad-marker { cursor: grabbing; }
 
-  .alt-list { display: flex; flex-direction: column; gap: 4px; }
+  .alt-range-control { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
+  .alt-range-control label { font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.03em; }
+  .alt-range-control select {
+    flex: 1 1 0; min-width: 0;
+    border: 1px solid var(--border); border-radius: 8px; background: var(--surface-1);
+    color: var(--text-primary); padding: 5px 7px; font-size: 0.8rem; accent-color: var(--accent);
+  }
+  /* Bounded so a dense per-site altitude ladder (up to ~23 rows) can't push
+     the Model/Rate legends below it off-screen in the sidebar -- the Min/Max
+     range control above is the coarse filter, this scroll is the fallback
+     for whatever's still in range. */
+  .alt-list { display: flex; flex-direction: column; gap: 4px; max-height: 46vh; overflow-y: auto; }
   .alt-list-title {
     font-size: 0.78rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.03em;
     margin-bottom: 4px; display: flex; align-items: center; gap: 5px;

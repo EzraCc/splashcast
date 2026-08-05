@@ -338,6 +338,9 @@ function freshState() {
     isolatedRate: null, pinnedRate: null,
     isolatedCapture: null, pinnedCapture: null, // History mode only -- which capture_date ("forecast age") to isolate
     compareAlt: DATA.altitudes[0], // which altitude "by time of day" mode compares across hours
+    // Coarse pre-filter in front of isolatedAlt/pinnedAlt/compareAlt above --
+    // see buildAltRange(). Defaults to the site's full ladder.
+    altMin: DATA.altitudes[0], altMax: DATA.altitudes[DATA.altitudes.length - 1],
   };
   if (!urlStateApplied) {
     urlStateApplied = true;
@@ -358,6 +361,26 @@ function freshState() {
     const capture = URL_PARAMS.get('capture');
     if (HISTORY && HISTORY.captures.includes(capture)) base.pinnedCapture = capture;
     if (base.mode === 'byHistory' && !base.pinnedRate) base.pinnedRate = 'fast';
+    // Same defensive includes() guard as alt/compare above -- a link from a
+    // different site, or from before the master altitude ladder changed,
+    // just degrades to the full range instead of an empty map.
+    const altMin = Number(URL_PARAMS.get('altmin'));
+    if (DATA.altitudes.includes(altMin)) base.altMin = altMin;
+    const altMax = Number(URL_PARAMS.get('altmax'));
+    if (DATA.altitudes.includes(altMax) && altMax >= base.altMin) base.altMax = altMax;
+    // A URL can carry alt/compare and altmin/altmax independently (e.g. an
+    // older link built before altmin/altmax existed, then hand-narrowed) --
+    // clamp both into the resolved range so byTime/byHistory never end up
+    // showing a zone outside the range the selects display as active.
+    const inRange = a => a >= base.altMin && a <= base.altMax;
+    const nearestInRange = target => {
+      const candidates = DATA.altitudes.filter(inRange);
+      return candidates.length
+        ? candidates.reduce((best, a) => Math.abs(a - target) < Math.abs(best - target) ? a : best)
+        : null;
+    };
+    if (base.pinnedAlt !== null && !inRange(base.pinnedAlt)) base.pinnedAlt = null;
+    if (base.compareAlt !== null && !inRange(base.compareAlt)) base.compareAlt = nearestInRange(base.compareAlt);
   }
   return base;
 }
@@ -424,6 +447,7 @@ function setMode(mode) {
   // the first time this mode is entered, then leave the user's pick alone.
   if (mode === 'byHistory' && !state.pinnedRate) state.pinnedRate = 'fast';
   applyModeUI(mode);
+  buildAltRange();
   buildAltList();
   buildTimeLegend();
   buildModelLegend();
@@ -432,14 +456,77 @@ function setMode(mode) {
   // onChange callback returns, for the mode-toggle click that triggers this.
 }
 
+// --- altitude range: coarse min/max filter in front of the per-row list below ---
+function altInRange(alt) { return alt >= state.altMin && alt <= state.altMax; }
+function altitudesInRange() { return DATA.altitudes.filter(altInRange); }
+// Altitudes that actually have a zone for the current hour/deploy -- single
+// deploy is dropped above config.SINGLE_DEPLOY_MAX_ALT_FT (10,000ft)
+// pipeline-side, so a high-waiver site on Single has real zones for only
+// part of DATA.altitudes.
+function altitudesWithZones() {
+  return new Set((DATA.data[`${state.hour}_${state.deploy}`] || []).map(z => z.altitude));
+}
+
+function buildAltRange() {
+  const minSel = document.getElementById('alt-min-select');
+  const maxSel = document.getElementById('alt-max-select');
+  const withZones = altitudesWithZones();
+  const fillOptions = (sel, disablePredicate) => {
+    sel.innerHTML = '';
+    DATA.altitudes.forEach(alt => {
+      const opt = document.createElement('option');
+      opt.value = alt;
+      const noZone = !withZones.has(alt);
+      opt.textContent = alt.toLocaleString() + ' ft' + (noZone ? ' — n/a' : '');
+      opt.disabled = noZone || disablePredicate(alt);
+      sel.appendChild(opt);
+    });
+  };
+  fillOptions(minSel, alt => alt > state.altMax);
+  fillOptions(maxSel, alt => alt < state.altMin);
+  minSel.value = state.altMin;
+  maxSel.value = state.altMax;
+
+  minSel.onchange = () => {
+    state.altMin = Number(minSel.value);
+    onAltRangeChanged();
+  };
+  maxSel.onchange = () => {
+    state.altMax = Number(maxSel.value);
+    onAltRangeChanged();
+  };
+}
+
+function onAltRangeChanged() {
+  if (state.pinnedAlt !== null && !altInRange(state.pinnedAlt)) state.pinnedAlt = null;
+  if (state.isolatedAlt !== null && !altInRange(state.isolatedAlt)) state.isolatedAlt = null;
+  if (state.compareAlt !== null && !altInRange(state.compareAlt)) {
+    const inRange = altitudesInRange();
+    state.compareAlt = inRange.length ? inRange.reduce((best, a) =>
+      Math.abs(a - state.compareAlt) < Math.abs(best - state.compareAlt) ? a : best) : null;
+  }
+  buildAltRange();
+  buildAltList();
+  render();
+}
+
+document.getElementById('alt-range-reset').addEventListener('click', () => {
+  state.altMin = DATA.altitudes[0];
+  state.altMax = DATA.altitudes[DATA.altitudes.length - 1];
+  onAltRangeChanged();
+});
+
 // --- altitude list: hover-isolate in "by altitude" mode, single-select in "by time" mode ---
 function buildAltList() {
   const el = document.getElementById('alt-list');
   el.innerHTML = '';
-  DATA.altitudes.forEach(alt => {
+  const withZones = altitudesWithZones();
+  altitudesInRange().forEach(alt => {
     const row = document.createElement('div');
-    row.className = 'alt-row';
+    const hasZone = withZones.has(alt);
+    row.className = 'alt-row' + (hasZone ? '' : ' unavailable');
     row.innerHTML = `<div class="alt-swatch" style="background:${ALT_COLORS_HEX[alt]}"></div><span>${alt.toLocaleString()} ft</span>`;
+    if (!hasZone) { el.appendChild(row); return; }
 
     if (state.mode === 'byAltitude') {
       row.addEventListener('mouseenter', () => { state.isolatedAlt = alt; applyIsolation(); });
@@ -2199,8 +2286,17 @@ function drawRealFlightMarker() {
         // this is a normal user-facing selection worth leaving as-is.
         state.hour = flight.closest_hour;
         hourExplicitlyChosen = true;
-        state.compareAlt = flight.delta_from_predictions.altitude_bucket_used_ft;
+        // Nearest-match, not exact equality -- the published bucket may not
+        // exist verbatim in DATA.altitudes if this date's zone JSON predates
+        // a master-ladder change (see config.ALTITUDES_MASTER_FT). Widen the
+        // range filter to include it if the current selection excludes it.
+        const bucket = flight.delta_from_predictions.altitude_bucket_used_ft;
+        state.compareAlt = DATA.altitudes.reduce((best, a) =>
+          Math.abs(a - bucket) < Math.abs(best - bucket) ? a : best, DATA.altitudes[0]);
+        if (state.compareAlt < state.altMin) state.altMin = state.compareAlt;
+        if (state.compareAlt > state.altMax) state.altMax = state.compareAlt;
         buildToggle('hour-toggle', DATA.hours, HOUR_LABELS, 'hour', () => { hourExplicitlyChosen = true; });
+        buildAltRange();
         buildAltList();
         render();
       } else {
@@ -2583,6 +2679,13 @@ function buildPermalinkParams(includeDate) {
   if (state.mode === 'byAltitude' && state.pinnedAlt !== null) p.set('alt', state.pinnedAlt);
   if ((state.mode === 'byTime' || state.mode === 'byHistory') && state.compareAlt !== null) p.set('compare', state.compareAlt);
   if (state.mode === 'byHistory' && state.pinnedCapture !== null) p.set('capture', state.pinnedCapture);
+  // Altitude range filter (see buildAltRange()) -- emitted only when actually
+  // narrowed from this site's full ladder, same "don't pin defaults into the
+  // URL" reasoning as hour/deploy/boost above. Real ft values, not list
+  // indices, so a link survives the master ladder changing (as it did
+  // 2026-08) and resolves sanely against a different site's shorter list.
+  if (state.altMin !== DATA.altitudes[0]) p.set('altmin', state.altMin);
+  if (state.altMax !== DATA.altitudes[DATA.altitudes.length - 1]) p.set('altmax', state.altMax);
   return p;
 }
 
@@ -2632,9 +2735,9 @@ function render() {
   svg.appendChild(image);
 
   if (state.mode === 'byAltitude') {
-    // one time of day, all 5 altitudes, colored by altitude
+    // one time of day, every in-range altitude, colored by altitude
     const key = `${state.hour}_${state.deploy}`;
-    const zones = DATA.data[key] || [];
+    const zones = (DATA.data[key] || []).filter(z => altInRange(z.altitude));
     const ordered = [...zones].sort((a, b) => b.altitude - a.altitude);
     ordered.forEach(zone => drawZone(zone, ALT_COLORS_HEX[zone.altitude], state.hour));
   } else if (state.mode === 'byHistory') {
@@ -2767,8 +2870,16 @@ function initFromData() {
 
   buildToggle('mode-toggle', ['byAltitude', 'byTime', 'byHistory'], MODE_LABELS, 'mode', () => setMode(state.mode));
   buildToggle('hour-toggle', DATA.hours, HOUR_LABELS, 'hour', () => { hourExplicitlyChosen = true; });
-  buildToggle('deploy-toggle', DATA.deploys, DEPLOY_LABELS, 'deploy', () => { deployExplicitlyChosen = true; });
+  buildToggle('deploy-toggle', DATA.deploys, DEPLOY_LABELS, 'deploy', () => {
+    deployExplicitlyChosen = true;
+    // Which altitudes have a real zone changes with deploy (single-deploy
+    // drops above SINGLE_DEPLOY_MAX_ALT_FT pipeline-side) -- refresh both the
+    // range selects' n/a-disabled options and the row list's unavailable rows.
+    buildAltRange();
+    buildAltList();
+  });
   buildTimeLegend();
+  buildAltRange();
   buildAltList();
   buildModelLegend();
   buildRateLegend();

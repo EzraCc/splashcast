@@ -233,6 +233,25 @@ def _delta(x_ft: float, y_ft: float, real_x_ft: float, real_y_ft: float, real_di
     return {"ft": round(d, 1), pct_key: pct_of_actual_drift(d, real_dist_ft)}
 
 
+def nearest_altitude_bucket(site_id: str, target_date: date, apogee_agl_ft: float) -> int:
+    """Snap to the altitude ladder the *published* zone JSON for this date
+    actually used, not today's config.altitudes_for_site() -- the two
+    diverge whenever config.ALTITUDES_MASTER_FT changes (as it did 2026-08),
+    and compare_to_pipeline() degrades silently (empty model_forecasts/
+    within_published_core_hull, no error) against a bucket the published
+    file has never heard of. Falls back to today's config if nothing's
+    published yet for this site/date."""
+    live_dir = config.SITE_DIR / "data" / site_id / "live" / str(target_date)
+    zone_paths = sorted(live_dir.glob("splash_zones_captured_*.json"))
+    if zone_paths:
+        capture_date = max(date.fromisoformat(p.stem.removeprefix("splash_zones_captured_")) for p in zone_paths)
+        zone_path = live_dir / f"splash_zones_captured_{capture_date}.json"
+        altitudes = json.loads(zone_path.read_text())["altitudes"]
+    else:
+        altitudes = config.altitudes_for_site(site_id)
+    return min(altitudes, key=lambda a: abs(a - apogee_agl_ft))
+
+
 def compare_to_pipeline(site_id: str, target_date: date, real_x_ft: float, real_y_ft: float, real_dist_ft: float, altitude_bucket: int, hour_buckets: tuple[int, ...] = (11, 13)) -> dict:
     """Distances (both absolute ft and as a % of the real drift distance --
     500ft reads very differently at a 3,500ft actual drift than at a 500ft
@@ -365,8 +384,7 @@ def analyze(site_id: str, target_date: date, samples: list[FlightSample], ground
     boost_adjusted_delta = _delta(total_x, total_y, real_x_ft, real_y_ft, descent_drift_dist_ft, pct_key="pct_of_descent_drift")
 
     if altitude_bucket is None:
-        altitudes = config.altitudes_for_site(site_id)
-        altitude_bucket = min(altitudes, key=lambda a: abs(a - apogee.agl_ft))
+        altitude_bucket = nearest_altitude_bucket(site_id, target_date, apogee.agl_ft)
     comparison = compare_to_pipeline(site_id, target_date, real_x_ft, real_y_ft, real_dist_ft, altitude_bucket, (wind_hour_a, wind_hour_b))
     # Whichever bracketing hour the real launch was closer to -- lets a
     # client pick one "delta from actual" figure to show by default (deploy
@@ -547,8 +565,7 @@ def analyze_no_gps(site_id: str, target_date: date, samples: list[FlightSample],
     pred_x, pred_y = float(est_x + sim_x), float(est_y + sim_y)
 
     if altitude_bucket is None:
-        altitudes = config.altitudes_for_site(site_id)
-        altitude_bucket = min(altitudes, key=lambda a: abs(a - apogee.agl_ft))
+        altitude_bucket = nearest_altitude_bucket(site_id, target_date, apogee.agl_ft)
     comparison = compare_to_pipeline(site_id, target_date, real_x_ft, real_y_ft, real_dist_ft, altitude_bucket, (wind_hour_a, wind_hour_b))
     closest_hour = wind_hour_a if weight_b < 0.5 else wind_hour_b
 
@@ -689,8 +706,7 @@ def analyze_partial_gps(site_id: str, target_date: date, samples: list[FlightSam
     boost_adjusted_delta = _delta(pred_x, pred_y, real_x_ft, real_y_ft, descent_drift_dist_ft, pct_key="pct_of_descent_drift")
 
     if altitude_bucket is None:
-        altitudes = config.altitudes_for_site(site_id)
-        altitude_bucket = min(altitudes, key=lambda a: abs(a - apogee.agl_ft))
+        altitude_bucket = nearest_altitude_bucket(site_id, target_date, apogee.agl_ft)
     comparison = compare_to_pipeline(site_id, target_date, real_x_ft, real_y_ft, real_dist_ft, altitude_bucket, (wind_hour_a, wind_hour_b))
     closest_hour = wind_hour_a if weight_b < 0.5 else wind_hour_b
 

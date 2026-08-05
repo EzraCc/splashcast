@@ -98,9 +98,9 @@ def descent_rate_at(alt_agl_ft: float, ground_rate_ftps: float, site_elev_ft: fl
 def build_profile_single(df: pd.DataFrame, hour_dt: datetime, model_key: str, site_elev_ft: float, levels_mb: list[int]) -> list[tuple[float, float, float]]:
     """(agl_ft, speed_mph, dir_deg) profile for one model/hour, sorted by altitude.
 
-    Surface 10m wind anchors the bottom; each of `levels_mb` (this site's own
-    pressure-level bracket -- config.levels_mb_for_site(), sized to its
-    waiver) except 1000mb (its standard-atm height is unreliable this close
+    Surface 10m wind anchors the bottom; each of `levels_mb` (every level the
+    models offer up to this site's own ceiling -- config.levels_mb_for_site())
+    except 1000mb (its standard-atm height is unreliable this close
     to the surface -- surface wind covers that end of the profile instead)
     contributes one more point, converted from pressure level to AGL feet via
     `site_elev_ft` (this site's own ground elevation MSL --
@@ -189,13 +189,18 @@ def compute_splash_points(df: pd.DataFrame, target_date: date, site_id: str = "h
     Altitudes are per-site (config.altitudes_for_site()), not one fixed list
     for every site -- a 10,000ft-waiver site and a 50,000ft-waiver site need
     very different apogees simulated. Pressure levels sampled for the wind
-    profile are likewise per-site (config.levels_mb_for_site()), sized to
-    reach each site's own waiver. Single-deploy points are skipped above
-    config.SINGLE_DEPLOY_MAX_ALT_FT -- not a realistic recovery configuration
-    at higher altitude (see that constant's own comment in config.py).
+    profile are likewise per-site (config.levels_mb_for_site()), but sized to
+    reach the site's ceiling directly rather than derived from the altitude
+    list above -- the two are deliberately decoupled (2026-08) so the wind
+    profile itself uses the models' full real vertical resolution regardless
+    of how coarse or fine the user-facing apogee list is. Single-deploy
+    points are skipped above config.SINGLE_DEPLOY_MAX_ALT_FT -- not a
+    realistic recovery configuration at higher altitude (see that constant's
+    own comment in config.py).
     """
     site_elev_ft = config.elev_ft_for_site(site_id)
     levels_mb = config.levels_mb_for_site(site_id)
+    altitudes = config.altitudes_for_site(site_id)
     all_points = []
     for h in config.SPLASH_HOURS_LOCAL:
         hdt = datetime.combine(target_date, dtime(h, 0))
@@ -203,7 +208,7 @@ def compute_splash_points(df: pd.DataFrame, target_date: date, site_id: str = "h
             profile = build_profile_single(df, hdt, m, site_elev_ft, levels_mb)
             if len(profile) < 2:
                 continue
-            for alt in config.altitudes_for_site(site_id):
+            for alt in altitudes:
                 if alt <= config.SINGLE_DEPLOY_MAX_ALT_FT:
                     for rate_name, rate in config.SINGLE_DEPLOY_RATES_FPS.items():
                         x, y = simulate(profile, float(alt), [(rate, float(alt), 0)], site_elev_ft)
@@ -258,6 +263,7 @@ def compute_actual_points(site_id: str, target_date: date) -> dict[str, dict]:
         return {}
     raw = pd.read_parquet(raw_path)
     site_elev_ft = config.elev_ft_for_site(site_id)
+    altitudes = config.altitudes_for_site(site_id)
     actuals = {}
     for h in config.SPLASH_HOURS_LOCAL:
         # raw["valid_time"] is UTC-naive (straight from the GRIB2 files via
@@ -274,7 +280,7 @@ def compute_actual_points(site_id: str, target_date: date) -> dict[str, dict]:
         profile = build_actual_profile(hour_df, site_elev_ft)
         if len(profile) < 2:
             continue
-        for alt in config.altitudes_for_site(site_id):
+        for alt in altitudes:
             if alt <= config.SINGLE_DEPLOY_MAX_ALT_FT:
                 for rate_name, rate in config.SINGLE_DEPLOY_RATES_FPS.items():
                     x, y = simulate(profile, float(alt), [(rate, float(alt), 0)], site_elev_ft)
@@ -630,15 +636,23 @@ def build_points_history(target_dir: Path, target_date: date, site_id: str = "hu
     pull a whole capture-to-capture series with one lookup instead of one
     fetch per day."""
     captures = _all_captures(target_dir)
+    current_altitudes = set(config.altitudes_for_site(site_id))
     frames = []
     for capture_date in captures:
         points_path = target_dir / f"splash_points_captured_{capture_date}.parquet"
-        if not points_path.exists():
+        pts = pd.read_parquet(points_path) if points_path.exists() else None
+        # A stored points parquet is keyed by whatever altitude ladder was
+        # current when it was written -- recompute when that no longer
+        # matches config.altitudes_for_site(), or points_history.json ends up
+        # ragged across captures (History mode would show a single-point
+        # series for any altitude only the newest capture has). Every site's
+        # old level bracket already reached its waiver in MSL terms, so this
+        # never extrapolates past the stored wind profile -- only coarseness
+        # changes, which build_profile_single()/interp() already handle.
+        if pts is None or set(pts["altitude"].unique()) != current_altitudes:
             df = pd.read_parquet(target_dir / f"captured_{capture_date}.parquet")
             pts = compute_splash_points(df, target_date, site_id)
             pts.to_parquet(points_path)
-        else:
-            pts = pd.read_parquet(points_path)
         pts = pts.copy()
         pts["capture_date"] = str(capture_date)
         frames.append(pts)

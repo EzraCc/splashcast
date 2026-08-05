@@ -88,8 +88,15 @@
         <input type="color" id="zone-color-picker" class="zone-color-picker" title="Pick a zone color that stands out against this site's imagery">
         <button id="zone-color-reset" class="zone-color-reset-btn" type="button" title="Reset to default zone color">&#8635;</button>
       </div>
+      <div class="alt-range-control">
+        <label for="alt-min-select">Min</label>
+        <select id="alt-min-select"></select>
+        <label for="alt-max-select">Max</label>
+        <select id="alt-max-select"></select>
+        <button id="alt-range-reset" class="zone-color-reset-btn" type="button" title="Show every altitude">&#8635;</button>
+      </div>
       <div class="alt-list" id="alt-list"></div>
-      <div class="alt-hint" id="alt-hint">Hover an altitude to isolate its zone. Click to pin it; click again to release.</div>
+      <div class="alt-hint" id="alt-hint">Hover an altitude to isolate its zone. Click to pin it; click again to release. Min/Max above narrows which altitudes are listed.</div>
 
       <div id="time-legend-block" style="display:none;">
         <div class="alt-list-title" style="margin-top:16px;">
