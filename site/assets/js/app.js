@@ -252,21 +252,17 @@ const MODEL_LEGEND_ORDER = ['gfs', 'ecmwf', 'gem', 'icon', 'arpege', 'hrrr'];
 // so it's never ambiguous with a model's projection.
 const MODEL_SHAPES = { gfs: 'circle', ecmwf: 'square', gem: 'triangle-up', icon: 'diamond', arpege: 'triangle-down', hrrr: 'plus' };
 // Circle = the faster rate, square = the slower one, so fast/slow reads at a
-// glance without needing to hover -- covers both naming schemes (single
-// deploy's 10/20fps, dual deploy's slow/fast).
-const RATE_SHAPE = { '10fps': 'square', '20fps': 'circle', slow: 'square', fast: 'circle' };
+// glance without needing to hover. Single deploy uses the same fast/slow
+// names as dual now (config.py's SINGLE_DEPLOY_RATES_FPS renamed 2026-08 --
+// see zoneFor()), so this no longer needs to cover two different naming
+// schemes.
+const RATE_SHAPE = { slow: 'square', fast: 'circle' };
 
-// Fast/slow legend toggle: circle=fast, square=slow per RATE_SHAPE above (the
-// same mapping the shapes already use), so this doesn't re-hardcode which of
-// single-deploy's "10fps"/"20fps" or dual-deploy's "slow"/"fast" counts as
-// which -- both are "fast" or "slow" through the same lookup.
 function activeRate() {
   return state.isolatedRate ?? state.pinnedRate; // 'fast' | 'slow' | null
 }
 function rateMatches(pt, active) {
-  if (!active) return true;
-  const isFast = (RATE_SHAPE[pt.rate] || 'circle') === 'circle';
-  return active === 'fast' ? isFast : !isFast;
+  return !active || pt.rate === active;
 }
 
 // Populated by initFromData() once the selected launch date's JSON has
@@ -341,6 +337,13 @@ function freshState() {
     // Coarse pre-filter in front of isolatedAlt/pinnedAlt/compareAlt above --
     // see buildAltRange(). Defaults to the site's full ladder.
     altMin: DATA.altitudes[0], altMax: DATA.altitudes[DATA.altitudes.length - 1],
+    // Editable Fast/Slow drogue+main fps (see buildRateEditor()) -- changes
+    // which points exist, not just how they're drawn, so it lives here
+    // rather than as a standing "what-if" global like boostAngleDeg.
+    // structuredClone, not a plain reference -- DATA.descent_params.default_rates_fps
+    // must never be mutated (it's the reset target and the permalink's
+    // "is this the default" comparison).
+    rateFps: structuredClone(DATA.descent_params.default_rates_fps),
   };
   if (!urlStateApplied) {
     urlStateApplied = true;
@@ -381,6 +384,24 @@ function freshState() {
     };
     if (base.pinnedAlt !== null && !inRange(base.pinnedAlt)) base.pinnedAlt = null;
     if (base.compareAlt !== null && !inRange(base.compareAlt)) base.compareAlt = nearestInRange(base.compareAlt);
+    // rates=<fastDrogue>/<fastMain>,<slowDrogue>/<slowMain> -- defensive like
+    // every other param here: a malformed component falls back to that
+    // preset/part's own default rather than half-applying, and every
+    // surviving number gets clamped into rate_limits_fps (a hand-edited URL
+    // could carry anything).
+    const ratesParam = URL_PARAMS.get('rates');
+    if (ratesParam) {
+      const limits = DATA.descent_params.rate_limits_fps;
+      const clamp = (part, v) => Math.min(limits[part][1], Math.max(limits[part][0], v));
+      const [fastStr, slowStr] = ratesParam.split(',');
+      const parsed = { fast: fastStr, slow: slowStr };
+      for (const name of ['fast', 'slow']) {
+        const m = parsed[name] && parsed[name].match(/^(\d+(?:\.\d+)?)\/(\d+(?:\.\d+)?)$/);
+        if (m) {
+          base.rateFps[name] = { drogue: clamp('drogue', Number(m[1])), main: clamp('main', Number(m[2])) };
+        }
+      }
+    }
   }
   return base;
 }
@@ -404,9 +425,7 @@ function applyModeUI(mode) {
   document.getElementById('model-hint').textContent = mode === 'byHistory'
     ? 'Color and shape both mean model here (same colors as the main map) -- shape is the colorblind-safe backup. Hover a model to isolate its path; click to pin, click again to release.'
     : 'Hover a model to isolate it -- zones collapse to a line (a single model\'s fast/slow points fall on the same bearing from the pad). Click to pin; click again to release.';
-  document.getElementById('rate-hint').textContent =
-    'Fast = single deploy 20 fps, or dual deploy drogue 100 fps + main 20 fps. Slow = single deploy 10 fps, or dual deploy drogue 80 fps + main 10 fps.'
-    + (mode === 'byHistory' ? ' History starts on fast -- click to switch, click again to clear.' : ' Hover a rate to isolate it; click to pin, click again to release.');
+  updateRateHint();
 }
 
 // --- toggles ---
@@ -452,6 +471,7 @@ function setMode(mode) {
   buildTimeLegend();
   buildModelLegend();
   buildRateLegend();
+  buildRateEditor();
   // note: no render() here -- buildToggle() already calls it after this
   // onChange callback returns, for the mode-toggle click that triggers this.
 }
@@ -469,7 +489,7 @@ function altitudesInRange() { return altitudesDescending().filter(altInRange); }
 // pipeline-side, so a high-waiver site on Single has real zones for only
 // part of DATA.altitudes.
 function altitudesWithZones() {
-  return new Set((DATA.data[`${state.hour}_${state.deploy}`] || []).map(z => z.altitude));
+  return new Set(zonesFor(state.hour, state.deploy).map(z => z.altitude));
 }
 
 // Row centers, in px from the top of #alt-list's content, for whichever rows
@@ -672,15 +692,17 @@ function buildAltList() {
   });
 }
 
-// Which models actually contributed a point anywhere in the current DATA
-// (any hour/deploy/altitude) -- a model beyond its forecast horizon for this
-// lead time (e.g. HRRR ~48h out, by a T-5/T-7 capture) has none at all. Used
-// to gray those out in the legend instead of leaving them hoverable/
-// clickable with nothing behind them, which just looked broken.
+// Which models published a usable wind profile at any hour -- a model beyond
+// its forecast horizon for this lead time (e.g. HRRR ~48h out, by a T-5/T-7
+// capture) has none at all. Used to gray those out in the legend instead of
+// leaving them hoverable/clickable with nothing behind them, which just
+// looked broken. No simulation needed -- this is just which keys exist in
+// DATA.wind_profiles, unlike the old DATA.data-based version which had to
+// scan every already-simulated point.
 function modelsWithData() {
   const present = new Set();
-  Object.values(DATA.data).forEach(zones => {
-    zones.forEach(zone => zone.points.forEach(pt => present.add(pt.model)));
+  Object.values(DATA.wind_profiles || {}).forEach(models => {
+    Object.keys(models).forEach(m => present.add(m));
   });
   return present;
 }
@@ -759,6 +781,73 @@ function buildRateLegend() {
     el.appendChild(row);
   });
 }
+
+// Editable drogue/main fps per Fast/Slow preset -- see state.rateFps's own
+// declaration in freshState() for why this lives in `state` rather than as
+// a standing "what-if" global like boostAngleDeg. Always both deploy modes'
+// worth of numbers (drogue + main) regardless of the current deploy toggle
+// -- single deploy only ever uses `main` (see zoneFor()), but the editor
+// edits the shared preset definitions, not a deploy-specific view of them.
+function buildRateEditor() {
+  const el = document.getElementById('rate-edit');
+  el.innerHTML = '';
+  const limits = DATA.descent_params.rate_limits_fps;
+
+  const head = (text) => { const d = document.createElement('div'); d.className = 'rate-edit-head'; d.textContent = text; el.appendChild(d); };
+  head(''); head('Drogue'); head('Main');
+
+  RATE_LEGEND_ITEMS.forEach(({ key, label, shape }) => {
+    const swatchStyle = shape === 'circle' ? 'border-radius:50%;' : 'border-radius:3px;';
+    const labelEl = document.createElement('div');
+    labelEl.className = 'rate-edit-label';
+    labelEl.innerHTML = `<div style="width:12px;height:12px;${swatchStyle}background:var(--text-secondary);flex-shrink:0;"></div><span>${label}</span>`;
+    el.appendChild(labelEl);
+
+    ['drogue', 'main'].forEach(part => {
+      const input = document.createElement('input');
+      input.type = 'number';
+      input.min = limits[part][0];
+      input.max = limits[part][1];
+      input.step = 1;
+      input.value = state.rateFps[key][part];
+      // 'change' (blur/Enter/stepper), not 'input' -- typing "120" fires at
+      // "1" mid-keystroke on 'input', and a transient 1fps rate would blow
+      // up the view box (see growBaseViewBox()) before the user finishes.
+      input.addEventListener('change', () => {
+        let v = Number(input.value);
+        if (!Number.isFinite(v)) v = state.rateFps[key][part];
+        v = Math.min(limits[part][1], Math.max(limits[part][0], v));
+        input.value = v;
+        state.rateFps[key][part] = v;
+        invalidateZones();
+        buildRateEditor(); // refresh hint text against the new numbers
+        render();
+      });
+      el.appendChild(input);
+    });
+  });
+
+  updateRateHint();
+}
+
+// Split from applyModeUI() -- the hint's numeric half depends on
+// state.rateFps (editable, changes independently of mode), the interaction
+// half depends on state.mode. Called from both buildRateEditor() (a rate
+// just changed) and applyModeUI() (mode just changed) so either alone keeps
+// the full sentence correct.
+function updateRateHint() {
+  const f = state.rateFps.fast, s = state.rateFps.slow;
+  document.getElementById('rate-hint').textContent =
+    `Fast = ${f.drogue}/${f.main} fps (drogue/main), Slow = ${s.drogue}/${s.main} fps -- editable above (ground-level rates; the sim scales each faster for the thinner air higher up, so the actual drogue rate near a 30,000-50,000ft apogee can be 1.5-2.5x the ground number). Reset with the button above the legend.`
+    + (state.mode === 'byHistory' ? ' History starts on fast -- click to switch, click again to clear.' : ' Hover a rate to isolate it; click to pin, click again to release.');
+}
+
+document.getElementById('rate-reset').addEventListener('click', () => {
+  state.rateFps = structuredClone(DATA.descent_params.default_rates_fps);
+  invalidateZones();
+  buildRateEditor();
+  render();
+});
 
 function buildTimeLegend() {
   const el = document.getElementById('time-legend');
@@ -1246,7 +1335,12 @@ function showTooltip(evt, hoveredPt) {
     const whenPart = state.mode === 'byTime' ? ` &middot; ${HOUR_LABELS[rp.hour]}`
       : state.mode === 'byHistory' ? ` &middot; ${leadDaysLabel(rp.capture_date, HISTORY.target_date)} (captured ${rp.capture_date})`
       : '';
-    return `<div class="tt-row"><b>${MODEL_LABELS[rp.model] || rp.model.toUpperCase()}</b> &middot; ${rp.rate}${whenPart}<br>` +
+    // Rate name alone ("fast") is ambiguous now that the numbers behind it
+    // are user-editable -- show the live fps values from state.rateFps
+    // rather than a name the viewer's own controls could disagree with.
+    const r = state.rateFps ? state.rateFps[rp.rate] : null;
+    const rateLabel = r ? (state.deploy === 'single' ? `${rp.rate} (${r.main} fps)` : `${rp.rate} (${r.drogue}/${r.main} fps)`) : rp.rate;
+    return `<div class="tt-row"><b>${MODEL_LABELS[rp.model] || rp.model.toUpperCase()}</b> &middot; ${rateLabel}${whenPart}<br>` +
       `apogee ${rp.altitude.toLocaleString()} ft<br>` +
       `offset: ${rp.x_ft >= 0 ? '+' : ''}${rp.x_ft.toFixed(0)} ft E, ${rp.y_ft >= 0 ? '+' : ''}${rp.y_ft.toFixed(0)} ft N<br>` +
       `distance from pad: ${dist.toFixed(0)} ft</div>`;
@@ -2062,6 +2156,155 @@ function bufferedPointsFt(pointsFt, radiusFt, n = 12) {
   return out;
 }
 
+// --- client-side descent-drift simulation ----------------------------------
+// Ported from pipeline/splash_zones.py's air_density_ratio()/descent_rate_at()/
+// interp()/simulate(). Same reason the hull/buffer port above exists, one
+// step further: the fast/slow descent rates are now user-editable (see
+// buildRateEditor()), so every landing point has to be integrated here from
+// the published wind profile rather than baked into the JSON at whatever
+// rates that day's pull happened to use. That's also what removed the old
+// `data` key entirely -- the pull now publishes a few hundred wind numbers
+// (DATA.wind_profiles) instead of a pre-simulated point for every
+// altitude x rate x model combination (hutto 2026-08-01: 143.9KB -> 10.5KB).
+// std_atm_ft() is deliberately NOT ported -- pressure levels are already
+// resolved to AGL feet server-side, in build_profile_single().
+//
+// Mirrors splash_zones.py's ICAO constants exactly (see that file's own
+// comment for the ISA-table verification) -- not re-derived or re-verified
+// here, just copied, so the two stay numerically identical by construction.
+const ICAO_T0_K = 288.15;
+const ICAO_LAPSE_K_PER_M = 0.0065;
+const ICAO_TROP_TOP_M = 11000.0;
+const ICAO_TROP_EXP = 5.25588;
+const ICAO_STRAT_COEF_PER_M = 1.5768e-4;
+const ICAO_RHO_RATIO_AT_TROPOPAUSE = (1 - ICAO_LAPSE_K_PER_M * ICAO_TROP_TOP_M / ICAO_T0_K) ** (ICAO_TROP_EXP - 1);
+const FT_PER_M = 3.28084;
+const MPH_TO_FTPS = 5280 / 3600;
+
+function airDensityRatio(altMMsl) {
+  if (altMMsl <= ICAO_TROP_TOP_M) {
+    const theta = 1 - ICAO_LAPSE_K_PER_M * altMMsl / ICAO_T0_K;
+    return theta ** (ICAO_TROP_EXP - 1);
+  }
+  return ICAO_RHO_RATIO_AT_TROPOPAUSE * Math.exp(-ICAO_STRAT_COEF_PER_M * (altMMsl - ICAO_TROP_TOP_M));
+}
+
+// groundRhoRatio is a default param, not recomputed per call like the Python
+// does -- it's constant per site for the whole sim, and simulateDrift()
+// below calls this once per integration step, so hoisting it avoids two
+// Math.pow() calls x every step while descentRateAt() still reads as a
+// faithful standalone port with the same argument order.
+function descentRateAt(altAglFt, groundRateFtps, siteElevFt, groundRhoRatio = airDensityRatio(siteElevFt / FT_PER_M)) {
+  const rhoHere = airDensityRatio((altAglFt + siteElevFt) / FT_PER_M);
+  return groundRateFtps * Math.sqrt(groundRhoRatio / rhoHere);
+}
+
+// Wind [speedMph, dirDeg] at `alt`, linearly interpolated (circular for
+// direction) between the two profile points bracketing it -- mirrors
+// interp(). `profile` is one of DATA.wind_profiles[hour][model], already
+// sorted by altitude server-side.
+function interpWind(profile, alt) {
+  if (alt <= profile[0][0]) return [profile[0][1], profile[0][2]];
+  const last = profile[profile.length - 1];
+  if (alt >= last[0]) return [last[1], last[2]];
+  for (let i = 0; i < profile.length - 1; i++) {
+    const [a0, s0, d0] = profile[i];
+    const [a1, s1, d1] = profile[i + 1];
+    if (a0 <= alt && alt <= a1) {
+      const f = (alt - a0) / (a1 - a0);
+      const speed = s0 + f * (s1 - s0);
+      // Python's `%` on a negative operand returns non-negative; JS's
+      // doesn't -- both expressions below need the extra `+360, %360`
+      // wrap or a heading crossing 0deg silently flips the drift vector.
+      const diff = (((d1 - d0 + 180) % 360) + 360) % 360 - 180;
+      const direction = (((d0 + f * diff) % 360) + 360) % 360;
+      return [speed, direction];
+    }
+  }
+  throw new Error('unreachable -- profile is sorted and alt is bounded above');
+}
+
+// Integrate drift (xFt east, yFt north) across one or more descent phases --
+// mirrors simulate(). `phases` is [[rateFtps, segTopFt, segBottomFt], ...],
+// e.g. dual-deploy passes a drogue phase down to main-deploy altitude, then
+// a main phase down to the ground. rateFtps is scaled per-step by
+// descentRateAt() (thinner air at altitude -> faster actual fall than the
+// same drogue's ground-level rate), not held constant across the phase.
+function simulateDrift(profile, apogeeFt, phases, siteElevFt, stepFt) {
+  let x = 0, y = 0, alt = apogeeFt;
+  const groundRhoRatio = airDensityRatio(siteElevFt / FT_PER_M);
+  for (const [rateFtps, segTop, segBottom] of phases) {
+    const top = Math.min(alt, segTop);
+    const bottom = segBottom;
+    if (top <= bottom) continue;
+    const n = Math.max(1, Math.floor((top - bottom) / stepFt)); // top>bottom always here, so Math.floor==Math.trunc
+    const dz = (top - bottom) / n;
+    for (let i = 0; i < n; i++) {
+      const mid = top - (i + 0.5) * dz;
+      const [spdMph, drc] = interpWind(profile, mid);
+      const spdFtps = spdMph * MPH_TO_FTPS;
+      const u = -spdFtps * Math.sin(drc * Math.PI / 180);
+      const v = -spdFtps * Math.cos(drc * Math.PI / 180);
+      const dt = dz / descentRateAt(mid, rateFtps, siteElevFt, groundRhoRatio);
+      x += u * dt;
+      y += v * dt;
+    }
+    alt = bottom;
+  }
+  return [x, y];
+}
+
+// Zone cache: `${hour}_${deploy}_${altitude}` -> {altitude, points}. Cleared
+// on dataset load and on a rate edit -- and on nothing else, deliberately:
+// x_ft/y_ft don't depend on padOffsetFt (applied later, in ftToPx()) or on
+// boostAngleDeg (applied later, in computeBufferHullPx()), so dragging the
+// pad or moving the boost slider stays a pure redraw with zero re-simulation.
+// Also why several legend hover handlers (model/rate/hour) calling render()
+// on mouseenter/mouseleave don't re-simulate the whole grid on every mouse
+// movement -- a full grid computes once per (dataset, rate-setting), every
+// subsequent hover/pin/drag is a cache hit.
+let zoneCache = new Map();
+function invalidateZones() { zoneCache.clear(); }
+
+// One altitude's zone at the given hour/deploy, computed just-in-time from
+// DATA.wind_profiles at the current state.rateFps -- returns the same
+// {altitude, points: [{model, rate, x_ft, y_ft}]} shape drawZone() already
+// consumes (it was already reading only these two fields; see drawZone()'s
+// own comment). null above single_deploy_max_alt_ft for single deploy
+// (mirrors compute_splash_points()'s own skip) or if the hour has no
+// published profiles at all.
+function zoneFor(hour, deploy, altitudeFt) {
+  const cacheKey = `${hour}_${deploy}_${altitudeFt}`;
+  if (zoneCache.has(cacheKey)) return zoneCache.get(cacheKey);
+
+  const dp = DATA.descent_params;
+  const profiles = DATA.wind_profiles[hour];
+  let zone = null;
+  if (profiles && !(deploy === 'single' && altitudeFt > dp.single_deploy_max_alt_ft)) {
+    const points = [];
+    for (const [model, profile] of Object.entries(profiles)) {
+      for (const rateName of ['fast', 'slow']) {
+        const r = state.rateFps[rateName];
+        // Mirrors compute_splash_points()'s own phase construction exactly:
+        // dual is a drogue phase down to main-deploy altitude then a main
+        // phase to the ground; single is one main-rate phase the whole way.
+        const phases = deploy === 'dual'
+          ? [[r.drogue, altitudeFt, dp.main_deploy_altitude_ft], [r.main, dp.main_deploy_altitude_ft, 0]]
+          : [[r.main, altitudeFt, 0]];
+        const [x_ft, y_ft] = simulateDrift(profile, altitudeFt, phases, dp.site_elev_ft, dp.descent_step_ft);
+        points.push({ model, rate: rateName, x_ft, y_ft });
+      }
+    }
+    zone = { altitude: altitudeFt, points };
+  }
+  zoneCache.set(cacheKey, zone);
+  return zone;
+}
+
+function zonesFor(hour, deploy) {
+  return DATA.altitudes.map(alt => zoneFor(hour, deploy, alt)).filter(z => z !== null);
+}
+
 // Draggable launch pad: capped at DATA.max_pad_move_ft from the surveyed GPS
 // point -- per-site (config.SITES[...]["max_pad_move_ft"] server-side, see
 // its own comment there), since a club's real alternate pads aren't the
@@ -2664,11 +2907,12 @@ function renderAccuracyTable() {
 }
 
 function drawPoint(g, pt, hour, altitude, fillColor) {
-  // Recomputed from x_ft/y_ft via ftToPx() rather than trusting pt.px/pt.py
-  // (the server-baked pixel position) -- the baked value is only ever right
-  // when the pad hasn't been dragged (see padOffsetFt); recomputing here is
-  // what makes every rendered point actually move with the pad instead of
-  // just the hulls/buffer (which already went through ftToPx()).
+  // px/py computed here via ftToPx(), not carried on `pt` itself -- zoneFor()
+  // only produces raw x_ft/y_ft (see its own comment), and even before that
+  // change a baked pixel position would only ever be right when the pad
+  // hasn't been dragged (see padOffsetFt); computing it fresh here is what
+  // makes every rendered point actually move with the pad, same as the
+  // hulls/buffer (which already go through ftToPx() too).
   const [px, py] = ftToPx(pt.x_ft, pt.y_ft);
   const rp = Object.assign({}, pt, { altitude, hour, px, py });
   renderedPoints.push(rp);
@@ -2735,12 +2979,12 @@ function drawZone(zone, color, hour) {
   }
 
   // Both hulls are recomputed from `points` -- the *currently visible*
-  // (rate-filtered) set -- rather than zone.points/zone.core_hull_px (every
-  // rate, baked server-side): isolating Fast or Slow should shrink the zone
-  // to what that rate alone actually covers, not just hide dots inside an
-  // unchanged both-rates outline. core_hull_px still seeds the initial
-  // render before any filter is touched (same points, same result), so this
-  // isn't a behavior change at the default "both rates" state.
+  // (rate-filtered) set: isolating Fast or Slow should shrink the zone to
+  // what that rate alone actually covers, not just hide dots inside an
+  // unchanged both-rates outline. `zone.points` itself is computed
+  // just-in-time by zoneFor() (see its own comment) from the published wind
+  // profile at whatever rate the rate editor currently has set -- there's
+  // no separate server-baked point set any more to fall back to.
   const buf = document.createElementNS(ns, 'polygon');
   buf.setAttribute('points', polyPoints(computeBufferHullPx(points, boostAngleDeg, zone.altitude)));
   buf.setAttribute('class', 'zone-buffer');
@@ -2804,6 +3048,14 @@ function buildPermalinkParams(includeDate) {
   // 2026-08) and resolves sanely against a different site's shorter list.
   if (state.altMin !== DATA.altitudes[0]) p.set('altmin', state.altMin);
   if (state.altMax !== DATA.altitudes[DATA.altitudes.length - 1]) p.set('altmax', state.altMax);
+  // Editable rates (see buildRateEditor()) -- emitted only when they differ
+  // from this dataset's own defaults, same convention as altmin/altmax
+  // above. fast-then-slow, drogue-then-main.
+  const dr = DATA.descent_params.default_rates_fps;
+  const r = state.rateFps;
+  if (r.fast.drogue !== dr.fast.drogue || r.fast.main !== dr.fast.main || r.slow.drogue !== dr.slow.drogue || r.slow.main !== dr.slow.main) {
+    p.set('rates', `${r.fast.drogue}/${r.fast.main},${r.slow.drogue}/${r.slow.main}`);
+  }
   return p;
 }
 
@@ -2812,10 +3064,54 @@ function syncUrl() {
   history.replaceState(null, '', `${location.pathname}?${buildPermalinkParams(dateExplicitlyChosen).toString()}`);
 }
 
+// BASE_VB seeds from the pull's own default-rate sweep (splash_zones.py's
+// build_viewer_data(), a disc-extent sweep at config.DUAL_DEPLOY_RATES_FPS/
+// SINGLE_DEPLOY_RATES_FPS) -- a user dialing in a slower rate client-side can
+// drift past that box. Grows (never shrinks -- a monotonic ceiling avoids the
+// zoom-out limit jittering as the selection changes) to whatever the
+// currently-drawn zones' buffer hulls actually reach, reassigned as a new
+// array each time (not mutated in place) so a fresh DATA.base_view_box on
+// the next dataset load starts clean. `zones` is whatever render() is about
+// to draw -- computing their buffer-hull px extent here duplicates a little
+// of drawZone()'s own work, but it's cheap (see simulateDrift()'s own
+// comment on performance headroom) and lets the background rect be sized
+// correctly *before* it's drawn, not after.
+function growBaseViewBox(zones) {
+  const allX = [], allY = [];
+  zones.forEach(zone => {
+    const points = zone.points.filter(pt => rateMatches(pt, activeRate()));
+    computeBufferHullPx(points, boostAngleDeg, zone.altitude).forEach(([x, y]) => { allX.push(x); allY.push(y); });
+  });
+  if (!allX.length) return;
+  const pad = 80;
+  const minX = Math.min(BASE_VB[0], Math.min(...allX) - pad);
+  const minY = Math.min(BASE_VB[1], Math.min(...allY) - pad);
+  const maxX = Math.max(BASE_VB[0] + BASE_VB[2], Math.max(...allX) + pad);
+  const maxY = Math.max(BASE_VB[1] + BASE_VB[3], Math.max(...allY) + pad);
+  const span = Math.max(maxX - minX, maxY - minY);
+  const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
+  BASE_VB = [cx - span / 2, cy - span / 2, span, span];
+  MAX_SPAN = Math.max(BASE_VB[2], BASE_VB[3]) * 1.4;
+}
+
 function render() {
   svg.innerHTML = '';
   renderedPoints = [];
   document.getElementById('accuracy-section').style.display = 'none'; // shown by renderAccuracyTable() in History mode only, when actuals exist
+
+  // Zones computed before the background rect below is sized/drawn -- see
+  // growBaseViewBox()'s own comment -- so a slower-than-default rate that
+  // drifts past the pull's own default-rate sweep still gets a correctly
+  // sized background instead of being clipped.
+  let altitudeZones = [], timeZones = [];
+  if (state.mode === 'byAltitude') {
+    altitudeZones = zonesFor(state.hour, state.deploy).filter(z => altInRange(z.altitude));
+    growBaseViewBox(altitudeZones);
+  } else if (state.mode === 'byTime') {
+    const orderedHours = [...DATA.hours].sort((a, b) => b - a);
+    timeZones = orderedHours.map(hour => ({ hour, zone: zoneFor(hour, state.deploy, state.compareAlt) })).filter(hz => hz.zone);
+    growBaseViewBox(timeZones.map(hz => hz.zone));
+  }
 
   // background covering the full pannable extent, then two geo-registered image
   // layers on top: a coarser wide-area satellite image for context when zoomed
@@ -2854,9 +3150,7 @@ function render() {
 
   if (state.mode === 'byAltitude') {
     // one time of day, every in-range altitude, colored by altitude
-    const key = `${state.hour}_${state.deploy}`;
-    const zones = (DATA.data[key] || []).filter(z => altInRange(z.altitude));
-    const ordered = [...zones].sort((a, b) => b.altitude - a.altitude);
+    const ordered = [...altitudeZones].sort((a, b) => b.altitude - a.altitude);
     ordered.forEach(zone => drawZone(zone, ALT_COLORS_HEX[zone.altitude], state.hour));
   } else if (state.mode === 'byHistory') {
     renderHistory();
@@ -2866,12 +3160,7 @@ function render() {
     // altitude, all 4 times of day at once, colored by time instead.
     // Drawn latest-time-first so earlier times layer on top, matching the
     // by-altitude view's "smallest/most-relevant on top" convention.
-    const orderedHours = [...DATA.hours].sort((a, b) => b - a);
-    orderedHours.forEach(hour => {
-      const key = `${hour}_${state.deploy}`;
-      const zone = (DATA.data[key] || []).find(z => z.altitude === state.compareAlt);
-      if (zone) drawZone(zone, TIME_COLORS_HEX[hour], hour);
-    });
+    timeZones.forEach(({ hour, zone }) => drawZone(zone, TIME_COLORS_HEX[hour], hour));
   }
 
   drawPadMarker();
@@ -3001,6 +3290,7 @@ function initFromData() {
   buildAltRange();
   buildModelLegend();
   buildRateLegend();
+  buildRateEditor();
   banDismissed = false; // a dismiss on a previous site/date shouldn't suppress a genuinely new ban
   renderCloudPanel();
   renderRainTimeline();
@@ -3026,6 +3316,18 @@ async function loadDataset(entry) {
   subtitleEl.textContent = 'Loading…';
   const resp = await fetch(withVersion(entry.data_path));
   DATA = await resp.json();
+  // wind_profiles/descent_params landed 2026-08, replacing precomputed
+  // per-rate points -- everything downstream (freshState()'s rateFps seed,
+  // zoneFor(), the rate editor) assumes they exist. Rather than scatter
+  // defensive checks through all of that, bail out here before any of it
+  // runs: an old-schema file predates client-side rate control and has no
+  // zones to show at all, so say so plainly instead of leaving the
+  // previous date's map on screen or crashing partway through setup.
+  if (!DATA.wind_profiles) {
+    svg.innerHTML = '';
+    subtitleEl.innerHTML = `Target ${entry.target_date} &middot; <strong>this date predates client-side rate control -- re-run the pipeline to see its splash zones</strong>`;
+    return;
+  }
   // history_path is null for a target processed before this feature existed
   // -- HISTORY just stays null and the History view mode shows its own
   // "nothing published yet" state (see renderHistory()) instead of erroring.

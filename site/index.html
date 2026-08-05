@@ -119,9 +119,13 @@
       <div id="model-legend"></div>
       <div class="alt-hint" id="model-hint">Hover a model to isolate it -- zones collapse to a line (a single model's fast/slow points fall on the same bearing from the pad). Click to pin; click again to release.</div>
 
-      <div class="alt-list-title" style="margin-top:16px;">Rate <button class="info-btn" type="button" data-hint="rate-hint" title="Show interaction hint">i</button></div>
+      <div class="alt-list-title" style="margin-top:16px;">
+        Rate <button class="info-btn" type="button" data-hint="rate-hint" title="Show interaction hint">i</button>
+        <button id="rate-reset" class="zone-color-reset-btn" type="button" title="Reset to this site's default rates">&#8635;</button>
+      </div>
       <div id="rate-legend"></div>
-      <div class="alt-hint" id="rate-hint">Hover a rate to isolate it; click to pin, click again to release. Fast = single deploy 20 fps, or dual deploy drogue 100 fps + main 20 fps. Slow = single deploy 10 fps, or dual deploy drogue 80 fps + main 10 fps &mdash; all 4 numbers are the rate at this site's own ground level (a low-altitude test-drop number), not a fixed rate for the whole descent. The sim scales each faster for the thinner air higher up (same drogue/canopy falls faster in less dense air), so the actual drogue rate near a 30,000&ndash;50,000ft apogee can be 1.5&ndash;2.5x the ground number shown here, easing back down to it by the time the rocket's low.</div>
+      <div class="rate-edit" id="rate-edit"></div>
+      <div class="alt-hint" id="rate-hint">Hover a rate to isolate it; click to pin, click again to release.</div>
     </div>
 
     <div class="map-col-notes">

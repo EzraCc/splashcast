@@ -22,7 +22,7 @@ Built for the author's own Texas/Kansas/South Dakota rocketry clubs, but the pip
 
 For each launch site and upcoming launch date, Splashcast:
 
-- Pulls current wind forecasts from 6 independent weather models and simulates the descent (apogee to ground) for every combination of time-of-day, deploy type (single/dual), descent rate (fast/slow), and apogee altitude up to that site's waiver.
+- Pulls current wind forecasts from 6 independent weather models and lets you simulate the descent (apogee to ground) for any combination of time-of-day, deploy type (single/dual), apogee altitude up to that site's waiver, and editable Fast/Slow drogue/main descent rates — the simulation itself runs live in the browser from the published wind profile, not precomputed server-side.
 - Shows the resulting landing points as a **convex-hull zone** per altitude/time — not a single predicted point — plus a boost-angle buffer band accounting for non-vertical launches and weathercocking.
 - Re-pulls daily in the week leading up to a launch, so you can see how the forecast (and the projected splash zone) has drifted as the launch date approaches — the **History** view mode.
 - Shows per-model cloud cover by altitude band (low/mid/high, waiver-aware) — a map-corner panel on desktop, a full-width card below the map on narrow screens — flagging an hour where a majority of models agree it's at/above the safety-code cloud-cover threshold, and a burn-ban status chip/overlay for sites with a real per-county feed to check.
@@ -30,6 +30,7 @@ For each launch site and upcoming launch date, Splashcast:
 - Once a launch date has passed, pulls NOAA's own HRRR analysis (its data-assimilation output, the closest free proxy to "what actually happened") and plots it as a star marker against every model's prior forecasts, with a per-model accuracy table.
 - Lets you toggle satellite vs. road map imagery, drag the launch pad to try a nearby setup spot, and adjust the boost-angle buffer live — all client-side, no server.
 - Lets you narrow the apogee-altitude list to a min/max range (a vertical slider beside the altitude legend, with the row list graying out whatever falls outside it) — useful once a tall-waiver site's list runs to 20+ options — on top of the existing per-altitude hover/pin isolation.
+- Lets you edit the Fast/Slow descent-rate presets directly (drogue + main fps, next to the rate legend) — real observed rates on a given rocket/recovery setup often diverge from the defaults, and the map updates live as you type.
 
 It is **not** a go/no-go safety tool — it surfaces model spread and forecast-drift patterns for a launch director to read against their own approved landing zone and safety code, not a pass/fail call. The viewer itself carries a disclaimer to the same effect: an aid for planning, not legal advice, and not a substitute for checking with local authorities on burn bans and other applicable rules.
 
@@ -37,10 +38,10 @@ It is **not** a go/no-go safety tool — it surfaces model spread and forecast-d
 
 Two halves:
 
-- **`pipeline/`** (Python, never deployed) pulls wind data, runs the descent-drift simulation, and writes the results as JSON into `site/data/`.
-- **`site/`** (static HTML/CSS/JS, deployed via GitHub Pages) reads that JSON and renders it — no backend, no build step, no framework.
+- **`pipeline/`** (Python, never deployed) pulls wind data and writes it as a compact per-model wind profile (speed/direction by altitude) into `site/data/`, along with the descent-sim constants needed to reproduce the simulation exactly.
+- **`site/`** (static HTML/CSS/JS, deployed via GitHub Pages) runs the descent-drift simulation itself, client-side, for whatever altitude/deploy/rate/time-of-day is currently selected — no backend, no build step, no framework.
 
-For each altitude/time-of-day/deploy/rate combination, the pipeline integrates wind vectors from apogee down to the ground in small steps (descent rate itself scales with air density at altitude, not held constant), giving one landing point per model. The **zone** shown on the map is the convex hull of those points, plus an outer buffer band representing boost-phase/weathercocking uncertainty (`apogee_ft * tan(boost_angle)`, adjustable live via a slider in the viewer). Point color = model, point shape = descent rate, so identity survives without relying on color alone.
+For the current altitude/time-of-day/deploy/rate combination, the viewer integrates wind vectors from apogee down to the ground in small steps (descent rate itself scales with air density at altitude, not held constant), giving one landing point per model — the same integration the pipeline used to run server-side, ported to JS so it can respond live to the altitude slider, deploy toggle, and the editable Fast/Slow drogue/main rate inputs. The **zone** shown on the map is the convex hull of those points, plus an outer buffer band representing boost-phase/weathercocking uncertainty (`apogee_ft * tan(boost_angle)`, adjustable live via a slider in the viewer). Point color = model, point shape = descent rate, so identity survives without relying on color alone.
 
 For the full design rationale (why convex hulls instead of a weighted average, why the boost-angle buffer exists, how the descent simulation itself works) see [`docs/spec.md`](docs/spec.md).
 

@@ -270,24 +270,28 @@ def compare_to_pipeline(site_id: str, target_date: date, real_x_ft: float, real_
     tripoli_houston_south's 2026-07-25 flights: the last capture on record is
     T-4/2026-07-21, four days short), so this falls back to the latest
     capture actually on disk rather than hard-failing. Check this field
-    before treating model_forecasts as a true T-0 comparison."""
+    before treating model_forecasts as a true T-0 comparison.
+
+    within_published_core_hull's hull is built here from points_history.json's
+    own un-hulled points (sz.hull_of()), not read off a pre-baked
+    core_hull_px -- the published zone JSON stopped carrying precomputed
+    hulls/points entirely as of 2026-08 (see splash_zones.py's
+    build_viewer_data(), which publishes wind profiles instead; the viewer
+    now runs the drift sim itself, client-side). Same point set, same hull
+    function, so this gives an identical result to the old approach for the
+    normal case where points_history's capture matches the zone JSON's own
+    capture -- true by construction, both come from the same run()."""
     live_dir = config.SITE_DIR / "data" / site_id / "live" / str(target_date)
     hist_path = live_dir / "points_history.json"
     zone_paths = sorted(live_dir.glob("splash_zones_captured_*.json"))
     capture_date = max(date.fromisoformat(p.stem.removeprefix("splash_zones_captured_")) for p in zone_paths)
-    zone_path = live_dir / f"splash_zones_captured_{capture_date}.json"
     hist = json.loads(hist_path.read_text())
-    zone_data = json.loads(zone_path.read_text())
 
     result = {"forecast_capture_date_used": str(capture_date), "model_forecasts": {}, "hrrr_analysis_actual_proxy": {}, "within_published_core_hull": {}}
     for hb in hour_buckets:
-        zones = zone_data["data"].get(f"{hb}_dual", [])
-        zone = next((z for z in zones if z["altitude"] == altitude_bucket), None)
-        if zone:
-            hull_ft = sz.hull_of([(p["x_ft"], p["y_ft"]) for p in zone["points"]])
-            result["within_published_core_hull"][str(hb)] = point_in_polygon(real_x_ft, real_y_ft, hull_ft)
-        for deploy, rate in [("dual", "fast"), ("dual", "slow")]:
-            key = f"{hb}_{deploy}_{rate}_{altitude_bucket}"
+        hull_pts = []
+        for rate in config.DUAL_DEPLOY_RATES_FPS:  # both rates -- "the default combined view"
+            key = f"{hb}_dual_{rate}_{altitude_bucket}"
             per_model = {
                 pt["model"]: _delta(pt["x_ft"], pt["y_ft"], real_x_ft, real_y_ft, real_dist_ft)
                 for pt in hist["points_by_key"].get(key, [])
@@ -295,9 +299,14 @@ def compare_to_pipeline(site_id: str, target_date: date, real_x_ft: float, real_
             }
             if per_model:
                 result["model_forecasts"][key] = per_model
+            for pt in hist["points_by_key"].get(key, []):
+                if pt["capture_date"] == str(capture_date):
+                    hull_pts.append((pt["x_ft"], pt["y_ft"]))
             actual_pt = hist["actuals"].get(key)
             if actual_pt:
                 result["hrrr_analysis_actual_proxy"][key] = _delta(actual_pt["x_ft"], actual_pt["y_ft"], real_x_ft, real_y_ft, real_dist_ft)
+        if hull_pts:
+            result["within_published_core_hull"][str(hb)] = point_in_polygon(real_x_ft, real_y_ft, sz.hull_of(hull_pts))
     return result
 
 

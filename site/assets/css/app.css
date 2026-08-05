@@ -570,6 +570,19 @@
   .alt-hint { font-size: 0.75rem; color: var(--text-muted); margin-top: 6px; line-height: 1.5; display: none; }
   .alt-hint.open { display: block; }
 
+  /* Fast/Slow drogue+main fps, editable -- sits below #rate-legend, a
+     sibling not nested inside its rows: those rows own hover-isolate/
+     click-pin handlers that would misfire on focus/click into a nested
+     <input>. Grid: blank header cell, Drogue, Main; one row per preset. */
+  .rate-edit { display: grid; grid-template-columns: auto 1fr 1fr; gap: 4px 8px; align-items: center; margin-top: 6px; font-size: 0.78rem; color: var(--text-secondary); }
+  .rate-edit-head { color: var(--text-muted); font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.03em; }
+  .rate-edit-label { display: flex; align-items: center; gap: 6px; }
+  .rate-edit input[type="number"] {
+    width: 100%; box-sizing: border-box; padding: 2px 4px;
+    border: 1px solid var(--border); border-radius: 4px;
+    background: var(--surface-1); color: var(--text-primary); font-size: 0.78rem;
+  }
+
   .buffer-note { display: flex; align-items: center; gap: 10px; font-size: 0.8rem; color: var(--text-secondary); max-width: 620px; }
   .buffer-swatch { width: 20px; height: 14px; border-radius: 3px; flex-shrink: 0; background: #4a3aa7; opacity: 0.30; border: 1px solid #4a3aa7; }
   .boost-angle-control { display: flex; align-items: center; gap: 10px; margin-top: 8px; max-width: 620px; }
