@@ -468,22 +468,32 @@
   /* A vertical fader, not a pair of <select>s -- narrow dropdowns read badly
      in this sidebar's width, and the altitude set is still a fixed discrete
      list either way (each drag position snaps to one of DATA.altitudes),
-     never free entry. Height is set inline by altRangeSliderHeightPx() in
-     app.js from the site's *full* altitude count, not matched to .alt-list's
-     own rendered height via flex-stretch -- that coupling was tried first
-     and created a feedback loop during a drag (narrowing the range shrinks
-     .alt-list's row count, which shrank the stretched slider mid-gesture,
-     which changed the drag's px-per-altitude-step math while the pointer was
-     still moving, throwing the thumb far past where the cursor actually
-     was). min-height is the floor for a short site list (e.g. gunter's 6
-     rows) once that JS-computed height clamps down to it.
+     never free entry. Height and thumb positions are both set inline by
+     app.js's buildAltRange() from #alt-list's own real row positions
+     (offsetTop/offsetHeight of each rendered row), not a row-height formula
+     or flex-stretch against the list -- both were tried first: a formula
+     put each thumb at a proportional guess rather than its row's actual
+     center, and flex-stretch created a feedback loop during a drag
+     (narrowing the range used to remove rows, shrinking the stretched
+     slider mid-gesture and throwing the thumb past the cursor). Rows are
+     never removed now (buildAltList() always renders the full ladder,
+     graying out whatever's outside the range), which is what makes
+     measuring them mid-drag safe -- the list's height no longer changes as
+     a result of the drag itself. Deliberately no min-height floor: a CSS
+     floor taller than a short site's real list height (e.g. gunter's 3-6
+     rows) would win over the JS-computed inline height, decoupling the
+     slider from the list it's supposed to match and misaligning every
+     thumb by the difference -- confirmed exactly this way when a 120px
+     floor was tried against gunter's 104px-tall list (~2-16px off per
+     thumb). Row spacing stays comfortable to grab at any real site's count
+     without one.
   */
   .alt-range-slider {
-    position: relative; width: 20px; flex-shrink: 0; min-height: 120px;
+    position: relative; width: 20px; flex-shrink: 0;
     touch-action: none;
   }
   .alt-range-track {
-    position: absolute; left: 50%; top: 8px; bottom: 8px; width: 4px;
+    position: absolute; left: 50%; top: 0; bottom: 0; width: 4px;
     transform: translateX(-50%); background: var(--border); border-radius: 2px;
   }
   .alt-range-fill {
@@ -499,11 +509,20 @@
   .alt-range-thumb:hover { background: var(--surface-2); }
   .alt-range-thumb:active { cursor: grabbing; }
   .alt-range-thumb:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-  /* Bounded so a dense per-site altitude ladder (up to ~23 rows) can't push
-     the Model/Rate legends below it off-screen in the sidebar -- the slider
-     alongside is the coarse filter, this scroll is the fallback for whatever
-     is still in range. */
-  .alt-list { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: 4px; max-height: 46vh; overflow-y: auto; }
+  /* Deliberately unbounded/no internal scroll -- the slider beside it sizes
+     itself to match this element's real height exactly (buildAltRange()),
+     and an internal scroll here would let the two drift out of sync (the
+     slider isn't scrolled in tandem, so a row scrolled out of .alt-list's
+     view would no longer sit under its own thumb position). A future
+     site with a much denser ladder could make this sidebar tall enough to
+     push the Model/Rate legends down -- not an issue at any currently
+     published site's altitude count; revisit if it becomes one. */
+  /* position:relative so its rows' offsetTop (read by app.js's
+     altRowCentersPx()) resolves relative to this element itself -- without
+     it, a non-positioned element's offsetTop climbs to whatever positioned
+     ancestor is further up the page, giving row centers hundreds of px too
+     large and badly misaligning the slider beside it. */
+  .alt-list { position: relative; flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
   .alt-list-title {
     font-size: 0.78rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.03em;
     margin-bottom: 4px; display: flex; align-items: center; gap: 5px;

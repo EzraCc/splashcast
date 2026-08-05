@@ -447,8 +447,8 @@ function setMode(mode) {
   // the first time this mode is entered, then leave the user's pick alone.
   if (mode === 'byHistory' && !state.pinnedRate) state.pinnedRate = 'fast';
   applyModeUI(mode);
-  buildAltRange();
   buildAltList();
+  buildAltRange();
   buildTimeLegend();
   buildModelLegend();
   buildRateLegend();
@@ -472,18 +472,16 @@ function altitudesWithZones() {
   return new Set((DATA.data[`${state.hour}_${state.deploy}`] || []).map(z => z.altitude));
 }
 
-// Height driven by the site's *full* altitude count (DATA.altitudes.length),
-// never the currently-filtered subset -- see .alt-range-slider's own CSS
-// comment for why coupling it to .alt-list's actual rendered height (via
-// flex-stretch) created a drag feedback loop. Row-height constants mirror
-// .alt-row/.alt-list's CSS (padding 7px*2 + ~1 line of 0.85rem text + 1px*2
-// border ~= 31px, plus .alt-list's 4px row gap) rather than measuring the
-// DOM, so this stays stable regardless of what's currently rendered.
-function altRangeSliderHeightPx() {
-  const ROW_PX = 35;
-  const natural = DATA.altitudes.length * ROW_PX - 4;
-  const cap = window.innerHeight * 0.46; // matches .alt-list's max-height:46vh
-  return Math.max(120, Math.min(natural, cap)); // 120 matches .alt-range-slider's CSS min-height
+// Row centers, in px from the top of #alt-list's content, for whichever rows
+// are currently rendered there. offsetTop/offsetHeight (not
+// getBoundingClientRect()) deliberately -- they reflect position within the
+// full content box regardless of scroll, so this stays correct even if
+// .alt-list ever scrolls internally. Relies on buildAltList() having already
+// run for the current dataset/mode (every buildAltRange() call site calls it
+// first) so #alt-list's rows exist and are in the same order as
+// altitudesDescending().
+function altRowCentersPx() {
+  return [...document.getElementById('alt-list').children].map(row => row.offsetTop + row.offsetHeight / 2);
 }
 
 // Repositions the two thumbs/fill/readout from current state -- cheap, safe
@@ -492,12 +490,20 @@ function altRangeSliderHeightPx() {
 // in initAltRangeSlider() below, not rebuilt here, so an in-progress drag
 // never loses its listeners mid-gesture.
 function buildAltRange() {
-  document.getElementById('alt-range-slider').style.height = altRangeSliderHeightPx() + 'px';
+  const listEl = document.getElementById('alt-list');
+  const sliderEl = document.getElementById('alt-range-slider');
+  // Matches #alt-list's real content height exactly (not a formula/estimate)
+  // so each thumb's % position lines up with its row's actual center, not
+  // just a proportional guess -- see altRowCentersPx()'s own comment.
+  const listHeight = listEl.scrollHeight;
+  sliderEl.style.height = listHeight + 'px';
+
   const alts = altitudesDescending(); // index 0 = highest (top), last = lowest (bottom)
   const n = alts.length;
   const maxIdx = alts.indexOf(state.altMax);
   const minIdx = alts.indexOf(state.altMin);
-  const pct = i => n > 1 ? (i / (n - 1)) * 100 : 50;
+  const centers = altRowCentersPx();
+  const pct = i => listHeight > 0 ? (centers[i] / listHeight) * 100 : 50;
 
   const maxThumb = document.getElementById('alt-max-thumb');
   const minThumb = document.getElementById('alt-min-thumb');
@@ -527,8 +533,8 @@ function onAltRangeChanged() {
     state.compareAlt = inRange.length ? inRange.reduce((best, a) =>
       Math.abs(a - state.compareAlt) < Math.abs(best - state.compareAlt) ? a : best) : null;
   }
-  buildAltRange();
   buildAltList();
+  buildAltRange();
   render();
 }
 
@@ -544,15 +550,26 @@ document.getElementById('alt-range-reset').addEventListener('click', () => {
 // altitudesDescending()/state fresh rather than closing over a snapshot, so
 // it stays correct across site/date switches without needing to be re-armed.
 function initAltRangeSlider() {
-  const slider = document.getElementById('alt-range-slider');
   const maxThumb = document.getElementById('alt-max-thumb');
   const minThumb = document.getElementById('alt-min-thumb');
 
+  // Nearest row *center* to the pointer, not a linear fraction of the
+  // slider's own height -- the two aren't the same thing (a naive
+  // index/(n-1) fraction puts index 0 at the slider's top edge, not the
+  // first row's center, which is exactly the misalignment this was built to
+  // fix). Measures the live rows directly rather than re-deriving their
+  // positions, so it's automatically correct for whatever's currently
+  // rendered.
   function indexFromClientY(clientY) {
-    const rect = slider.getBoundingClientRect();
-    const n = DATA.altitudes.length;
-    const fraction = rect.height > 0 ? (clientY - rect.top) / rect.height : 0;
-    return Math.min(n - 1, Math.max(0, Math.round(fraction * (n - 1))));
+    const rows = [...document.getElementById('alt-list').children];
+    const listRect = document.getElementById('alt-list').getBoundingClientRect();
+    let bestIdx = 0, bestDist = Infinity;
+    rows.forEach((row, i) => {
+      const center = listRect.top + row.offsetTop + row.offsetHeight / 2;
+      const dist = Math.abs(clientY - center);
+      if (dist < bestDist) { bestDist = dist; bestIdx = i; }
+    });
+    return bestIdx;
   }
 
   // which thumb's index moves to idx, clamped so the two thumbs can never
@@ -2397,8 +2414,8 @@ function drawRealFlightMarker() {
         if (state.compareAlt < state.altMin) state.altMin = state.compareAlt;
         if (state.compareAlt > state.altMax) state.altMax = state.compareAlt;
         buildToggle('hour-toggle', DATA.hours, HOUR_LABELS, 'hour', () => { hourExplicitlyChosen = true; });
-        buildAltRange();
         buildAltList();
+        buildAltRange();
         render();
       } else {
         restorePadFromRealFlightSnap();
@@ -2975,13 +2992,13 @@ function initFromData() {
     deployExplicitlyChosen = true;
     // Which altitudes have a real zone changes with deploy (single-deploy
     // drops above SINGLE_DEPLOY_MAX_ALT_FT pipeline-side) -- refresh both the
-    // range selects' n/a-disabled options and the row list's unavailable rows.
-    buildAltRange();
+    // row list's unavailable rows and the slider's thumb positions.
     buildAltList();
+    buildAltRange();
   });
   buildTimeLegend();
-  buildAltRange();
   buildAltList();
+  buildAltRange();
   buildModelLegend();
   buildRateLegend();
   banDismissed = false; // a dismiss on a previous site/date shouldn't suppress a genuinely new ban
