@@ -458,7 +458,12 @@ function setMode(mode) {
 
 // --- altitude range: coarse min/max filter in front of the per-row list below ---
 function altInRange(alt) { return alt >= state.altMin && alt <= state.altMax; }
-function altitudesInRange() { return DATA.altitudes.filter(altInRange); }
+// Descending -- the row list and the slider beside it both read top-to-bottom
+// as high-to-low altitude, matching the real world (sky above, ground below)
+// rather than the ascending order DATA.altitudes/config.ALTITUDES_MASTER_FT
+// happen to store it in.
+function altitudesDescending() { return [...DATA.altitudes].sort((a, b) => b - a); }
+function altitudesInRange() { return altitudesDescending().filter(altInRange); }
 // Altitudes that actually have a zone for the current hour/deploy -- single
 // deploy is dropped above config.SINGLE_DEPLOY_MAX_ALT_FT (10,000ft)
 // pipeline-side, so a high-waiver site on Single has real zones for only
@@ -467,34 +472,51 @@ function altitudesWithZones() {
   return new Set((DATA.data[`${state.hour}_${state.deploy}`] || []).map(z => z.altitude));
 }
 
-function buildAltRange() {
-  const minSel = document.getElementById('alt-min-select');
-  const maxSel = document.getElementById('alt-max-select');
-  const withZones = altitudesWithZones();
-  const fillOptions = (sel, disablePredicate) => {
-    sel.innerHTML = '';
-    DATA.altitudes.forEach(alt => {
-      const opt = document.createElement('option');
-      opt.value = alt;
-      const noZone = !withZones.has(alt);
-      opt.textContent = alt.toLocaleString() + ' ft' + (noZone ? ' — n/a' : '');
-      opt.disabled = noZone || disablePredicate(alt);
-      sel.appendChild(opt);
-    });
-  };
-  fillOptions(minSel, alt => alt > state.altMax);
-  fillOptions(maxSel, alt => alt < state.altMin);
-  minSel.value = state.altMin;
-  maxSel.value = state.altMax;
+// Height driven by the site's *full* altitude count (DATA.altitudes.length),
+// never the currently-filtered subset -- see .alt-range-slider's own CSS
+// comment for why coupling it to .alt-list's actual rendered height (via
+// flex-stretch) created a drag feedback loop. Row-height constants mirror
+// .alt-row/.alt-list's CSS (padding 7px*2 + ~1 line of 0.85rem text + 1px*2
+// border ~= 31px, plus .alt-list's 4px row gap) rather than measuring the
+// DOM, so this stays stable regardless of what's currently rendered.
+function altRangeSliderHeightPx() {
+  const ROW_PX = 35;
+  const natural = DATA.altitudes.length * ROW_PX - 4;
+  const cap = window.innerHeight * 0.46; // matches .alt-list's max-height:46vh
+  return Math.max(120, Math.min(natural, cap)); // 120 matches .alt-range-slider's CSS min-height
+}
 
-  minSel.onchange = () => {
-    state.altMin = Number(minSel.value);
-    onAltRangeChanged();
-  };
-  maxSel.onchange = () => {
-    state.altMax = Number(maxSel.value);
-    onAltRangeChanged();
-  };
+// Repositions the two thumbs/fill/readout from current state -- cheap, safe
+// to call on every altMin/altMax change (drag, keyboard, reset, permalink
+// load, real-flight snap). Drag/keyboard interaction itself is wired up once
+// in initAltRangeSlider() below, not rebuilt here, so an in-progress drag
+// never loses its listeners mid-gesture.
+function buildAltRange() {
+  document.getElementById('alt-range-slider').style.height = altRangeSliderHeightPx() + 'px';
+  const alts = altitudesDescending(); // index 0 = highest (top), last = lowest (bottom)
+  const n = alts.length;
+  const maxIdx = alts.indexOf(state.altMax);
+  const minIdx = alts.indexOf(state.altMin);
+  const pct = i => n > 1 ? (i / (n - 1)) * 100 : 50;
+
+  const maxThumb = document.getElementById('alt-max-thumb');
+  const minThumb = document.getElementById('alt-min-thumb');
+  const fill = document.getElementById('alt-range-fill');
+  maxThumb.style.top = pct(maxIdx) + '%';
+  minThumb.style.top = pct(minIdx) + '%';
+  fill.style.top = pct(maxIdx) + '%';
+  fill.style.height = (pct(minIdx) - pct(maxIdx)) + '%';
+
+  [[maxThumb, state.altMax], [minThumb, state.altMin]].forEach(([thumb, val]) => {
+    thumb.setAttribute('aria-valuemin', alts[n - 1]);
+    thumb.setAttribute('aria-valuemax', alts[0]);
+    thumb.setAttribute('aria-valuenow', val);
+    thumb.setAttribute('aria-valuetext', val.toLocaleString() + ' ft');
+  });
+
+  const full = state.altMin === alts[n - 1] && state.altMax === alts[0];
+  document.getElementById('alt-range-readout-text').textContent = full
+    ? 'All altitudes' : `${state.altMin.toLocaleString()}–${state.altMax.toLocaleString()} ft`;
 }
 
 function onAltRangeChanged() {
@@ -516,17 +538,96 @@ document.getElementById('alt-range-reset').addEventListener('click', () => {
   onAltRangeChanged();
 });
 
+// Drag (pointer events, so mouse/touch/pen share one code path) + keyboard
+// wiring for the two thumbs -- attached once at load, not rebuilt per
+// dataset (buildAltRange() above only repositions). Always reads
+// altitudesDescending()/state fresh rather than closing over a snapshot, so
+// it stays correct across site/date switches without needing to be re-armed.
+function initAltRangeSlider() {
+  const slider = document.getElementById('alt-range-slider');
+  const maxThumb = document.getElementById('alt-max-thumb');
+  const minThumb = document.getElementById('alt-min-thumb');
+
+  function indexFromClientY(clientY) {
+    const rect = slider.getBoundingClientRect();
+    const n = DATA.altitudes.length;
+    const fraction = rect.height > 0 ? (clientY - rect.top) / rect.height : 0;
+    return Math.min(n - 1, Math.max(0, Math.round(fraction * (n - 1))));
+  }
+
+  // which thumb's index moves to idx, clamped so the two thumbs can never
+  // cross (max-thumb's index can't exceed min-thumb's, and vice versa --
+  // remember higher index = lower altitude, since the array is descending).
+  function commitIndex(which, idx) {
+    const alts = altitudesDescending();
+    const n = alts.length;
+    const maxIdx = alts.indexOf(state.altMax);
+    const minIdx = alts.indexOf(state.altMin);
+    if (which === 'max') {
+      idx = Math.max(0, Math.min(idx, minIdx));
+      if (idx === maxIdx) return;
+      state.altMax = alts[idx];
+    } else {
+      idx = Math.min(n - 1, Math.max(idx, maxIdx));
+      if (idx === minIdx) return;
+      state.altMin = alts[idx];
+    }
+    onAltRangeChanged();
+  }
+
+  function startDrag(which, thumbEl) {
+    return evt => {
+      evt.preventDefault();
+      thumbEl.setPointerCapture(evt.pointerId);
+      const move = e => commitIndex(which, indexFromClientY(e.clientY));
+      const stop = () => {
+        document.removeEventListener('pointermove', move);
+        document.removeEventListener('pointerup', stop);
+      };
+      document.addEventListener('pointermove', move);
+      document.addEventListener('pointerup', stop);
+      commitIndex(which, indexFromClientY(evt.clientY));
+    };
+  }
+  maxThumb.addEventListener('pointerdown', startDrag('max', maxThumb));
+  minThumb.addEventListener('pointerdown', startDrag('min', minThumb));
+
+  function keyStep(which) {
+    return evt => {
+      const alts = altitudesDescending();
+      const maxIdx = alts.indexOf(state.altMax);
+      const minIdx = alts.indexOf(state.altMin);
+      const cur = which === 'max' ? maxIdx : minIdx;
+      if (evt.key === 'Home') { commitIndex(which, which === 'max' ? 0 : maxIdx); evt.preventDefault(); return; }
+      if (evt.key === 'End') { commitIndex(which, which === 'max' ? minIdx : alts.length - 1); evt.preventDefault(); return; }
+      const delta = { ArrowUp: -1, ArrowLeft: -1, ArrowDown: 1, ArrowRight: 1, PageUp: -3, PageDown: 3 }[evt.key];
+      if (delta === undefined) return;
+      evt.preventDefault();
+      commitIndex(which, cur + delta);
+    };
+  }
+  maxThumb.addEventListener('keydown', keyStep('max'));
+  minThumb.addEventListener('keydown', keyStep('min'));
+}
+initAltRangeSlider();
+
 // --- altitude list: hover-isolate in "by altitude" mode, single-select in "by time" mode ---
+// Always renders every altitude in the site's full ladder (descending), never
+// just the in-range subset -- the slider beside it positions its stops
+// against the full list too (see altRangeSliderHeightPx()), and removing
+// rows as the range narrows made the list reflow/shift, breaking that visual
+// alignment. Out-of-range rows get the same dimmed/non-interactive treatment
+// as a real no-zone row (.unavailable) instead of disappearing.
 function buildAltList() {
   const el = document.getElementById('alt-list');
   el.innerHTML = '';
   const withZones = altitudesWithZones();
-  altitudesInRange().forEach(alt => {
+  altitudesDescending().forEach(alt => {
     const row = document.createElement('div');
-    const hasZone = withZones.has(alt);
-    row.className = 'alt-row' + (hasZone ? '' : ' unavailable');
+    const available = withZones.has(alt) && altInRange(alt);
+    row.className = 'alt-row' + (available ? '' : ' unavailable');
     row.innerHTML = `<div class="alt-swatch" style="background:${ALT_COLORS_HEX[alt]}"></div><span>${alt.toLocaleString()} ft</span>`;
-    if (!hasZone) { el.appendChild(row); return; }
+    if (!available) { el.appendChild(row); return; }
 
     if (state.mode === 'byAltitude') {
       row.addEventListener('mouseenter', () => { state.isolatedAlt = alt; applyIsolation(); });

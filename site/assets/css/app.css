@@ -460,18 +460,50 @@
   .pad-marker.moved circle, .pad-marker.moved line { stroke: #e0b400; }
   .map-wrap.dragging-pad, .map-wrap.dragging-pad .pad-marker { cursor: grabbing; }
 
-  .alt-range-control { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
-  .alt-range-control label { font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.03em; }
-  .alt-range-control select {
-    flex: 1 1 0; min-width: 0;
-    border: 1px solid var(--border); border-radius: 8px; background: var(--surface-1);
-    color: var(--text-primary); padding: 5px 7px; font-size: 0.8rem; accent-color: var(--accent);
+  .alt-range-readout {
+    display: flex; align-items: center; justify-content: space-between; gap: 6px;
+    margin-bottom: 6px; font-size: 0.78rem; color: var(--text-secondary);
   }
+  .alt-range-row { display: flex; gap: 10px; align-items: flex-start; }
+  /* A vertical fader, not a pair of <select>s -- narrow dropdowns read badly
+     in this sidebar's width, and the altitude set is still a fixed discrete
+     list either way (each drag position snaps to one of DATA.altitudes),
+     never free entry. Height is set inline by altRangeSliderHeightPx() in
+     app.js from the site's *full* altitude count, not matched to .alt-list's
+     own rendered height via flex-stretch -- that coupling was tried first
+     and created a feedback loop during a drag (narrowing the range shrinks
+     .alt-list's row count, which shrank the stretched slider mid-gesture,
+     which changed the drag's px-per-altitude-step math while the pointer was
+     still moving, throwing the thumb far past where the cursor actually
+     was). min-height is the floor for a short site list (e.g. gunter's 6
+     rows) once that JS-computed height clamps down to it.
+  */
+  .alt-range-slider {
+    position: relative; width: 20px; flex-shrink: 0; min-height: 120px;
+    touch-action: none;
+  }
+  .alt-range-track {
+    position: absolute; left: 50%; top: 8px; bottom: 8px; width: 4px;
+    transform: translateX(-50%); background: var(--border); border-radius: 2px;
+  }
+  .alt-range-fill {
+    position: absolute; left: 50%; width: 4px; transform: translateX(-50%);
+    background: var(--accent); border-radius: 2px; opacity: 0.55;
+  }
+  .alt-range-thumb {
+    position: absolute; left: 50%; width: 16px; height: 16px;
+    transform: translate(-50%, -50%);
+    background: var(--surface-1); border: 2px solid var(--accent); border-radius: 50%;
+    cursor: grab;
+  }
+  .alt-range-thumb:hover { background: var(--surface-2); }
+  .alt-range-thumb:active { cursor: grabbing; }
+  .alt-range-thumb:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   /* Bounded so a dense per-site altitude ladder (up to ~23 rows) can't push
-     the Model/Rate legends below it off-screen in the sidebar -- the Min/Max
-     range control above is the coarse filter, this scroll is the fallback
-     for whatever's still in range. */
-  .alt-list { display: flex; flex-direction: column; gap: 4px; max-height: 46vh; overflow-y: auto; }
+     the Model/Rate legends below it off-screen in the sidebar -- the slider
+     alongside is the coarse filter, this scroll is the fallback for whatever
+     is still in range. */
+  .alt-list { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: 4px; max-height: 46vh; overflow-y: auto; }
   .alt-list-title {
     font-size: 0.78rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.03em;
     margin-bottom: 4px; display: flex; align-items: center; gap: 5px;
