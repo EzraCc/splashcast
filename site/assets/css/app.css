@@ -66,16 +66,59 @@
     padding: 20px 20px 32px;
     max-width: 1200px;
     margin: 0 auto;
+    /* Fluid type scale -- replaces ~50 individually hand-tuned fixed rem
+       values (0.6rem-1.3rem) that never changed across viewport widths.
+       Each step is locked at its `min` below 900px (deliberately covers
+       every dense/cramped layout with a documented history of breaking at
+       narrow widths -- the rain/cloud/temp grids, the accuracy table --
+       see CHANGELOG's mobile-audit entries) and grows gently toward `max`
+       between 900-1600px for readability on spacious desktop monitors.
+       `min` for each step is set to the *largest* raw value that used to
+       feed into it, not an average -- guarantees nothing renders smaller
+       than its current worst-case size at any viewport width, only equal
+       or larger. Same clamp()-token treatment as the color tokens above:
+       theme-independent, defined once, referenced everywhere via var().
+       26px (.pad-label, SVG map text) and 3rem (.ban-overlay .flame, a
+       decorative emoji) are deliberately NOT part of this scale -- neither
+       is page body text in the same sense (SVG text scales with the map's
+       own coordinate system, not the page grid; the flame is a single icon
+       glyph, not type hierarchy). */
+    --fs-2xs:  clamp(0.64rem, calc(0.5629rem + 0.1371vw), 0.70rem);
+    --fs-xs:   clamp(0.72rem, calc(0.6429rem + 0.1371vw), 0.78rem);
+    --fs-sm:   clamp(0.80rem, calc(0.7100rem + 0.1600vw), 0.87rem);
+    --fs-base: clamp(0.88rem, calc(0.7771rem + 0.1829vw), 0.96rem);
+    --fs-md:   clamp(1.00rem, calc(0.8714rem + 0.2286vw), 1.10rem);
+    --fs-lg:   clamp(1.30rem, calc(1.1071rem + 0.3429vw), 1.45rem);
+
+    /* Spacing scale -- static, not fluid like --fs-* above: unlike small
+       text, a few px of viewport-driven growth on a margin/gap isn't
+       perceptible, so there's no responsive bug to fix here, only
+       consistency to gain (the same handful of margin-top/gap values --
+       4/6/8/10/12/16px -- were already showing up repeatedly with no
+       shared name behind them). Deliberately does NOT cover the cloud/
+       rain/temp grids' row-gap or the alt-range-slider system -- those
+       have real, documented exact-pixel couplings elsewhere (e.g.
+       .cloud-cell .range-num's absolute -14px offset only clears the row
+       above it because .cloud-grid's row-gap is exactly 16px, not a
+       coincidence -- see that rule's own comment) that a shared token
+       could silently drift out of sync with if one call site's value ever
+       changed without the other. */
+    --sp-1: 4px;
+    --sp-2: 6px;
+    --sp-3: 8px;
+    --sp-4: 10px;
+    --sp-5: 12px;
+    --sp-6: 16px;
   }
-  h1 { font-size: 1.3rem; margin: 0 0 2px; }
-  .subtitle { color: var(--text-secondary); font-size: 0.88rem; margin: 0 0 18px; }
+  h1 { font-size: var(--fs-lg); margin: 0 0 2px; }
+  .subtitle { color: var(--text-secondary); font-size: var(--fs-base); margin: 0 0 18px; }
 
   .legal-disclaimer {
     background: var(--surface-2);
     border: 1px solid var(--border);
     border-radius: 8px;
     color: var(--text-secondary);
-    font-size: 0.78rem;
+    font-size: var(--fs-sm);
     line-height: 1.5;
     padding: 8px 12px;
     margin: 0 0 14px;
@@ -86,21 +129,21 @@
     flex-wrap: wrap;
     gap: 20px;
     align-items: center;
-    margin-bottom: 16px;
+    margin-bottom: var(--sp-6);
     padding: 12px 14px;
     background: var(--surface-2);
     border: 1px solid var(--border);
     border-radius: 10px;
   }
   .toggle-group { display: flex; align-items: center; gap: 8px; }
-  .toggle-group .group-label { font-size: 0.78rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.03em; margin-right: 2px; }
+  .toggle-group .group-label { font-size: var(--fs-sm); color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.03em; margin-right: 2px; }
   .toggle-btns { display: flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
   .toggle-btns button {
     border: none;
     background: var(--surface-1);
     color: var(--text-secondary);
     padding: 7px 14px;
-    font-size: 0.85rem;
+    font-size: var(--fs-base);
     cursor: pointer;
     border-right: 1px solid var(--border);
   }
@@ -110,7 +153,7 @@
   .toggle-group.disabled { opacity: 0.4; pointer-events: none; }
   .copy-link-btn {
     border: 1px solid var(--border); border-radius: 8px; background: var(--surface-1); color: var(--text-primary);
-    padding: 7px 14px; font-size: 0.85rem; cursor: pointer;
+    padding: 7px 14px; font-size: var(--fs-base); cursor: pointer;
   }
   .copy-link-btn:hover { background: var(--surface-2); }
   .copy-link-btn.copied { background: var(--accent); color: #fff; border-color: var(--accent); }
@@ -124,13 +167,26 @@
     display: grid;
     grid-template-columns: 1fr 190px;
     grid-template-areas: "map side" "notes side" "accuracy accuracy";
-    gap: 16px;
+    gap: var(--sp-6);
     align-items: start;
   }
   .map-col-map { grid-area: map; min-width: 0; }
   .side-col { grid-area: side; }
   .map-col-notes { grid-area: notes; }
   .accuracy-section { grid-area: accuracy; min-width: 0; }
+
+  /* The sidebar has grown a lot denser than when 190px was first chosen --
+     rate editor (two number inputs per row), altitude ladder + range
+     slider, model checkboxes -- and 190px stays genuinely tight even at
+     this app's own 1200px max-width (.viz-root doesn't grow past that, so
+     without this the sidebar never gets more room no matter how wide the
+     browser window is). Only widens the column on viewports comfortably
+     past tablet width -- the map only gives up 40px for it (negligible at
+     that size), and everything narrower than this stays exactly as tuned
+     (760px's single-column stack is untouched, this tier sits above it). */
+  @media (min-width: 1024px) {
+    .layout { grid-template-columns: 1fr 230px; }
+  }
 
   /* Wraps .map-wrap + .cloud-overlay tightly -- the positioned ancestor for
      .cloud-overlay's absolute corner placement on desktop, but unlike
@@ -154,14 +210,14 @@
   .map-wrap.dragging { cursor: grabbing; }
   .map-wrap svg { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
 
-  .zoom-btns { position: absolute; right: 10px; bottom: 10px; display: flex; flex-direction: column; gap: 4px; z-index: 5; }
+  .zoom-btns { position: absolute; right: 10px; bottom: 10px; display: flex; flex-direction: column; gap: var(--sp-1); z-index: 5; }
   .zoom-btns button {
     width: 30px; height: 30px; border-radius: 6px; border: 1px solid var(--border);
-    background: var(--surface-1); color: var(--text-primary); font-size: 1rem; cursor: pointer;
+    background: var(--surface-1); color: var(--text-primary); font-size: var(--fs-md); cursor: pointer;
     box-shadow: 0 1px 4px rgba(0,0,0,0.15);
   }
   .zoom-btns button:hover { background: var(--surface-2); }
-  .zoom-hint { position: absolute; left: 10px; bottom: 10px; font-size: 0.72rem; color: var(--text-muted); background: var(--surface-1); padding: 3px 8px; border-radius: 6px; border: 1px solid var(--border); opacity: 0.85; }
+  .zoom-hint { position: absolute; left: 10px; bottom: 10px; font-size: var(--fs-xs); color: var(--text-muted); background: var(--surface-1); padding: 3px 8px; border-radius: 6px; border: 1px solid var(--border); opacity: 0.85; }
 
   .layer-toggle {
     position: absolute; left: 10px; top: 10px; z-index: 5;
@@ -170,7 +226,7 @@
   }
   .layer-toggle button {
     border: none; background: var(--surface-1); color: var(--text-secondary);
-    padding: 5px 10px; font-size: 0.75rem; cursor: pointer; border-right: 1px solid var(--border);
+    padding: 5px 10px; font-size: var(--fs-sm); cursor: pointer; border-right: 1px solid var(--border);
   }
   .layer-toggle button:last-child { border-right: none; }
   .layer-toggle button.active { background: var(--accent); color: #fff; font-weight: 600; }
@@ -192,17 +248,17 @@
      other controls (the altitude-band expand button lives beside it, not
      inside it). */
   .cloud-title-toggle {
-    font-size: 0.78rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.03em;
+    font-size: var(--fs-sm); color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.03em;
     display: flex; align-items: center; gap: 6px; cursor: pointer; user-select: none; border-radius: 4px;
   }
   .cloud-title-toggle:hover { color: var(--text-secondary); }
   .cloud-title-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-  .cloud-chevron { font-size: 0.62rem; transition: transform 0.15s ease; display: inline-block; }
+  .cloud-chevron { font-size: var(--fs-2xs); transition: transform 0.15s ease; display: inline-block; }
   .cloud-chevron.collapsed { transform: rotate(-90deg); }
-  .waiver-note { font-size: 0.68rem; color: var(--text-muted); margin-bottom: 8px; }
+  .waiver-note { font-size: var(--fs-xs); color: var(--text-muted); margin-bottom: var(--sp-3); }
   .waiver-note b { color: var(--text-secondary); font-weight: 600; }
   .cloud-expand-btn {
-    border: none; background: none; color: var(--accent); font-size: 0.7rem;
+    border: none; background: none; color: var(--accent); font-size: var(--fs-xs);
     font-weight: 600; cursor: pointer; padding: 2px 0; white-space: nowrap;
   }
   .cloud-expand-btn:hover { text-decoration: underline; }
@@ -212,14 +268,14 @@
      rows get that clearance for free from cloud-grid's row-gap, but the
      very first row has nothing above it except this header. */
   .cloud-hours { display: grid; grid-template-columns: 42px repeat(4, 1fr); gap: 0 6px; margin-bottom: 16px; }
-  .cloud-hours .hr-label { font-size: 0.68rem; color: var(--text-muted); text-align: center; padding-bottom: 4px; }
+  .cloud-hours .hr-label { font-size: var(--fs-xs); color: var(--text-muted); text-align: center; padding-bottom: 4px; }
   /* Corner cell above the Low/Mid/High labels -- the grid's cell values
      ("0-24%") never spell out the unit on their own, so this is the one
      place it's stated once for the whole panel instead of repeated per cell. */
-  .cloud-corner-label { font-size: 0.6rem; color: var(--text-muted); line-height: 1.15; align-self: end; padding-bottom: 4px; }
+  .cloud-corner-label { font-size: var(--fs-2xs); color: var(--text-muted); line-height: 1.15; align-self: end; padding-bottom: 4px; }
   .cloud-grid { display: grid; grid-template-columns: 42px repeat(4, 1fr); row-gap: 16px; column-gap: 6px; align-items: end; }
-  .cloud-layer-label { font-size: 0.68rem; color: var(--text-secondary); line-height: 1.2; align-self: end; padding-bottom: 4px; }
-  .cloud-layer-label b { display: block; color: var(--text-primary); font-size: 0.72rem; font-weight: 600; }
+  .cloud-layer-label { font-size: var(--fs-xs); color: var(--text-secondary); line-height: 1.2; align-self: end; padding-bottom: 4px; }
+  .cloud-layer-label b { display: block; color: var(--text-primary); font-size: var(--fs-xs); font-weight: 600; }
   .cloud-layer-label.beyond-waiver { opacity: 0.55; }
   .cloud-layer-label.beyond-waiver b { font-weight: 500; }
   /* Padding, not just a rule -- each row needs to read as its own distinct
@@ -241,7 +297,7 @@
      sideways into the column-gap reads far better than growing into a
      different row entirely. */
   .cloud-cell .range-num { position: absolute; left: 0; right: 0; top: -14px; text-align: center;
-    font-size: 0.62rem; color: var(--text-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+    font-size: var(--fs-2xs); color: var(--text-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
   /* Sits 8px up from the cell's own bottom edge -- .bars-below (confirmed-
      zero marks) live in that reserved 8px strip underneath it. */
   .cloud-cell .baseline { position: absolute; left: 2px; right: 2px; bottom: 8px; height: 1px; background: var(--border); }
@@ -269,7 +325,7 @@
      ambiguity outright instead of relying on a subtler visual cue. */
   .cloud-bar.bar-zero { width: 7px; height: 6px; border-radius: 0 0 2px 2px; align-self: flex-start; }
   .cloud-cell .no-data { position: absolute; inset: 0 0 8px 0; display: flex; align-items: center; justify-content: center;
-    font-size: 0.64rem; color: var(--text-muted); }
+    font-size: var(--fs-2xs); color: var(--text-muted); }
   /* "Pop" state: a majority of reporting models agree this layer/hour is
      >=50% covered (config.CLOUD_COVER_NOGO_PCT, Tripoli Unified Safety Code
      9-5/9-6) -- the safety-relevant threshold clubs actually watch for, not
@@ -278,7 +334,7 @@
   .cloud-badge, .cloud-cell.cell-hot::after {
     display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0;
     width: 17px; height: 17px; border-radius: 50%;
-    background: var(--hot-border); color: #fff; font-size: 0.68rem; font-weight: 700;
+    background: var(--hot-border); color: #fff; font-size: var(--fs-xs); font-weight: 700;
     box-shadow: 0 1px 3px rgba(0,0,0,0.4), 0 0 0 2px var(--surface-2);
   }
   .cloud-cell.cell-hot { background: var(--hot-bg); }
@@ -290,7 +346,7 @@
   .cloud-cell.cell-hot::after { content: "\26A0"; position: absolute; right: -4px; top: 2px; z-index: 2; }
 
   .cloud-legend { margin-top: 12px; padding-top: 9px; border-top: 1px solid var(--border); }
-  .cloud-legend .hot-key { display: flex; align-items: center; gap: 5px; font-size: 0.68rem; color: var(--hot-text); }
+  .cloud-legend .hot-key { display: flex; align-items: center; gap: 5px; font-size: var(--fs-xs); color: var(--hot-text); }
 
   /* ============================ weather timelines ========================= */
   /* Above the map, each its own full-width row -- 11 slots (Prior day,
@@ -314,13 +370,13 @@
     overflow-x: auto;
   }
   .rain-timeline-title, .temp-timeline-title {
-    font-size: 0.78rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.03em;
+    font-size: var(--fs-sm); color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.03em;
   }
   /* Rain has no toggle, so its title carries its own spacing to the grid
      below; temp's title sits in .temp-head instead (with the actual/
      feels-like toggle beside it), which carries that spacing itself. */
-  .rain-timeline-title { margin-bottom: 8px; }
-  .temp-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+  .rain-timeline-title { margin-bottom: var(--sp-3); }
+  .temp-head { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3); margin-bottom: var(--sp-3); }
   /* Same .toggle-btns visual language as TIME/View/Deploy in the controls
      bar (bordered pill, active filled with --accent) scaled down for this
      compact header -- both options always labeled, so the current state
@@ -329,7 +385,7 @@
   .temp-mode-toggle { display: flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; flex-shrink: 0; }
   .temp-mode-toggle button {
     border: none; border-right: 1px solid var(--border); background: var(--surface-1); color: var(--text-secondary);
-    padding: 3px 8px; font-size: 0.68rem; cursor: pointer; white-space: nowrap;
+    padding: 3px 8px; font-size: var(--fs-xs); cursor: pointer; white-space: nowrap;
   }
   .temp-mode-toggle button:last-child { border-right: none; }
   .temp-mode-toggle button.active { background: var(--accent); color: #fff; font-weight: 600; }
@@ -349,8 +405,8 @@
        a 16px row-gap to leave it room. Same fix needed here. */
     column-gap: 5px; row-gap: 16px;
   }
-  .rain-cell-label, .temp-cell-label { font-size: 0.62rem; color: var(--text-secondary); text-align: center; line-height: 1.2; }
-  .rain-cell-label b, .temp-cell-label b { display: block; color: var(--text-primary); font-size: 0.68rem; font-weight: 600; }
+  .rain-cell-label, .temp-cell-label { font-size: var(--fs-2xs); color: var(--text-secondary); text-align: center; line-height: 1.2; }
+  .rain-cell-label b, .temp-cell-label b { display: block; color: var(--text-primary); font-size: var(--fs-xs); font-weight: 600; }
   /* Same hours as SPLASH_HOURS_LOCAL/the rest of the viewer's hour toggle --
      highlighted so they read as those specific hours, not just "some of the
      nine columns." */
@@ -369,7 +425,7 @@
   }
   .temp-axis-max, .temp-axis-min {
     position: absolute; left: 0; right: 0; text-align: center;
-    font-size: 0.62rem; color: var(--text-muted); font-variant-numeric: tabular-nums;
+    font-size: var(--fs-2xs); color: var(--text-muted); font-variant-numeric: tabular-nums;
   }
   .temp-axis-max { top: 0; }
   .temp-axis-min { bottom: 0; }
@@ -385,7 +441,7 @@
   .burn-ban-chip {
     /* top:10px is .layer-toggle's own spot -- stacked below it, not on it. */
     position: absolute; left: 10px; top: 48px; z-index: 5;
-    display: inline-flex; align-items: center; gap: 7px; font-size: 0.78rem;
+    display: inline-flex; align-items: center; gap: 7px; font-size: var(--fs-sm);
     padding: 5px 10px; border-radius: 999px; border: 1px solid var(--border);
     background: var(--surface-1); color: var(--text-secondary);
     box-shadow: 0 1px 4px rgba(0,0,0,0.15);
@@ -413,11 +469,11 @@
   }
   .ban-overlay.show { display: flex; }
   .ban-overlay .flame { font-size: 3rem; line-height: 1; }
-  .ban-overlay .headline { font-size: 1.3rem; font-weight: 800; letter-spacing: 0.01em; text-wrap: balance; }
-  .ban-overlay .sub { font-size: 0.85rem; opacity: 0.92; max-width: 42ch; line-height: 1.5; }
+  .ban-overlay .headline { font-size: var(--fs-lg); font-weight: 800; letter-spacing: 0.01em; text-wrap: balance; }
+  .ban-overlay .sub { font-size: var(--fs-base); opacity: 0.92; max-width: 42ch; line-height: 1.5; }
   .ban-overlay .dismiss {
     margin-top: 4px; border: 1px solid rgba(255,255,255,0.55); background: rgba(0,0,0,0.15);
-    color: #fff; padding: 7px 16px; border-radius: 8px; font-size: 0.82rem; cursor: pointer;
+    color: #fff; padding: 7px 16px; border-radius: 8px; font-size: var(--fs-base); cursor: pointer;
   }
   .ban-overlay .dismiss:hover { background: rgba(0,0,0,0.3); }
   @media (prefers-reduced-motion: no-preference) { .ban-overlay.show { animation: ban-pulse 1.4s ease-in-out infinite; } }
@@ -472,21 +528,21 @@
   /* Label on its own line, input row below it -- was one wrapping flex row,
      but the label reads better with the box always underneath it instead
      of sometimes trailing on the same line depending on sidebar width. */
-  .alt-custom-control { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; font-size: 0.8rem; color: var(--text-secondary); }
+  .alt-custom-control { display: flex; flex-direction: column; gap: var(--sp-1); margin-bottom: var(--sp-3); font-size: var(--fs-base); color: var(--text-secondary); }
   .alt-custom-label { cursor: pointer; user-select: none; }
-  .alt-custom-input-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .alt-custom-input-row { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; }
   .alt-custom-control input[type="text"] {
     width: 90px; box-sizing: border-box; padding: 3px 6px;
     border: 1px solid var(--border); border-radius: 5px;
-    background: var(--surface-1); color: var(--text-primary); font-size: 0.8rem;
+    background: var(--surface-1); color: var(--text-primary); font-size: var(--fs-base);
   }
-  .alt-custom-status { font-size: 0.72rem; color: var(--hot-text); }
+  .alt-custom-status { font-size: var(--fs-xs); color: var(--hot-text); }
 
   .alt-range-readout {
-    display: flex; align-items: center; justify-content: space-between; gap: 6px;
-    margin-bottom: 6px; font-size: 0.78rem; color: var(--text-secondary);
+    display: flex; align-items: center; justify-content: space-between; gap: var(--sp-2);
+    margin-bottom: var(--sp-2); font-size: var(--fs-sm); color: var(--text-secondary);
   }
-  .alt-range-row { display: flex; gap: 10px; align-items: flex-start; }
+  .alt-range-row { display: flex; gap: var(--sp-4); align-items: flex-start; }
   .alt-range-row.alt-custom-dimmed { opacity: 0.35; pointer-events: none; }
   /* A vertical fader, not a pair of <select>s -- narrow dropdowns read badly
      in this sidebar's width, and the altitude set is still a fixed discrete
@@ -545,9 +601,9 @@
      it, a non-positioned element's offsetTop climbs to whatever positioned
      ancestor is further up the page, giving row centers hundreds of px too
      large and badly misaligning the slider beside it. */
-  .alt-list { position: relative; flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+  .alt-list { position: relative; flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: var(--sp-1); }
   .alt-list-title {
-    font-size: 0.78rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.03em;
+    font-size: var(--fs-sm); color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.03em;
     margin-bottom: 4px; display: flex; align-items: center; gap: 5px;
   }
   /* Interaction hints (hover/click to isolate, etc.) are standard enough not
@@ -556,7 +612,7 @@
      always be visible. */
   .info-btn {
     border: 1px solid var(--border); background: var(--surface-1); color: var(--text-muted);
-    width: 15px; height: 15px; border-radius: 50%; font-size: 0.68rem; line-height: 1;
+    width: 15px; height: 15px; border-radius: 50%; font-size: var(--fs-xs); line-height: 1;
     display: inline-flex; align-items: center; justify-content: center;
     cursor: pointer; padding: 0; flex-shrink: 0; text-transform: none; letter-spacing: normal;
   }
@@ -570,15 +626,42 @@
   .zone-color-picker::-moz-color-swatch { border: none; border-radius: 3px; }
   .zone-color-reset-btn {
     border: 1px solid var(--border); background: var(--surface-1); color: var(--text-muted);
-    width: 15px; height: 15px; border-radius: 50%; font-size: 0.68rem; line-height: 1;
+    width: 15px; height: 15px; border-radius: 50%; font-size: var(--fs-xs); line-height: 1;
     display: inline-flex; align-items: center; justify-content: center;
     cursor: pointer; padding: 0; flex-shrink: 0;
   }
   .zone-color-reset-btn:hover { background: var(--surface-2); color: var(--text-primary); border-color: var(--accent); }
+
+  /* Touch-target floor: these are the smallest interactive controls in the
+     app (15-16px visible), well under the ~44px minimum recommended for a
+     touch target (WCAG 2.5.5 / Apple HIG) -- this app is regularly used
+     outdoors on a phone at a launch site. Expands the actual hit area via
+     an invisible ::before, not the visible glyph/dot/thumb itself
+     (unaffected on desktop -- a mouse pointer doesn't need help hitting a
+     15px circle, and visually enlarging it would add real bulk to an
+     already-dense sidebar). Pointer/touch events landing on a pseudo-
+     element's rendered area count as events on its host, so this works for
+     .alt-range-thumb's existing drag listeners too, not just clicks.
+     `(pointer: coarse)` scopes it to touch/stylus input specifically -- a
+     mouse-driven hybrid device (e.g. a touchscreen laptop with a trackpad)
+     keeps the tight, precise target a mouse doesn't need enlarged. */
+  @media (pointer: coarse) {
+    .info-btn, .zone-color-reset-btn {
+      position: relative; /* .alt-range-thumb is already position:absolute */
+    }
+    .info-btn::before, .zone-color-reset-btn::before, .alt-range-thumb::before {
+      content: '';
+      position: absolute;
+      top: 50%; left: 50%;
+      width: 44px; height: 44px;
+      transform: translate(-50%, -50%);
+    }
+  }
+
   .alt-row {
     display: flex; align-items: center; gap: 8px;
     padding: 7px 9px; border-radius: 7px; border: 1px solid transparent;
-    font-size: 0.85rem; color: var(--text-secondary); cursor: pointer;
+    font-size: var(--fs-base); color: var(--text-secondary); cursor: pointer;
   }
   .alt-row:not(.static):hover, .alt-row.pinned { background: var(--surface-2); border-color: var(--border); color: var(--text-primary); }
   /* Accuracy-table legend rows (the "final projection"/"real flight" swatch
@@ -595,7 +678,7 @@
      just visually receded so selected models read as "in the picture". */
   .alt-row.deselected { opacity: 0.45; }
   .alt-swatch { width: 16px; height: 16px; border-radius: 4px; flex-shrink: 0; }
-  .alt-hint { font-size: 0.75rem; color: var(--text-muted); margin-top: 6px; line-height: 1.5; display: none; }
+  .alt-hint { font-size: var(--fs-sm); color: var(--text-muted); margin-top: var(--sp-2); line-height: 1.5; display: none; }
   .alt-hint.open { display: block; }
 
   /* Fast/Slow drogue+main fps, editable. Grid: blank header cell, Drogue,
@@ -606,8 +689,8 @@
      conflicting (a standalone #rate-legend used to own the isolate/pin
      half separately -- folded in here 2026-08-05, see buildRateEditor()'s
      own comment, since Fast/Slow didn't need to appear twice). */
-  .rate-edit { display: grid; grid-template-columns: auto 1fr 1fr; gap: 4px 8px; align-items: center; margin-top: 6px; font-size: 0.78rem; color: var(--text-secondary); }
-  .rate-edit-head { color: var(--text-muted); font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.03em; }
+  .rate-edit { display: grid; grid-template-columns: auto 1fr 1fr; gap: 4px 8px; align-items: center; margin-top: var(--sp-2); font-size: var(--fs-sm); color: var(--text-secondary); }
+  .rate-edit-head { color: var(--text-muted); font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: 0.03em; }
   /* Hover-isolate/click-pin, same affordance .alt-row rows use -- this cell
      absorbed that behavior from the old standalone #rate-legend (removed
      2026-08-05, see buildRateEditor()'s own comment). */
@@ -619,7 +702,7 @@
   .rate-edit input[type="number"] {
     width: 100%; box-sizing: border-box; padding: 2px 4px;
     border: 1px solid var(--border); border-radius: 4px;
-    background: var(--surface-1); color: var(--text-primary); font-size: 0.78rem;
+    background: var(--surface-1); color: var(--text-primary); font-size: var(--fs-sm);
   }
   /* Drogue on Single deploy -- zoneFor() never reads it for that deploy, so
      the input is disabled (see buildRateEditor()), dimmed here to match. */
@@ -628,22 +711,22 @@
      flag (see that block's own comment) -- this app's one established
      warning color, reused here rather than inventing another. */
   .rate-warning {
-    margin-top: 6px; padding: 6px 8px; border-radius: 6px;
+    margin-top: var(--sp-2); padding: 6px 8px; border-radius: 6px;
     background: var(--hot-bg); border: 1px solid var(--hot-border); color: var(--hot-text);
-    font-size: 0.75rem; line-height: 1.4;
+    font-size: var(--fs-sm); line-height: 1.4;
   }
 
-  .buffer-note { display: flex; align-items: center; gap: 10px; font-size: 0.8rem; color: var(--text-secondary); max-width: 620px; }
+  .buffer-note { display: flex; align-items: center; gap: var(--sp-4); font-size: var(--fs-base); color: var(--text-secondary); max-width: 620px; }
   .buffer-swatch { width: 20px; height: 14px; border-radius: 3px; flex-shrink: 0; background: #4a3aa7; opacity: 0.30; border: 1px solid #4a3aa7; }
-  .boost-angle-control { display: flex; align-items: center; gap: 10px; margin-top: 8px; max-width: 620px; }
-  .boost-angle-control label { font-size: 0.8rem; color: var(--text-secondary); white-space: nowrap; }
+  .boost-angle-control { display: flex; align-items: center; gap: var(--sp-4); margin-top: var(--sp-3); max-width: 620px; }
+  .boost-angle-control label { font-size: var(--fs-base); color: var(--text-secondary); white-space: nowrap; }
   .boost-angle-control input[type="range"] { flex: 1 1 auto; accent-color: var(--accent); }
   .boost-angle-control #boost-angle-readout { color: var(--text-primary); font-weight: 600; }
-  .pad-move-control { display: flex; align-items: center; gap: 10px; margin-top: 8px; max-width: 620px; font-size: 0.8rem; color: var(--text-secondary); flex-wrap: wrap; }
+  .pad-move-control { display: flex; align-items: center; gap: var(--sp-4); margin-top: var(--sp-3); max-width: 620px; font-size: var(--fs-base); color: var(--text-secondary); flex-wrap: wrap; }
   #pad-readout { font-weight: 600; color: var(--text-primary); }
   #pad-reset-btn {
     border: 1px solid var(--border); border-radius: 6px; background: var(--surface-1); color: var(--text-primary);
-    padding: 3px 10px; font-size: 0.78rem; cursor: pointer;
+    padding: 3px 10px; font-size: var(--fs-sm); cursor: pointer;
   }
   #pad-reset-btn:hover { background: var(--surface-2); }
 
@@ -654,18 +737,18 @@
      contrast against all four (verified: good 5.19, warning 9.49, serious
      6.6, critical 3.62), and every cell's exact number is always visible
      as text regardless, so color is never the only channel. */
-  .accuracy-legend { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 6px; font-size: 0.75rem; color: var(--text-secondary); }
+  .accuracy-legend { display: flex; flex-wrap: wrap; gap: var(--sp-5); margin-top: var(--sp-2); font-size: var(--fs-sm); color: var(--text-secondary); }
   .accuracy-legend-item { display: flex; align-items: center; gap: 5px; }
   .accuracy-legend-swatch { width: 12px; height: 12px; border-radius: 3px; flex-shrink: 0; }
   .accuracy-legend-desc { color: var(--text-muted); }
-  .accuracy-table-wrap { overflow-x: auto; margin-top: 8px; }
-  .accuracy-table { border-collapse: collapse; font-size: 0.8rem; white-space: nowrap; }
+  .accuracy-table-wrap { overflow-x: auto; margin-top: var(--sp-3); }
+  .accuracy-table { border-collapse: collapse; font-size: var(--fs-base); white-space: nowrap; }
   .accuracy-table th, .accuracy-table td { padding: 6px 10px; text-align: center; border: 1px solid var(--border); }
-  .accuracy-table thead th { background: var(--surface-2); color: var(--text-secondary); font-weight: 600; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.03em; }
+  .accuracy-table thead th { background: var(--surface-2); color: var(--text-secondary); font-weight: 600; font-size: var(--fs-sm); text-transform: uppercase; letter-spacing: 0.03em; }
   .accuracy-table tbody th { background: var(--surface-2); color: var(--text-primary); text-align: left; font-weight: 600; }
   .accuracy-table td.accuracy-empty { color: var(--text-muted); background: var(--surface-1); }
   .accuracy-dist { font-weight: 700; color: #1a1a19; }
-  .accuracy-xy { font-size: 0.72rem; color: #1a1a19; opacity: 0.75; }
+  .accuracy-xy { font-size: var(--fs-xs); color: #1a1a19; opacity: 0.75; }
 
   .tooltip {
     position: fixed;
@@ -675,7 +758,7 @@
     border: 1px solid var(--border, #dedcd6);
     border-radius: 8px;
     padding: 8px 12px;
-    font-size: 0.8rem;
+    font-size: var(--fs-base);
     color: var(--text-primary, #0b0b0b);
     box-shadow: 0 4px 20px rgba(0,0,0,0.35);
     display: none;
@@ -683,7 +766,7 @@
     line-height: 1.5;
     white-space: nowrap;
   }
-  .tooltip .tt-row + .tt-row { margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--border, #dedcd6); }
+  .tooltip .tt-row + .tt-row { margin-top: var(--sp-2); padding-top: var(--sp-2); border-top: 1px solid var(--border, #dedcd6); }
   .tooltip b { color: var(--accent, #2a78d6); }
   /* Cloud-cell hover: name|% as a real 2-column grid instead of one row per
      model -- lets the % column line up flush-right for a fast scan instead
@@ -694,13 +777,13 @@
      name in the footer below, same --hot-text used for the cell's own
      "pop" state so the two read as the same signal. */
   .tooltip .tt-model-pct.pct-high { font-weight: 700; color: var(--hot-text); }
-  .tooltip .tt-cloud-footer { margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--border, #dedcd6); display: flex; align-items: center; }
+  .tooltip .tt-cloud-footer { margin-top: var(--sp-2); padding-top: var(--sp-2); border-top: 1px solid var(--border, #dedcd6); display: flex; align-items: center; }
   /* Rain-cell hover: model|chance|amount, same right-aligned-numbers idea as
      the cloud grid above but a 3rd column -- probability and amount are
      different units, so they get separate columns rather than one combined
      string. */
   .tooltip .tt-rain-grid { display: grid; grid-template-columns: auto auto auto; column-gap: 12px; row-gap: 3px; }
-  .tooltip .tt-rain-head { font-size: 0.68rem; color: var(--text-muted); font-weight: 600; text-align: right; }
+  .tooltip .tt-rain-head { font-size: var(--fs-xs); color: var(--text-muted); font-weight: 600; text-align: right; }
   .tooltip .tt-rain-head:first-child { text-align: left; }
 
   /* Real-flight info box: same fixed/positioned-at-cursor mechanism as
@@ -715,7 +798,7 @@
     border-left: 3px solid var(--real-flight-color, #e91e8c);
     border-radius: 8px;
     padding: 8px 12px;
-    font-size: 0.8rem;
+    font-size: var(--fs-base);
     color: var(--text-primary, #0b0b0b);
     box-shadow: 0 4px 20px rgba(0,0,0,0.35);
     display: none;
@@ -724,9 +807,9 @@
     max-width: 260px;
   }
   .real-flight-box .rf-title { font-weight: 700; color: var(--real-flight-color, #e91e8c); margin-bottom: 2px; }
-  .real-flight-box .rf-note { margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--border, #dedcd6); font-size: 0.85em; color: var(--text-muted); line-height: 1.4; }
+  .real-flight-box .rf-note { margin-top: var(--sp-2); padding-top: var(--sp-2); border-top: 1px solid var(--border, #dedcd6); font-size: 0.85em; color: var(--text-muted); line-height: 1.4; }
 
-  .footnote { margin-top: 18px; font-size: 0.78rem; color: var(--text-muted); line-height: 1.6; }
+  .footnote { margin-top: 18px; font-size: var(--fs-sm); color: var(--text-muted); line-height: 1.6; }
   .footnote code { background: var(--surface-2); padding: 1px 5px; border-radius: 4px; }
 
   @media (max-width: 760px) {
