@@ -4,6 +4,11 @@ Dated, terse log of notable changes. For the full design rationale and decision 
 
 ## 2026-08-05
 
+**Follow-up: "(fps)" moved to the Rate section title; the standalone rate legend folded into the editor**
+- Per-column "Drogue (fps)"/"Main (fps)" headers (added earlier the same day, see below) reverted to plain "Drogue"/"Main" -- the unit now lives once, in the section title ("Rate (fps)"), instead of repeated in every column.
+- Removed `#rate-legend`/`buildRateLegend()` entirely: Fast/Slow was appearing twice in the sidebar -- once as a standalone hover-isolate/click-pin legend, once as the rate editor's own row labels. The editor's `.rate-edit-label` cells now carry the isolate/pin behavior directly (same `state.isolatedRate`/`state.pinnedRate` semantics, same toggle-to-clear-on-reclick, same History-mode auto-pin-to-fast), so there's one Fast/Slow control instead of two saying the same thing. `RATE_LEGEND_ITEMS` stays (still shared with `RATE_SHAPE`/the editor's swatches), only the standalone legend-building function and its markup are gone.
+- Verified in-browser: hover/click on a rate label isolates/pins exactly as the old legend did (map filtering, permalink's `rate=` param, History's auto-pinned-fast label rendering correctly), reset and Tab-through-inputs still work.
+
 **Deploy toggle moved next to the rate editor; drogue disabled on Single; main rate hard-capped at 35 fps (Tripoli USC §11-1)**
 - Deploy (Single/Dual) moved from the top controls bar into the sidebar, directly above the Rate legend/editor -- same `#deploy-toggle` element and `buildToggle()` wiring, just relocated, since the two are closely coupled (deploy determines whether the drogue rate even applies). The `Deploy` entry in `.controls` is gone; `Copy link` moved up to take its place.
 - On Single deploy, both Fast/Slow rows' Drogue inputs are now `disabled` (dimmed, not hidden -- keeps the grid's column structure stable across a toggle) rather than silently ignored: `zoneFor()`'s phase construction never reads drogue for single-deploy, so editing it previously did nothing with no indication why. Refreshes automatically on every deploy-toggle click.

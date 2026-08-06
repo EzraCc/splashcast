@@ -30,7 +30,7 @@ For each launch site and upcoming launch date, Splashcast:
 - Once a launch date has passed, pulls NOAA's own HRRR analysis (its data-assimilation output, the closest free proxy to "what actually happened") and plots it as a star marker against every model's prior forecasts, with a per-model accuracy table.
 - Lets you toggle satellite vs. road map imagery, drag the launch pad to try a nearby setup spot, and adjust the boost-angle buffer live — all client-side, no server.
 - Lets you narrow the apogee-altitude list to a min/max range (a vertical slider beside the altitude legend, with the row list graying out whatever falls outside it) — useful once a tall-waiver site's list runs to 20+ options — on top of the existing per-altitude hover/pin isolation.
-- Lets you edit the Fast/Slow descent-rate presets directly (drogue + main fps, next to the rate legend) — real observed rates on a given rocket/recovery setup often diverge from the defaults, and the map updates live as you type.
+- Lets you edit the Fast/Slow descent-rate presets directly (drogue + main fps; hover/click a rate's own row to isolate/pin it on the map, same as every other legend) — real observed rates on a given rocket/recovery setup often diverge from the defaults, and the map updates live as you type.
 
 It is **not** a go/no-go safety tool — it surfaces model spread and forecast-drift patterns for a launch director to read against their own approved landing zone and safety code, not a pass/fail call. The viewer itself carries a disclaimer to the same effect: an aid for planning, not legal advice, and not a substitute for checking with local authorities on burn bans and other applicable rules.
 

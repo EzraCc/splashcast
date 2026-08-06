@@ -470,7 +470,6 @@ function setMode(mode) {
   buildAltRange();
   buildTimeLegend();
   buildModelLegend();
-  buildRateLegend();
   buildRateEditor();
   // note: no render() here -- buildToggle() already calls it after this
   // onChange callback returns, for the mode-toggle click that triggers this.
@@ -751,36 +750,12 @@ function buildModelLegend() {
   });
 }
 
+// Fast/slow keys shared with the rate editor below -- shape drives both
+// RATE_SHAPE (marker shape on the map) and the editor's row swatches.
 const RATE_LEGEND_ITEMS = [
   { key: 'fast', label: 'Fast', shape: 'circle' },
   { key: 'slow', label: 'Slow', shape: 'square' },
 ];
-
-function buildRateLegend() {
-  const el = document.getElementById('rate-legend');
-  el.innerHTML = '';
-  RATE_LEGEND_ITEMS.forEach(({ key, label, shape }) => {
-    const row = document.createElement('div');
-    row.className = 'alt-row';
-    const swatchStyle = shape === 'circle' ? 'border-radius:50%;' : 'border-radius:3px;';
-    row.innerHTML = `<div style="width:16px;height:16px;${swatchStyle}background:var(--text-secondary);flex-shrink:0;"></div><span>${label}</span>`;
-    row.addEventListener('mouseenter', () => { state.isolatedRate = key; render(); });
-    row.addEventListener('mouseleave', () => { state.isolatedRate = null; render(); });
-    row.addEventListener('click', () => {
-      // Toggle, same as the altitude list -- clicking the already-selected
-      // rate again clears it rather than being stuck permanently selected.
-      // History defaults to 'fast' the first time that mode is entered (see
-      // setMode()) so it doesn't start out showing nothing, but from there
-      // behaves the same as byAltitude/byTime.
-      state.pinnedRate = (state.pinnedRate === key) ? null : key;
-      [...el.children].forEach(r => r.classList.remove('pinned'));
-      if (state.pinnedRate === key) row.classList.add('pinned');
-      render();
-    });
-    if (state.pinnedRate === key) row.classList.add('pinned');
-    el.appendChild(row);
-  });
-}
 
 // Editable drogue/main fps per Fast/Slow preset -- see state.rateFps's own
 // declaration in freshState() for why this lives in `state` rather than as
@@ -794,14 +769,34 @@ function buildRateEditor() {
   showRateWarning(false); // stale otherwise -- #rate-warning lives outside #rate-edit, so a full rebuild wouldn't otherwise touch it
   const limits = DATA.descent_params.rate_limits_fps;
 
+  // Unit lives once in the section title ("Rate (fps)") now, not repeated
+  // per column.
   const head = (text) => { const d = document.createElement('div'); d.className = 'rate-edit-head'; d.textContent = text; el.appendChild(d); };
-  head(''); head('Drogue (fps)'); head('Main (fps)');
+  head(''); head('Drogue'); head('Main');
 
   RATE_LEGEND_ITEMS.forEach(({ key, label, shape }) => {
     const swatchStyle = shape === 'circle' ? 'border-radius:50%;' : 'border-radius:3px;';
     const labelEl = document.createElement('div');
     labelEl.className = 'rate-edit-label';
     labelEl.innerHTML = `<div style="width:12px;height:12px;${swatchStyle}background:var(--text-secondary);flex-shrink:0;"></div><span>${label}</span>`;
+    // Hover-isolate/click-pin, same behavior the standalone #rate-legend
+    // used to provide before it was folded into this grid (2026-08-05) --
+    // Fast/Slow no longer needs to appear twice in the sidebar (once as a
+    // pure legend, once as this editor's row labels).
+    labelEl.addEventListener('mouseenter', () => { state.isolatedRate = key; render(); });
+    labelEl.addEventListener('mouseleave', () => { state.isolatedRate = null; render(); });
+    labelEl.addEventListener('click', () => {
+      // Toggle, same as the altitude list -- clicking the already-selected
+      // rate again clears it rather than being stuck permanently selected.
+      // History defaults to 'fast' the first time that mode is entered (see
+      // setMode()) so it doesn't start out showing nothing, but from there
+      // behaves the same as byAltitude/byTime.
+      state.pinnedRate = (state.pinnedRate === key) ? null : key;
+      el.querySelectorAll('.rate-edit-label').forEach(r => r.classList.remove('pinned'));
+      if (state.pinnedRate === key) labelEl.classList.add('pinned');
+      render();
+    });
+    if (state.pinnedRate === key) labelEl.classList.add('pinned');
     el.appendChild(labelEl);
 
     ['drogue', 'main'].forEach(part => {
@@ -3322,7 +3317,6 @@ function initFromData() {
   buildAltList();
   buildAltRange();
   buildModelLegend();
-  buildRateLegend();
   buildRateEditor();
   banDismissed = false; // a dismiss on a previous site/date shouldn't suppress a genuinely new ban
   renderCloudPanel();

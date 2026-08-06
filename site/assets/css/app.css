@@ -570,13 +570,24 @@
   .alt-hint { font-size: 0.75rem; color: var(--text-muted); margin-top: 6px; line-height: 1.5; display: none; }
   .alt-hint.open { display: block; }
 
-  /* Fast/Slow drogue+main fps, editable -- sits below #rate-legend, a
-     sibling not nested inside its rows: those rows own hover-isolate/
-     click-pin handlers that would misfire on focus/click into a nested
-     <input>. Grid: blank header cell, Drogue, Main; one row per preset. */
+  /* Fast/Slow drogue+main fps, editable. Grid: blank header cell, Drogue,
+     Main; one row per preset -- the label cell (.rate-edit-label below)
+     carries hover-isolate/click-pin, the two <input> cells are separately
+     interactive as plain number fields; being sibling grid cells rather
+     than nested elements keeps the two kinds of interaction from
+     conflicting (a standalone #rate-legend used to own the isolate/pin
+     half separately -- folded in here 2026-08-05, see buildRateEditor()'s
+     own comment, since Fast/Slow didn't need to appear twice). */
   .rate-edit { display: grid; grid-template-columns: auto 1fr 1fr; gap: 4px 8px; align-items: center; margin-top: 6px; font-size: 0.78rem; color: var(--text-secondary); }
   .rate-edit-head { color: var(--text-muted); font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.03em; }
-  .rate-edit-label { display: flex; align-items: center; gap: 6px; }
+  /* Hover-isolate/click-pin, same affordance .alt-row rows use -- this cell
+     absorbed that behavior from the old standalone #rate-legend (removed
+     2026-08-05, see buildRateEditor()'s own comment). */
+  .rate-edit-label {
+    display: flex; align-items: center; gap: 6px; cursor: pointer;
+    padding: 2px 4px; margin: -2px -4px; border-radius: 5px;
+  }
+  .rate-edit-label:hover, .rate-edit-label.pinned { background: var(--surface-2); color: var(--text-primary); }
   .rate-edit input[type="number"] {
     width: 100%; box-sizing: border-box; padding: 2px 4px;
     border: 1px solid var(--border); border-radius: 4px;
