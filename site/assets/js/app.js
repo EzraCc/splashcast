@@ -336,6 +336,12 @@ function freshState() {
     // yet"), not "no models selected" -- buildModelLegend() resolves it to
     // every model with real data the first time it runs for this state.
     selectedModels: null,
+    // Snapshot of selectedModels from right before a double-click solo, so a
+    // second double-click on that same (now-soloed) model can undo it --
+    // null whenever there's nothing to undo (no solo in effect, or it's
+    // since been superseded by a plain click). See buildModelLegend()'s
+    // dblclick handler.
+    preSoloModels: null,
     isolatedRate: null, pinnedRate: null,
     isolatedCapture: null, pinnedCapture: null, // History mode only -- which capture_date ("forecast age") to isolate
     compareAlt: DATA.altitudes[0], // which altitude "by time of day" mode compares across hours
@@ -454,8 +460,8 @@ function applyModeUI(mode) {
     ? 'Each row is one capture date -- swatch shade shows how many days before launch it was pulled (lighter = further out, darker = closer to launch). Hover to isolate just that capture (map + accuracy table); click to pin, click again to release.'
     : 'Hover a time to isolate it. Click to pin; click again to release.';
   document.getElementById('model-hint').textContent = mode === 'byHistory'
-    ? 'Color and shape both mean model here (same colors as the main map) -- shape is the colorblind-safe backup. Click a model to toggle it on/off; double-click to solo just that one, click again to bring the rest back.'
-    : 'Click a model to toggle it on/off, like a checkbox -- all start selected. Double-click to solo just that one (zones collapse to a line when only one model is selected, since a single model\'s fast/slow points fall on the same bearing from the pad).';
+    ? 'Color and shape both mean model here (same colors as the main map) -- shape is the colorblind-safe backup. Click a model to toggle it on/off; double-click to solo just that one, double-click it again to bring back whatever was selected before.'
+    : 'Click a model to toggle it on/off, like a checkbox -- all start selected. Double-click to solo just that one (zones collapse to a line when only one model is selected, since a single model\'s fast/slow points fall on the same bearing from the pad); double-click it again to bring back whatever was selected before.';
   updateRateHint();
 }
 
@@ -490,6 +496,7 @@ function setMode(mode) {
   // re-resolve to "all available" for whichever mode this is switching to
   // rather than carrying over a selection that might not even exist there.
   state.selectedModels = null;
+  state.preSoloModels = null; // nothing to undo across a mode switch
   state.isolatedCapture = null; state.pinnedCapture = null;
   // Rate resets here too, same as everything else above -- otherwise the
   // rate History auto-pins (below) leaks into byAltitude/byTime afterward,
@@ -879,13 +886,23 @@ function buildModelLegend() {
           clickTimer = null;
           if (state.selectedModels.has(m)) state.selectedModels.delete(m);
           else state.selectedModels.add(m);
+          state.preSoloModels = null; // a manual toggle supersedes any pending solo-undo
           buildModelLegend();
           render();
         }, 250);
       });
       row.addEventListener('dblclick', () => {
         if (clickTimer) { clearTimeout(clickTimer); clickTimer = null; }
-        state.selectedModels = new Set([m]);
+        // Second double-click on the model that's currently soloed undoes it
+        // back to whatever was selected right before -- otherwise this is a
+        // fresh solo, so stash the pre-solo selection for that undo.
+        if (state.preSoloModels && state.selectedModels.size === 1 && state.selectedModels.has(m)) {
+          state.selectedModels = state.preSoloModels;
+          state.preSoloModels = null;
+        } else {
+          state.preSoloModels = new Set(state.selectedModels);
+          state.selectedModels = new Set([m]);
+        }
         buildModelLegend();
         render();
       });
@@ -898,6 +915,7 @@ function buildModelLegend() {
 
 document.getElementById('model-reset').addEventListener('click', () => {
   state.selectedModels = null; // sentinel -- re-resolve to "all available"
+  state.preSoloModels = null; // nothing to undo across a reset
   buildModelLegend();
   render();
 });
