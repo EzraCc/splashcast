@@ -99,7 +99,7 @@
        rain/temp grids' row-gap or the alt-range-slider system -- those
        have real, documented exact-pixel couplings elsewhere (e.g.
        .cloud-cell .range-num's absolute -14px offset only clears the row
-       above it because .cloud-grid's row-gap is exactly 16px, not a
+       above it because .weather-grid's row-gap is exactly 16px, not a
        coincidence -- see that rule's own comment) that a shared token
        could silently drift out of sync with if one call site's value ever
        changed without the other. */
@@ -188,12 +188,6 @@
     .layout { grid-template-columns: 1fr 230px; }
   }
 
-  /* Wraps .map-wrap + .cloud-overlay tightly -- the positioned ancestor for
-     .cloud-overlay's absolute corner placement on desktop, but unlike
-     .map-wrap itself (fixed aspect-ratio, overflow:hidden for the square
-     satellite crop), this has no height constraint of its own, so the panel
-     can drop to static/full-width flow below the map on mobile without
-     fighting .map-wrap's box. */
   .map-frame { position: relative; }
 
   .map-wrap {
@@ -232,29 +226,32 @@
   .layer-toggle button.active { background: var(--accent); color: #fff; font-weight: 600; }
   .layer-toggle button:hover:not(.active) { background: var(--surface-2); }
 
-  /* =========================== cloud panel (map-corner overlay) =========================== */
-  /* Bars, not dots on a shared line -- coverage % reads as bar HEIGHT (a
-     vertical axis), each model in its own lane, so two models landing on the
-     same % are still two visibly distinct bars instead of one dot hiding
-     behind another at the same pixel position. */
-  .cloud-overlay {
-    position: absolute; right: 10px; top: 10px; z-index: 5; width: 260px;
-    background: color-mix(in srgb, var(--surface-2) 92%, transparent);
-    backdrop-filter: blur(3px); border: 1px solid var(--border); border-radius: 10px;
-    padding: 10px 12px 8px; box-shadow: 0 1px 4px rgba(0,0,0,0.15);
+  /* ================ combined weather panel (rain + temp + clouds) ================ */
+  /* Below the map, full-width, one shared grid (.weather-grid below) instead
+     of three separate widgets -- clouds used to be a map-corner overlay
+     (position:absolute, plus its own mobile-only static-position override,
+     both retired now that this is always an in-flow block regardless of
+     viewport width), rain/temp were full-width rows ABOVE the map pushing
+     it down the page. Bars, not dots on a shared line -- coverage %/rain/
+     temp all read as bar HEIGHT (a vertical axis), each model in its own
+     lane, so two models landing on the same value are still two visibly
+     distinct bars instead of one dot hiding behind another. */
+  .weather-panel {
+    margin-top: var(--sp-6); padding: 10px 12px 8px;
+    background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px;
   }
-  .cloud-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 2px; }
+  .weather-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 2px; }
   /* Only the title+chevron toggles the whole panel, not the header row's
      other controls (the altitude-band expand button lives beside it, not
      inside it). */
-  .cloud-title-toggle {
+  .weather-title-toggle {
     font-size: var(--fs-sm); color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.03em;
     display: flex; align-items: center; gap: 6px; cursor: pointer; user-select: none; border-radius: 4px;
   }
-  .cloud-title-toggle:hover { color: var(--text-secondary); }
-  .cloud-title-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-  .cloud-chevron { font-size: var(--fs-2xs); transition: transform 0.15s ease; display: inline-block; }
-  .cloud-chevron.collapsed { transform: rotate(-90deg); }
+  .weather-title-toggle:hover { color: var(--text-secondary); }
+  .weather-title-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .weather-chevron { font-size: var(--fs-2xs); transition: transform 0.15s ease; display: inline-block; }
+  .weather-chevron.collapsed { transform: rotate(-90deg); }
   .waiver-note { font-size: var(--fs-xs); color: var(--text-muted); margin-bottom: var(--sp-3); }
   .waiver-note b { color: var(--text-secondary); font-weight: 600; }
   .cloud-expand-btn {
@@ -263,18 +260,61 @@
   }
   .cloud-expand-btn:hover { text-decoration: underline; }
 
-  /* margin-bottom clears the first grid row's range-num text, which is
-     positioned 14px above its own cell (.cloud-cell .range-num) -- interior
-     rows get that clearance for free from cloud-grid's row-gap, but the
-     very first row has nothing above it except this header. */
-  .cloud-hours { display: grid; grid-template-columns: 42px repeat(4, 1fr); gap: 0 6px; margin-bottom: 16px; }
-  .cloud-hours .hr-label { font-size: var(--fs-xs); color: var(--text-muted); text-align: center; padding-bottom: 4px; }
-  /* Corner cell above the Low/Mid/High labels -- the grid's cell values
-     ("0-24%") never spell out the unit on their own, so this is the one
-     place it's stated once for the whole panel instead of repeated per cell. */
-  .cloud-corner-label { font-size: var(--fs-2xs); color: var(--text-muted); line-height: 1.15; align-self: end; padding-bottom: 4px; }
-  .cloud-grid { display: grid; grid-template-columns: 42px repeat(4, 1fr); row-gap: 16px; column-gap: 6px; align-items: end; }
-  .cloud-layer-label { font-size: var(--fs-xs); color: var(--text-secondary); line-height: 1.2; align-self: end; padding-bottom: 4px; }
+  /* One grid for every row -- header, rain, temp, and the cloud layer rows
+     all append their cells into this same container (see app.js's
+     renderWeatherPanel()/addWeatherHeaderRow()/addRainRow()/addTempRow()/
+     addCloudRow()), relying on CSS grid's row-wrapping auto-placement: as
+     long as each logical row's cells sum to exactly 7 column-units (label +
+     Prior day + Morning + 4 hours), it wraps to a new line on its own with
+     no explicit grid-row/grid-column-start bookkeeping needed. Label column
+     wider than the data columns -- needs to fit the temp row's inline
+     actual/feels-like toggle, not just a short "Rain"/"Low" string.
+     row-gap 16px, not smaller -- .cloud-cell .range-num floats to -14px
+     above its own cell (position:absolute relative to .cloud-cell), which
+     only avoids colliding with whatever's above it because every row here
+     leaves that much clearance below it. This is a real, deliberate pixel
+     coupling, not an arbitrary value -- don't shrink one without the other. */
+  .weather-grid {
+    display: grid;
+    grid-template-columns: minmax(78px, auto) repeat(2, minmax(56px, 1fr)) repeat(4, minmax(52px, 1fr));
+    column-gap: 6px; row-gap: 16px; align-items: end;
+    /* 7 columns still won't always fit a narrow phone alongside a wide
+       label column -- scroll instead of crushing any column below what its
+       own text needs, same pattern already used for .accuracy-table-wrap. */
+    overflow-x: auto;
+  }
+  .weather-corner { grid-column: span 1; }
+  .weather-hr-label { font-size: var(--fs-xs); color: var(--text-muted); text-align: center; padding-bottom: 4px; }
+  /* The hour columns' headers are buttons, not plain text -- they ARE the
+     hour selector now (see addWeatherHeaderRow()'s own comment), replacing
+     the standalone #hour-toggle that used to live in .controls. */
+  .weather-hour-btn {
+    border: 1px solid var(--border); border-radius: 6px; background: var(--surface-1); color: var(--text-secondary);
+    font-size: var(--fs-xs); padding: 4px 2px; cursor: pointer; text-align: center;
+  }
+  .weather-hour-btn:hover:not(.active) { background: var(--surface-2); }
+  .weather-hour-btn.active { background: var(--accent); color: #fff; font-weight: 600; border-color: var(--accent); }
+  /* Same disabled treatment .toggle-group.disabled gave the old standalone
+     #hour-toggle-group in byTime mode (that mode shows all 4 hours at once
+     and ignores state.hour for its own zone selection) -- scoped to just
+     the hour buttons via a class on the panel container rather than a
+     dedicated wrapper div, since the buttons have to be direct grid
+     children for column alignment (see .weather-grid's own comment) and
+     can't be wrapped in an extra container without breaking that. */
+  #weather-panel.hours-disabled .weather-hour-btn { opacity: 0.4; pointer-events: none; }
+  /* Per-metric row label ("🌧️ Rain", "🌡️ Temp" + its toggle) -- stacks its
+     children (text, then temp's toggle if present) rather than forcing them
+     onto one line, since the label column is sized for the text alone. */
+  .weather-row-label {
+    display: flex; flex-direction: column; align-items: flex-start; gap: 4px;
+    font-size: var(--fs-xs); color: var(--text-secondary); line-height: 1.2; align-self: end; padding-bottom: 4px;
+  }
+  /* Cloud's Low/Mid/High/Total row labels span the label + Prior day +
+     Morning columns (clouds has no data for those two -- see
+     renderWeatherPanel()'s own comment) rather than leaving two visibly
+     empty cells per row; addCloudRow() still only ever appends 4 hourly
+     cells after it, so the column math (3 + 4 = 7) still lands correctly. */
+  .cloud-layer-label { grid-column: span 3; font-size: var(--fs-xs); color: var(--text-secondary); line-height: 1.2; align-self: end; padding-bottom: 4px; }
   .cloud-layer-label b { display: block; color: var(--text-primary); font-size: var(--fs-xs); font-weight: 600; }
   .cloud-layer-label.beyond-waiver { opacity: 0.55; }
   .cloud-layer-label.beyond-waiver b { font-weight: 500; }
@@ -293,7 +333,7 @@
      character wider than a one-digit one ("0-100%"), just enough to wrap
      to a 2nd line at this column width; wrapped, it grows upward past its
      single-line -14px offset and collides with whatever is above it
-     (cloud-hours' header row, for the grid's first row). Overflowing
+     (the shared header row, for the grid's first data row). Overflowing
      sideways into the column-gap reads far better than growing into a
      different row entirely. */
   .cloud-cell .range-num { position: absolute; left: 0; right: 0; top: -14px; text-align: center;
@@ -348,87 +388,29 @@
   .cloud-legend { margin-top: 12px; padding-top: 9px; border-top: 1px solid var(--border); }
   .cloud-legend .hot-key { display: flex; align-items: center; gap: 5px; font-size: var(--fs-xs); color: var(--hot-text); }
 
-  /* ============================ weather timelines ========================= */
-  /* Above the map, each its own full-width row -- 11 slots (Prior day,
-     Morning, then 8am-4pm hourly), each a label stacked over a data cell.
-     Rain and temperature share this grid/cell shell (.rain- and .temp-
-     prefixed classes are two instances of the same shape, not two separate
-     designs) -- cells
-     also get .cloud-cell for .cloud-bar/.baseline/.bars/.range-num/.no-data,
-     the same per-model-bar visual language as the cloud panel. A future
-     cloud-panel timeline (if it moves down here too) would join this same
-     combined-selector list rather than getting a third copy. */
-  .rain-timeline, .temp-timeline {
-    margin-bottom: 14px; padding: 10px 12px;
-    background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px;
-    /* 11 columns have no room to compress into on a phone-width screen --
-       verified directly (375px viewport): with no floor, every column's
-       label/range-num text overflowed into its neighbor with no gap between
-       them at all, an illegible run-together mess. Same overflow-x: auto
-       pattern already used for .accuracy-table-wrap -- scroll instead of
-       crushing every column below what its own text needs. */
-    overflow-x: auto;
-  }
-  .rain-timeline-title, .temp-timeline-title {
-    font-size: var(--fs-sm); color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.03em;
-  }
-  /* Rain has no toggle, so its title carries its own spacing to the grid
-     below; temp's title sits in .temp-head instead (with the actual/
-     feels-like toggle beside it), which carries that spacing itself. */
-  .rain-timeline-title { margin-bottom: var(--sp-3); }
-  .temp-head { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3); margin-bottom: var(--sp-3); }
-  /* Same .toggle-btns visual language as TIME/View/Deploy in the controls
-     bar (bordered pill, active filled with --accent) scaled down for this
-     compact header -- both options always labeled, so the current state
-     reads directly instead of being decoded from a single link naming only
-     the OTHER mode. */
-  .temp-mode-toggle { display: flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; flex-shrink: 0; }
+  /* Temp's actual/feels-like toggle -- lives inline in its row label now
+     (addTempRow()), not a full header row of its own. Stacked vertically,
+     not side by side like the other .toggle-btns groups in this app (TIME/
+     View/Deploy in the controls bar) -- side by side measured 136px wide
+     ("Feels like"/"Actual", nowrap), well past the label column's own
+     width (78-90px), and CSS grid doesn't clip a track's overflowing
+     content by default -- it just visually spills into the next column's
+     cells instead of wrapping the track wider, confirmed directly (a real
+     click on "Actual" landed on a rain bar in the next column over at
+     375px). Stacked, the toggle only ever needs the width of its single
+     widest button (~60px), comfortably inside the column at any width. */
+  .temp-mode-toggle { display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; flex-shrink: 0; }
   .temp-mode-toggle button {
-    border: none; border-right: 1px solid var(--border); background: var(--surface-1); color: var(--text-secondary);
-    padding: 3px 8px; font-size: var(--fs-xs); cursor: pointer; white-space: nowrap;
+    border: none; border-bottom: 1px solid var(--border); background: var(--surface-1); color: var(--text-secondary);
+    padding: 3px 8px; font-size: var(--fs-xs); cursor: pointer; white-space: nowrap; text-align: left;
   }
-  .temp-mode-toggle button:last-child { border-right: none; }
+  .temp-mode-toggle button:last-child { border-bottom: none; }
   .temp-mode-toggle button.active { background: var(--accent); color: #fff; font-weight: 600; }
   .temp-mode-toggle button:hover:not(.active) { background: var(--surface-2); }
-  .rain-grid, .temp-grid {
-    display: grid;
-    grid-auto-flow: column;
-    grid-template-rows: auto 1fr;
-    /* minmax floor, not a bare 1fr -- columns still stretch to fill real
-       width on desktop, but can't shrink past what "0.00 in" itself needs
-       once the row has to scroll instead. */
-    grid-auto-columns: minmax(52px, 1fr);
-    /* row-gap 16px, not 5 -- .cloud-cell .range-num floats to -14px above
-       its own cell (escapes into whatever's above it via `position:
-       absolute` relative to .cloud-cell), which only avoids colliding with
-       the label row in the original cloud grid because that grid also uses
-       a 16px row-gap to leave it room. Same fix needed here. */
-    column-gap: 5px; row-gap: 16px;
-  }
-  .rain-cell-label, .temp-cell-label { font-size: var(--fs-2xs); color: var(--text-secondary); text-align: center; line-height: 1.2; }
-  .rain-cell-label b, .temp-cell-label b { display: block; color: var(--text-primary); font-size: var(--fs-xs); font-weight: 600; }
-  /* Same hours as SPLASH_HOURS_LOCAL/the rest of the viewer's hour toggle --
-     highlighted so they read as those specific hours, not just "some of the
-     nine columns." */
-  .rain-cell-label.marked b, .temp-cell-label.marked b { color: var(--accent); }
-  .rain-cell, .temp-cell { height: 64px; }
-  /* Temperature has no fixed bar scale (see app.js's renderTempTimeline())
-     -- the axis shows this capture's own computed min/max instead of a
-     baked-in range. Sticky, not a plain first column: the row scrolls
-     horizontally on mobile, and a min/max reference that scrolls away
-     right when comparing a far-right hour defeats the point of having one.
-     Needs its own background (not transparent) since sticky content still
-     paints over whatever scrolls underneath it. */
-  .temp-axis {
-    position: sticky; left: 0; z-index: 2;
-    background: var(--surface-1);
-  }
-  .temp-axis-max, .temp-axis-min {
-    position: absolute; left: 0; right: 0; text-align: center;
-    font-size: var(--fs-2xs); color: var(--text-muted); font-variant-numeric: tabular-nums;
-  }
-  .temp-axis-max { top: 0; }
-  .temp-axis-min { bottom: 0; }
+  /* Rain/temp data cells reuse .cloud-cell (.baseline/.bars/.range-num/
+     .no-data etc., defined above) at its default 52px height -- rain and
+     temp used to be taller (64px) to leave room for a per-cell label that
+     no longer exists (the shared header row above carries it once now). */
 
   /* =========================== burn-ban status =========================== */
   /* Quiet by default (clear is the common case, most days) -- a small chip.
@@ -482,22 +464,6 @@
     50% { background-color: color-mix(in srgb, #b3241c 90%, transparent); }
   }
 
-  @media (max-width: 760px) {
-    /* Drops from a map-corner overlay to a full-width block below the map
-       -- confirmed directly that no width could satisfy both "wide enough
-       for the panel's own 4-column content" and "narrow enough not to
-       overlap .layer-toggle" at real phone widths (320-375px); the two
-       constraints are mathematically incompatible side by side. Full width
-       in normal flow sidesteps the conflict instead of tuning around it.
-       .map-frame (not .map-wrap) is what makes this possible -- .map-wrap's
-       own fixed aspect-ratio + overflow:hidden (for the square satellite
-       crop) can't grow to fit a stacked panel, but .map-frame has no such
-       constraint. */
-    .cloud-overlay {
-      position: static; width: 100%; margin-top: 10px;
-      padding: 8px 9px 6px;
-    }
-  }
 
   .zone-buffer { stroke: none; pointer-events: none; }
   .zone-core { stroke-width: 3; pointer-events: none; }

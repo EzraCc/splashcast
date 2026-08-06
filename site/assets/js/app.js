@@ -442,7 +442,12 @@ function freshState() {
 // to on first load too -- without also running setMode()'s pin-clearing
 // (which would stomp the pinnedAlt/pinnedRate a permalink just supplied).
 function applyModeUI(mode) {
-  document.getElementById('hour-toggle-group').classList.toggle('disabled', mode === 'byTime');
+  // The hour buttons live inside #weather-panel now (see
+  // addWeatherHeaderRow()), not a standalone #hour-toggle -- same disabled-
+  // in-byTime-mode treatment (byTime shows all 4 hours at once and ignores
+  // state.hour for its own zone selection), just scoped to the panel via a
+  // descendant selector (app.css) instead of a dedicated toggle-group div.
+  document.getElementById('weather-panel').classList.toggle('hours-disabled', mode === 'byTime');
   document.getElementById('time-legend-block').style.display = (mode === 'byTime' || mode === 'byHistory') ? '' : 'none';
   document.getElementById('time-legend-title').textContent = mode === 'byHistory' ? 'Forecast age' : 'Time of day';
   document.getElementById('time-color-controls').style.display = mode === 'byHistory' ? 'none' : '';
@@ -1343,7 +1348,7 @@ window.addEventListener('pointercancel', endPadDrag);
 // applied here at the container level so every button inside inherits it
 // without needing its own listener. Any *new* button added inside #map-wrap
 // needs to be covered by this selector or the same bug recurs.
-document.querySelectorAll('.zoom-btns, .layer-toggle, .cloud-overlay, .burn-ban-chip, .ban-overlay').forEach(el => {
+document.querySelectorAll('.zoom-btns, .layer-toggle, .burn-ban-chip, .ban-overlay').forEach(el => {
   el.addEventListener('pointerdown', evt => evt.stopPropagation());
 });
 
@@ -1557,8 +1562,17 @@ function showTooltip(evt, hoveredPt) {
 }
 function hideTooltip() { tooltip.style.display = 'none'; }
 
-// --- cloud panel (see splash_zones.py's build_cloud_data()) -----------------
-// Map-corner overlay, waiver-aware: collapsed to just the altitude bands a
+// --- combined weather panel: rain + temperature + clouds, below the map ----
+// (see splash_zones.py's build_rain_data()/build_temperature_data()/
+// build_cloud_data()). One shared grid instead of three separate widgets --
+// clouds used to be a map-corner overlay, rain/temp were full-width rows
+// ABOVE the map pushing it down the page. The header row's 4 hour columns
+// (9/11/1/3) double as the hour selector -- clouds only ever published
+// exactly those 4 hours (config.SPLASH_HOURS_LOCAL/DATA.hours), so there was
+// never a second real hour set to reconcile, just one duplicated across two
+// widgets (this panel + the old standalone #hour-toggle in .controls, now
+// removed -- see initFromData()/applyModeUI()).
+// Waiver-aware, same as before: clouds collapse to just the altitude bands a
 // site's own waiver actually reaches (DATA.cloud_relevant_layers), with
 // "Show all altitudes" revealing the rest (dimmed) plus the independently-
 // computed Total -- Total is never shown by default, at any site (even a
@@ -1572,7 +1586,7 @@ const CLOUD_LAYERS = [
   { key: 'mid', label: 'Mid', sub: '9,800–26,200ft' },
   { key: 'low', label: 'Low', sub: '0–9,800ft' },
 ];
-let cloudPanelCollapsed = false;
+let weatherPanelCollapsed = false; // gates the whole panel now, not just clouds
 let cloudAltitudesExpanded = URL_PARAMS.get('clouds') === 'all';
 
 function isCloudHot(vals) {
@@ -1697,105 +1711,6 @@ function addCloudRow(grid, layerKey, label, sub, beyondWaiver) {
   });
 }
 
-function renderCloudPanel() {
-  const container = document.getElementById('cloud-overlay');
-  if (!DATA.clouds) { container.style.display = 'none'; return; } // pre-feature captures never regenerated
-  container.style.display = '';
-  container.innerHTML = '';
-
-  const head = document.createElement('div');
-  head.className = 'cloud-head';
-
-  const title = document.createElement('div');
-  title.className = 'cloud-title-toggle';
-  title.tabIndex = 0;
-  title.setAttribute('role', 'button');
-  title.setAttribute('aria-expanded', String(!cloudPanelCollapsed));
-  title.innerHTML = `Clouds <span class="cloud-chevron${cloudPanelCollapsed ? ' collapsed' : ''}">&#9660;</span>`;
-  const toggleCollapsed = () => { cloudPanelCollapsed = !cloudPanelCollapsed; renderCloudPanel(); };
-  title.addEventListener('click', toggleCollapsed);
-  title.addEventListener('keydown', evt => {
-    if (evt.key === 'Enter' || evt.key === ' ') { evt.preventDefault(); toggleCollapsed(); }
-  });
-  head.appendChild(title);
-
-  const relevantLayers = DATA.cloud_relevant_layers || ['low', 'mid', 'high'];
-  if (!cloudPanelCollapsed) {
-    const expandBtn = document.createElement('button');
-    expandBtn.className = 'cloud-expand-btn';
-    expandBtn.type = 'button';
-    expandBtn.textContent = cloudAltitudesExpanded ? 'Show waiver altitudes only' : 'Show all altitudes';
-    expandBtn.addEventListener('click', () => { cloudAltitudesExpanded = !cloudAltitudesExpanded; renderCloudPanel(); syncUrl(); });
-    head.appendChild(expandBtn);
-  }
-  container.appendChild(head);
-
-  if (cloudPanelCollapsed) return;
-
-  const site = regionalSites?.sites?.[currentSiteId];
-  const waiverNote = document.createElement('div');
-  waiverNote.className = 'waiver-note';
-  const shownLayers = cloudAltitudesExpanded ? CLOUD_LAYERS.map(l => l.key) : relevantLayers;
-  const shownLabel = shownLayers.map(k => CLOUD_LAYERS.find(l => l.key === k).label).join(' + ');
-  if (site) {
-    waiverNote.innerHTML = `<b>${siteLabel(site)}</b> — ${site.waiver_ft.toLocaleString()}ft waiver, showing ${shownLabel}`;
-  } else {
-    waiverNote.textContent = `Showing ${shownLabel}`;
-  }
-  container.appendChild(waiverNote);
-
-  const hoursRow = document.createElement('div');
-  hoursRow.className = 'cloud-hours';
-  const cornerLabel = document.createElement('div');
-  cornerLabel.className = 'cloud-corner-label';
-  cornerLabel.textContent = '% covered';
-  hoursRow.appendChild(cornerLabel);
-  DATA.hours.forEach(h => {
-    const d = document.createElement('div');
-    d.className = 'hr-label';
-    d.textContent = HOUR_LABELS[h];
-    hoursRow.appendChild(d);
-  });
-  container.appendChild(hoursRow);
-
-  const grid = document.createElement('div');
-  grid.className = 'cloud-grid';
-  container.appendChild(grid);
-
-  // Total is independently-computed whole-sky cover, not low+mid+high summed
-  // -- placed above High (never mixed in with the altitude bands
-  // themselves) so it reads as the big picture, not the headline number.
-  if (cloudAltitudesExpanded) {
-    addCloudRow(grid, 'total', 'Total', 'all layers', false);
-    const totalDivider = document.createElement('div');
-    totalDivider.className = 'cloud-layer-divider';
-    grid.appendChild(totalDivider);
-  }
-
-  const rowsToShow = cloudAltitudesExpanded ? CLOUD_LAYERS : CLOUD_LAYERS.filter(l => relevantLayers.includes(l.key));
-  rowsToShow.forEach(l => addCloudRow(grid, l.key, l.label, l.sub, cloudAltitudesExpanded && !relevantLayers.includes(l.key)));
-
-  // No per-model color key here -- the main "Model" legend in the side
-  // column already maps every model to this same color (MODEL_COLORS_HEX),
-  // so repeating it in every collapsible panel would just be noise.
-  const legend = document.createElement('div');
-  legend.className = 'cloud-legend';
-  const hotKey = document.createElement('div');
-  hotKey.className = 'hot-key';
-  hotKey.innerHTML = `<span class="cloud-badge">&#9888;</span> majority ≥${DATA.cloud_nogo_pct}% covered`;
-  legend.appendChild(hotKey);
-  container.appendChild(legend);
-}
-
-// --- rain timeline (above the map; see splash_zones.py's build_rain_data())
-// One row: "Prior day" + "Morning" aggregate cells, then one cell per hour
-// 8am-4pm (config.RAIN_WINDOW_START/END_HOUR_LOCAL on the pipeline side) --
-// reuses the cloud panel's per-model-bar-per-cell pattern (same real-zero-
-// vs-no-data distinction, same one-tooltip-per-cell), not a line graph:
-// precip is bursty/discontinuous hour to hour (checked against real data --
-// models routinely disagree on which hour carries a spike, not just how
-// much), so connecting points with a line would imply a gradual ramp that
-// isn't real and wouldn't read as more than 8 overlapping near-zero lines.
 function hourAmPm(h) {
   const period = h < 12 ? 'am' : 'pm';
   return `${h % 12 || 12}${period}`;
@@ -1805,31 +1720,60 @@ function hourAmPm(h) {
 // would need to go higher, so there's no value in a taller scale that just
 // leaves everything looking small on an ordinary rainy hour.
 const RAIN_BAR_MAX_IN = 0.3;
-// Same hours as SPLASH_HOURS_LOCAL/DATA.hours -- marked in the timeline so
-// they read as the same "9/11/1/3" the rest of the viewer already uses, not
-// a separate unrelated set of times.
-const RAIN_MARKED_HOURS = new Set([9, 11, 13, 15]);
 // Floor for chance-scaled bar opacity (see appendValueBar()'s opacity
 // param) -- a bar fades toward this as probability drops, but never past
 // it, so even a 9%-chance reading stays visibly present as real data.
 const RAIN_MIN_OPACITY = 0.4;
+// Rain drops from 9 published hourly columns (8am-4pm) to the 4 shared with
+// clouds/the hour selector (9/11/1/3) -- see renderWeatherPanel()'s own
+// comment for why those 4. A shower can land entirely inside a dropped hour
+// (10am/12pm/2pm), so a plain "keep 4, drop 5" sample would silently lose
+// it. Instead each kept column buckets the hours trailing up to it
+// (non-overlapping, same "sum of what led up to this checkpoint" convention
+// Prior day/Morning already use) -- see bucketRainCell().
+const RAIN_HOUR_BUCKETS = { 9: [8, 9], 11: [10, 11], 13: [12, 13], 15: [14, 15, 16] };
 
-function addRainCell(row, label, sub, cellData, marked) {
-  // `sub` (the exact window, e.g. "12am-8am") only appears in the tooltip
-  // footer below, not stacked under the visible label -- the cell's own
-  // range-num floats up into that same space (cloud grid's -14px trick,
-  // which only avoids collision there because labels and cells sit in
-  // separate columns; here every slot's label sits directly above its own
-  // cell), so a second label line would overlap it. Hover for the exact
-  // window instead, same "spell it out in the help, not the label" call
-  // already made for the hourly buckets.
-  const lab = document.createElement('div');
-  lab.className = 'rain-cell-label' + (marked ? ' marked' : '');
-  lab.innerHTML = `<b>${label}</b>`;
-  row.appendChild(lab);
+// Sums `amount` across a bucket's hours (rain is additive) and takes the
+// MAX `chance` (probabilities don't sum -- max surfaces the bucket's real
+// spike, e.g. a 60% chance at 10am buried between two 20%-chance samples at
+// 9/11, instead of averaging it away or hiding it behind whichever sample
+// happened to land nearby). A model missing from one hour in the bucket
+// just doesn't contribute that hour -- doesn't block the sum, doesn't count
+// as a zero.
+function bucketRainCell(h) {
+  const out = {};
+  CLOUD_MODELS.forEach(m => {
+    let amountSum = null, chanceMax = null;
+    RAIN_HOUR_BUCKETS[h].forEach(hh => {
+      const c = DATA.rain.hourly[hh]?.[m];
+      if (!c) return;
+      if (c.amount !== null) amountSum = (amountSum ?? 0) + c.amount;
+      if (c.chance !== null) chanceMax = chanceMax === null ? c.chance : Math.max(chanceMax, c.chance);
+    });
+    out[m] = { amount: amountSum, chance: chanceMax };
+  });
+  return out;
+}
 
+// The real underlying window a bucketed column covers (e.g. "8am-9am"),
+// shown only in the tooltip footer -- not worth a second label line on the
+// cell itself now that the column header above it already says "9am".
+function rainBucketWindowLabel(h) {
+  const hours = RAIN_HOUR_BUCKETS[h];
+  return hours.length > 1 ? `${hourAmPm(hours[0])}–${hourAmPm(hours[hours.length - 1])}` : '';
+}
+
+// One rain data cell -- no per-cell label any more (the shared header row
+// above already carries "Prior day"/"Morning"/9am-3pm once for the whole
+// panel; see addWeatherHeaderRow()). Same per-model-bar-per-cell pattern as
+// clouds (real-zero-vs-no-data distinction, one tooltip per cell), not a
+// line graph: precip is bursty/discontinuous hour to hour (checked against
+// real data -- models routinely disagree on which hour carries a spike),
+// so connecting points with a line would imply a gradual ramp that isn't
+// real.
+function addRainCell(grid, cellData, tooltipLabel, tooltipWindow) {
   const cell = document.createElement('div');
-  cell.className = 'cloud-cell rain-cell' + (marked ? ' marked' : '');
+  cell.className = 'cloud-cell rain-cell';
 
   const baseline = document.createElement('div');
   baseline.className = 'baseline';
@@ -1883,58 +1827,43 @@ function addRainCell(row, label, sub, cellData, marked) {
     ).join('');
     tooltip.innerHTML =
       `<div class="tt-rain-grid"><div class="tt-rain-head">Model</div><div class="tt-rain-head">Chance</div><div class="tt-rain-head">Amount</div>${rows}</div>` +
-      `<div class="tt-cloud-footer" style="color:var(--text-muted);">${label}${sub ? ' ' + sub : ''} rain forecast</div>`;
+      `<div class="tt-cloud-footer" style="color:var(--text-muted);">${tooltipLabel}${tooltipWindow ? ' (' + tooltipWindow + ')' : ''} rain forecast</div>`;
     tooltip.style.display = 'block';
     positionTooltip(evt);
   });
   cell.addEventListener('mouseleave', hideTooltip);
 
-  row.appendChild(cell);
+  grid.appendChild(cell);
 }
 
-function renderRainTimeline() {
-  const container = document.getElementById('rain-timeline');
-  if (!DATA.rain) { container.style.display = 'none'; return; } // pre-feature captures never regenerated
-  container.style.display = '';
-  container.innerHTML = '';
-
-  const title = document.createElement('div');
-  title.className = 'rain-timeline-title';
-  title.textContent = '🌧️ Rain forecast';
-  container.appendChild(title);
-
-  const row = document.createElement('div');
-  row.className = 'rain-grid';
-  container.appendChild(row);
+function addRainRow(grid) {
+  const lab = document.createElement('div');
+  lab.className = 'weather-row-label';
+  lab.innerHTML = '🌧️ Rain';
+  grid.appendChild(lab);
 
   const hourKeys = Object.keys(DATA.rain.hourly).map(Number).sort((a, b) => a - b);
-  // First hourly key is the timeline's own start (config.RAIN_WINDOW_START_
-  // HOUR_LOCAL on the pipeline side) -- read from the data rather than
-  // hardcoded here too, so the two can't drift out of sync.
-  addRainCell(row, 'Prior day', '', DATA.rain.prior_day, false);
-  addRainCell(row, 'Morning', `12am–${hourAmPm(hourKeys[0])}`, DATA.rain.morning, false);
+  addRainCell(grid, DATA.rain.prior_day, 'Prior day', '');
+  addRainCell(grid, DATA.rain.morning, 'Morning', `12am–${hourAmPm(hourKeys[0])}`);
 
-  hourKeys.forEach(h => {
-    addRainCell(row, hourAmPm(h), '', DATA.rain.hourly[h], RAIN_MARKED_HOURS.has(h));
+  DATA.hours.forEach(h => {
+    addRainCell(grid, bucketRainCell(h), HOUR_LABELS[h], rainBucketWindowLabel(h));
   });
 }
 
-// --- temperature timeline (below the rain one; see splash_zones.py's
-// build_temperature_data()) -- same 11-slot row shell as rain (shared
-// .rain-grid/.temp-grid CSS), but two real differences: no fixed bar scale
-// (temperature swings dramatically by season/site -- a Texas August capture
-// and a South Dakota April one have nothing in common -- so a fixed range
-// like RAIN_BAR_MAX_IN would either flatten one into a sliver or clip the
-// other), and no "confirmed zero" state to special-case (unlike rain amount
-// or cloud %, a temperature reading has no natural zero point, so there's
-// nothing for appendValueBar()'s null/zero/real split to do here -- just
-// null-or-real).
-//
-// Scale is computed fresh from this capture's own data (every real value
-// across the whole row, padded and rounded to a clean 5-degree span) and
-// shown as an axis -- sticky-positioned so it stays in view while the row
-// scrolls horizontally on mobile, otherwise the one reference for "how tall
-// is tall" would scroll away exactly when comparing a far-right hour.
+// --- temperature row -- see splash_zones.py's build_temperature_data().
+// No fixed bar scale like rain's (temperature swings dramatically by
+// season/site -- a Texas August capture and a South Dakota April one have
+// nothing in common -- so a fixed range would either flatten one into a
+// sliver or clip the other); scale is computed fresh from this capture's
+// own data each render (every real value across the row, padded/rounded to
+// a clean 5-degree span) and used only to normalize bar height -- not shown
+// as its own axis any more (each cell's own range-num already gives exact
+// numbers, and the shared header/reduced column count leaves less room for
+// a dedicated axis column). No "confirmed zero" state either (unlike rain
+// amount or cloud %, a temperature reading has no natural zero point, so
+// there's nothing for appendValueBar()'s null/zero/real split to do here --
+// just null-or-real).
 //
 // Each cell carries both "actual" (raw temperature_2m) and "apparent"
 // (Open-Meteo's own combined wind+humidity+temperature "feels like" figure
@@ -1942,35 +1871,12 @@ function renderRainTimeline() {
 // number, not two separate fields) -- a toggle switches which one the bars
 // show, default apparent since "does this feel dangerous" is closer to
 // what a launch director actually needs than raw air temperature alone.
+// Lives inline in the row label now instead of owning a full header row.
 let tempShowApparent = URL_PARAMS.get('temp') !== 'actual';
 
-function addTempAxis(row, minV, maxV) {
-  const lab = document.createElement('div');
-  lab.className = 'temp-cell-label';
-  lab.innerHTML = '<b>°F</b>';
-  row.appendChild(lab);
-
+function addTempCell(grid, cellData, scaleMin, scaleMax, tooltipLabel) {
   const cell = document.createElement('div');
-  cell.className = 'temp-cell temp-axis';
-  const maxLabel = document.createElement('div');
-  maxLabel.className = 'temp-axis-max';
-  maxLabel.textContent = Math.round(maxV);
-  cell.appendChild(maxLabel);
-  const minLabel = document.createElement('div');
-  minLabel.className = 'temp-axis-min';
-  minLabel.textContent = Math.round(minV);
-  cell.appendChild(minLabel);
-  row.appendChild(cell);
-}
-
-function addTempCell(row, label, cellData, marked, scaleMin, scaleMax) {
-  const lab = document.createElement('div');
-  lab.className = 'temp-cell-label' + (marked ? ' marked' : '');
-  lab.innerHTML = `<b>${label}</b>`;
-  row.appendChild(lab);
-
-  const cell = document.createElement('div');
-  cell.className = 'cloud-cell temp-cell' + (marked ? ' marked' : '');
+  cell.className = 'cloud-cell temp-cell';
 
   const baseline = document.createElement('div');
   baseline.className = 'baseline';
@@ -2018,33 +1924,24 @@ function addTempCell(row, label, cellData, marked, scaleMin, scaleMax) {
     ).join('');
     const modeLabel = tempShowApparent ? 'feels like' : 'actual';
     tooltip.innerHTML = `<div class="tt-cloud-grid">${rows}</div>` +
-      `<div class="tt-cloud-footer" style="color:var(--text-muted);">${label} temperature forecast (${modeLabel})</div>`;
+      `<div class="tt-cloud-footer" style="color:var(--text-muted);">${tooltipLabel} temperature forecast (${modeLabel})</div>`;
     tooltip.style.display = 'block';
     positionTooltip(evt);
   });
   cell.addEventListener('mouseleave', hideTooltip);
 
-  row.appendChild(cell);
+  grid.appendChild(cell);
 }
 
-function renderTempTimeline() {
-  const container = document.getElementById('temp-timeline');
-  if (!DATA.temperature) { container.style.display = 'none'; return; } // pre-feature captures never regenerated
-  container.style.display = '';
-  container.innerHTML = '';
-
-  const head = document.createElement('div');
-  head.className = 'temp-head';
-  const title = document.createElement('div');
-  title.className = 'temp-timeline-title';
-  title.textContent = '🌡️ Temperature forecast';
-  head.appendChild(title);
+function addTempRow(grid) {
+  const lab = document.createElement('div');
+  lab.className = 'weather-row-label';
+  lab.innerHTML = '🌡️ Temp';
   // Radio-style pair (same .toggle-btns visual language as TIME/View/
-  // Deploy in the controls bar, scaled down for this header) -- both
-  // options always labeled and visible, active one highlighted, so the
-  // current state is read directly rather than decoded from what the
-  // OTHER option's link text says (the single link-button this replaced
-  // only ever showed the mode you'd switch TO).
+  // Deploy in the controls bar, scaled down) -- both options always
+  // labeled and visible, active one highlighted, so the current state is
+  // read directly rather than decoded from what the OTHER option's link
+  // text says.
   const modeToggle = document.createElement('div');
   modeToggle.className = 'temp-mode-toggle';
   [['apparent', 'Feels like'], ['actual', 'Actual']].forEach(([mode, text]) => {
@@ -2056,17 +1953,13 @@ function renderTempTimeline() {
     btn.addEventListener('click', () => {
       if (isActive) return;
       tempShowApparent = (mode === 'apparent');
-      renderTempTimeline();
+      renderWeatherPanel();
       syncUrl();
     });
     modeToggle.appendChild(btn);
   });
-  head.appendChild(modeToggle);
-  container.appendChild(head);
-
-  const row = document.createElement('div');
-  row.className = 'temp-grid';
-  container.appendChild(row);
+  lab.appendChild(modeToggle);
+  grid.appendChild(lab);
 
   const field = tempShowApparent ? 'apparent' : 'actual';
   const allVals = [];
@@ -2082,14 +1975,133 @@ function renderTempTimeline() {
     if (scaleMin === scaleMax) { scaleMin -= 5; scaleMax += 5; } // a perfectly flat reading still needs a real span to divide by
   }
 
-  addTempAxis(row, scaleMin, scaleMax);
-  addTempCell(row, 'Prior day', DATA.temperature.prior_day, false, scaleMin, scaleMax);
-  addTempCell(row, 'Morning', DATA.temperature.morning, false, scaleMin, scaleMax);
-
-  const hourKeys = Object.keys(DATA.temperature.hourly).map(Number).sort((a, b) => a - b);
-  hourKeys.forEach(h => {
-    addTempCell(row, hourAmPm(h), DATA.temperature.hourly[h], RAIN_MARKED_HOURS.has(h), scaleMin, scaleMax);
+  addTempCell(grid, DATA.temperature.prior_day, scaleMin, scaleMax, 'Prior day');
+  addTempCell(grid, DATA.temperature.morning, scaleMin, scaleMax, 'Morning');
+  DATA.hours.forEach(h => {
+    addTempCell(grid, DATA.temperature.hourly[h], scaleMin, scaleMax, HOUR_LABELS[h]);
   });
+}
+
+// Shared header row: blank corner, Prior day, Morning, then 4 hour buttons
+// -- the buttons ARE the hour selector now (formerly the standalone
+// #hour-toggle in .controls, see initFromData()/the real-flight-jump
+// branch), since these are the same 4 hours (DATA.hours ==
+// config.SPLASH_HOURS_LOCAL) clouds always published anyway. Same
+// active-class-toggle-without-rebuild pattern buildToggle() uses elsewhere
+// -- clicking one doesn't need to re-render the rest of this panel, every
+// row already shows all 4 hours' data side by side regardless of which one
+// is "selected" for the map.
+function addWeatherHeaderRow(grid) {
+  const corner = document.createElement('div');
+  corner.className = 'weather-corner';
+  grid.appendChild(corner);
+
+  ['Prior day', 'Morning'].forEach(text => {
+    const d = document.createElement('div');
+    d.className = 'weather-hr-label';
+    d.textContent = text;
+    grid.appendChild(d);
+  });
+
+  DATA.hours.forEach(h => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'weather-hour-btn' + (h === state.hour ? ' active' : '');
+    btn.textContent = HOUR_LABELS[h];
+    btn.addEventListener('click', () => {
+      state.hour = h;
+      [...grid.querySelectorAll('.weather-hour-btn')].forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      hourExplicitlyChosen = true;
+      syncAltCustomUI();
+      render();
+    });
+    grid.appendChild(btn);
+  });
+}
+
+function renderWeatherPanel() {
+  const container = document.getElementById('weather-panel');
+  if (!DATA.rain && !DATA.temperature && !DATA.clouds) { container.style.display = 'none'; return; } // pre-feature captures never regenerated
+  container.style.display = '';
+  container.innerHTML = '';
+
+  const head = document.createElement('div');
+  head.className = 'weather-head';
+
+  const title = document.createElement('div');
+  title.className = 'weather-title-toggle';
+  title.tabIndex = 0;
+  title.setAttribute('role', 'button');
+  title.setAttribute('aria-expanded', String(!weatherPanelCollapsed));
+  title.innerHTML = `Weather <span class="weather-chevron${weatherPanelCollapsed ? ' collapsed' : ''}">&#9660;</span>`;
+  const toggleCollapsed = () => { weatherPanelCollapsed = !weatherPanelCollapsed; renderWeatherPanel(); };
+  title.addEventListener('click', toggleCollapsed);
+  title.addEventListener('keydown', evt => {
+    if (evt.key === 'Enter' || evt.key === ' ') { evt.preventDefault(); toggleCollapsed(); }
+  });
+  head.appendChild(title);
+
+  const relevantLayers = DATA.cloud_relevant_layers || ['low', 'mid', 'high'];
+  if (!weatherPanelCollapsed && DATA.clouds) {
+    const expandBtn = document.createElement('button');
+    expandBtn.className = 'cloud-expand-btn';
+    expandBtn.type = 'button';
+    expandBtn.textContent = cloudAltitudesExpanded ? 'Show waiver altitudes only' : 'Show all altitudes';
+    expandBtn.addEventListener('click', () => { cloudAltitudesExpanded = !cloudAltitudesExpanded; renderWeatherPanel(); syncUrl(); });
+    head.appendChild(expandBtn);
+  }
+  container.appendChild(head);
+
+  if (weatherPanelCollapsed) return;
+
+  if (DATA.clouds) {
+    const site = regionalSites?.sites?.[currentSiteId];
+    const shownLayers = cloudAltitudesExpanded ? CLOUD_LAYERS.map(l => l.key) : relevantLayers;
+    const shownLabel = shownLayers.map(k => CLOUD_LAYERS.find(l => l.key === k).label).join(' + ');
+    const waiverNote = document.createElement('div');
+    waiverNote.className = 'waiver-note';
+    if (site) {
+      waiverNote.innerHTML = `<b>${siteLabel(site)}</b> — ${site.waiver_ft.toLocaleString()}ft waiver, showing ${shownLabel} clouds`;
+    } else {
+      waiverNote.textContent = `Showing ${shownLabel} clouds`;
+    }
+    container.appendChild(waiverNote);
+  }
+
+  const grid = document.createElement('div');
+  grid.className = 'weather-grid';
+  container.appendChild(grid);
+
+  addWeatherHeaderRow(grid);
+  if (DATA.rain) addRainRow(grid);
+  if (DATA.temperature) addTempRow(grid);
+  if (DATA.clouds) {
+    // Total is independently-computed whole-sky cover, not low+mid+high
+    // summed -- placed above High (never mixed in with the altitude bands
+    // themselves) so it reads as the big picture, not the headline number.
+    if (cloudAltitudesExpanded) {
+      addCloudRow(grid, 'total', 'Total', 'all layers', false);
+      const totalDivider = document.createElement('div');
+      totalDivider.className = 'cloud-layer-divider';
+      grid.appendChild(totalDivider);
+    }
+    const rowsToShow = cloudAltitudesExpanded ? CLOUD_LAYERS : CLOUD_LAYERS.filter(l => relevantLayers.includes(l.key));
+    rowsToShow.forEach(l => addCloudRow(grid, l.key, l.label, l.sub, cloudAltitudesExpanded && !relevantLayers.includes(l.key)));
+  }
+
+  // No per-model color key here -- the main "Model" legend in the side
+  // column already maps every model to this same color (MODEL_COLORS_HEX),
+  // so repeating it in this panel too would just be noise.
+  if (DATA.clouds) {
+    const legend = document.createElement('div');
+    legend.className = 'cloud-legend';
+    const hotKey = document.createElement('div');
+    hotKey.className = 'hot-key';
+    hotKey.innerHTML = `<span class="cloud-badge">&#9888;</span> majority ≥${DATA.cloud_nogo_pct}% covered`;
+    legend.appendChild(hotKey);
+    container.appendChild(legend);
+  }
 }
 
 // --- burn-ban status (see pull_live_forecast.py's fetch_burn_ban()) --------
@@ -2912,7 +2924,11 @@ function drawRealFlightMarker() {
         // before would show an unrelated zone instead, so clear it.
         state.customAlt = null;
         syncAltCustomUI();
-        buildToggle('hour-toggle', DATA.hours, HOUR_LABELS, 'hour', () => { hourExplicitlyChosen = true; syncAltCustomUI(); });
+        // Resync which hour button shows .active against the state.hour
+        // reassignment above -- a full renderWeatherPanel() rebuild, same
+        // way this used to re-run buildToggle('hour-toggle', ...) just to
+        // refresh its active button.
+        renderWeatherPanel();
         buildAltList();
         buildAltRange();
         render();
@@ -3576,7 +3592,8 @@ function initFromData() {
   }
 
   buildToggle('mode-toggle', ['byAltitude', 'byTime', 'byHistory'], MODE_LABELS, 'mode', () => setMode(state.mode));
-  buildToggle('hour-toggle', DATA.hours, HOUR_LABELS, 'hour', () => { hourExplicitlyChosen = true; syncAltCustomUI(); });
+  // Hour selection is built as part of renderWeatherPanel() below (its
+  // header row's 9/11/1/3 buttons) -- no standalone #hour-toggle any more.
   buildToggle('deploy-toggle', DATA.deploys, DEPLOY_LABELS, 'deploy', () => {
     deployExplicitlyChosen = true;
     // Which altitudes have a real zone changes with deploy (single-deploy
@@ -3597,9 +3614,7 @@ function initFromData() {
   buildRateEditor();
   syncAltCustomUI(); // reflects a URL-loaded ?customalt= on first render
   banDismissed = false; // a dismiss on a previous site/date shouldn't suppress a genuinely new ban
-  renderCloudPanel();
-  renderRainTimeline();
-  renderTempTimeline();
+  renderWeatherPanel();
   renderBanStatus();
   render();
 }
