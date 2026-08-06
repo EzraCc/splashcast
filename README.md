@@ -63,7 +63,7 @@ Two scheduled GitHub Actions jobs in [`.github/workflows/cron-pulls.yml`](.githu
 | `open-meteo-live` | every 6h, at `:15` past 0/6/12/18 | Pulls the current forecast for every site with a launch 0–7 days out (`launch_schedule.py --run-live`), building that day's forecast-drift snapshot. Stops pulling for a site once its launch day is past a per-site cutoff hour (`config.SITES[...]["cron_cutoff_hour_utc"]`). |
 | `noaa-actuals` | daily at 11:00 | Pulls the HRRR-analysis "actual" for every site that launched the day before (`launch_schedule.py --run-actuals`), populating the History view's star marker and accuracy table. |
 
-Both jobs commit their output (`pipeline/data/`, `site/data/`, `site/maps/`) straight back to `master` when something changed — that's what makes the data survive past the ephemeral runner, and it's also what triggers [`pages.yml`](.github/workflows/pages.yml)'s redeploy. Which sites/dates get pulled isn't hardcoded anywhere — it's derived from `pipeline/launch_calendar.json` (each club's recurring schedule, plus one-off cancel/move/add/flag exceptions for a single date -- see [Adding a site](docs/adding-a-site.md)), interpreted generically by `launch_schedule.py`. A fork just needs its own rule entry added to that file and the cron jobs pick it up automatically; a cancelled or moved launch (`launch_schedule.py --cancel`/`--move`) stops (or redirects) its pulls with no code change.
+Both jobs commit their output (`pipeline/data/`, `site/data/`, `site/maps/`) straight back to `main` when something changed — that's what makes the data survive past the ephemeral runner, and it's also what triggers [`pages.yml`](.github/workflows/pages.yml)'s redeploy. Which sites/dates get pulled isn't hardcoded anywhere — it's derived from `pipeline/launch_calendar.json` (each club's recurring schedule, plus one-off cancel/move/add/flag exceptions for a single date -- see [Adding a site](docs/adding-a-site.md)), interpreted generically by `launch_schedule.py`. A fork just needs its own rule entry added to that file and the cron jobs pick it up automatically; a cancelled or moved launch (`launch_schedule.py --cancel`/`--move`) stops (or redirects) its pulls with no code change.
 
 Both are also runnable on demand via the Actions tab's "Run workflow" button (`workflow_dispatch`, with a `live`/`actuals`/`both` picker) if you don't want to wait for the schedule.
 
@@ -91,7 +91,7 @@ docs/
   adding-a-site.md           Step-by-step guide for pointing this at a new club/site.
 .github/workflows/
   cron-pulls.yml             The two scheduled data-pull jobs (see above).
-  pages.yml                  Deploys site/ to GitHub Pages on every push to master.
+  pages.yml                  Deploys site/ to GitHub Pages on every push to main.
 CHANGELOG.md               Short, dated summary of notable changes.
 ```
 

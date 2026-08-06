@@ -25,7 +25,7 @@ name: Scheduled data pulls
 #     Deliberately not same-day -- HRRR's own AWS archive needs a full day to
 #     finish publishing. Pulled directly from NOAA's AWS archive via Herbie,
 #     not through Open-Meteo -- the sync-race note above doesn't apply here.
-# Both commit pipeline/data + site/data + site/maps back to master when
+# Both commit pipeline/data + site/data + site/maps back to main when
 # they've actually changed something -- required for the data to survive past
 # this ephemeral runner. That push does NOT trigger pages.yml's own `on:
 # push` deploy, though -- GitHub suppresses workflow-triggering-workflow for
@@ -81,7 +81,7 @@ jobs:
             echo "pushed=false" >> "$GITHUB_OUTPUT"
           else
             git commit -m "Automated Open-Meteo pull: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-            git pull --rebase origin master
+            git pull --rebase origin main
             git push
             echo "pushed=true" >> "$GITHUB_OUTPUT"
           fi
@@ -89,7 +89,7 @@ jobs:
         if: steps.commit.outputs.pushed == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh workflow run pages.yml --ref master
+        run: gh workflow run pages.yml --ref main
 
   noaa-actuals:
     if: >
@@ -119,7 +119,7 @@ jobs:
             echo "pushed=false" >> "$GITHUB_OUTPUT"
           else
             git commit -m "Automated NOAA actuals pull: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-            git pull --rebase origin master
+            git pull --rebase origin main
             git push
             echo "pushed=true" >> "$GITHUB_OUTPUT"
           fi
@@ -127,4 +127,4 @@ jobs:
         if: steps.commit.outputs.pushed == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh workflow run pages.yml --ref master
+        run: gh workflow run pages.yml --ref main
