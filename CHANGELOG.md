@@ -4,6 +4,11 @@ Dated, terse log of notable changes. For the full design rationale and decision 
 
 ## 2026-08-05
 
+**Follow-up: "Specific altitude" checkbox removed -- focusing the input activates it directly**
+- User feedback: a checkbox-then-type flow was two clicks for one intent -- "if they click the box they want to edit it." Removed `#alt-custom-toggle` entirely; the number input's own `focus` event now activates the override (seeding a starting value from `state.compareAlt` if nothing's typed yet), matching what clicking into the field already implies. Re-focusing an already-active field is a no-op (doesn't reseed over a value being edited).
+- Clearing now has two equivalent paths instead of one: a new small &times; button next to the field, or deleting the typed digits and blurring/pressing Enter (empty value on `change` turns the override off, the symmetric opposite of focus turning it on).
+- Verified in-browser: a bare click (no typing) immediately shows one zone at the seeded altitude and dims the range row below; typing updates it; both clear paths restore the normal ladder/range view; permalink loading, History-mode gating, and the single-deploy status message all still work unchanged.
+
 **Rate moved above Apogee altitude; direct-entry "Specific altitude" field added for exact-apogee planning**
 - Sidebar reorder: Rate (and Deploy) now sits first, above Apogee altitude -- per direction that rate/deploy should be seen first, since they're the scenario a flyer sets before picking where to look.
 - New "Specific altitude" checkbox + number input in the Apogee altitude section. Since the drift sim already runs client-side and `zoneFor()` accepts any altitude (not just `DATA.altitudes`' ladder -- it interpolates from the published wind profile via `interpWind()`), this needed no new simulation code, only a UI path to it: checking it shows exactly one zone at the typed altitude (in both byAltitude and byTime modes) instead of the normal ladder/range selection, and visibly dims (not hides) the min/max slider and row list below while active, since they no longer drive what's shown. Unchecking reverts to the normal view.

@@ -463,18 +463,19 @@
   /* Direct-entry alternative to the ladder/range below -- now that the
      drift sim runs client-side (zoneFor() takes any altitude, not just
      DATA.altitudes), a flyer with a real predicted apogee can type it
-     exactly instead of picking the nearest rung. Checking this dims the
-     range row below (see .alt-range-row.alt-custom-dimmed) rather than
-     hiding it, matching this app's usual "gray out, don't remove" pattern
-     for a control that's momentarily not the active one. */
+     exactly instead of picking the nearest rung. No checkbox -- focusing
+     the input activates it directly (see app.js's activateAltCustom()),
+     since a checkbox-then-type flow was two clicks for one intent. Active
+     dims the range row below (see .alt-range-row.alt-custom-dimmed) rather
+     than hiding it, matching this app's usual "gray out, don't remove"
+     pattern for a control that's momentarily not the active one. */
   .alt-custom-control { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; font-size: 0.8rem; color: var(--text-secondary); }
-  .alt-custom-label { display: flex; align-items: center; gap: 5px; cursor: pointer; user-select: none; }
+  .alt-custom-label { cursor: pointer; user-select: none; }
   .alt-custom-control input[type="number"] {
     width: 90px; box-sizing: border-box; padding: 3px 6px;
     border: 1px solid var(--border); border-radius: 5px;
     background: var(--surface-1); color: var(--text-primary); font-size: 0.8rem;
   }
-  .alt-custom-control input[type="number"]:disabled { opacity: 0.45; cursor: not-allowed; }
   .alt-custom-status { font-size: 0.72rem; color: var(--hot-text); }
   /* Whole control, in History mode -- same treatment .toggle-group.disabled
      already gives the hour-toggle in byTime mode. */

@@ -97,11 +97,9 @@
         <button id="zone-color-reset" class="zone-color-reset-btn" type="button" title="Reset to default zone color">&#8635;</button>
       </div>
       <div class="alt-custom-control" id="alt-custom-control">
-        <label class="alt-custom-label" for="alt-custom-toggle">
-          <input type="checkbox" id="alt-custom-toggle">
-          Specific altitude
-        </label>
-        <input type="number" id="alt-custom-input" placeholder="ft AGL" disabled>
+        <label class="alt-custom-label" for="alt-custom-input">Specific altitude</label>
+        <input type="number" id="alt-custom-input" placeholder="ft AGL">
+        <button id="alt-custom-clear" class="zone-color-reset-btn" type="button" title="Clear specific altitude" style="display:none;">&#10005;</button>
         <span class="alt-custom-status" id="alt-custom-status"></span>
       </div>
       <div class="alt-range-readout">
@@ -117,7 +115,7 @@
         </div>
         <div class="alt-list" id="alt-list"></div>
       </div>
-      <div class="alt-hint" id="alt-hint">Hover an altitude to isolate its zone. Click to pin it; click again to release. Drag the slider handles to narrow which altitudes are shown on the map -- altitudes outside the range gray out below but stay listed. Or check "Specific altitude" above to enter an exact predicted apogee instead of picking from the ladder.</div>
+      <div class="alt-hint" id="alt-hint">Hover an altitude to isolate its zone. Click to pin it; click again to release. Drag the slider handles to narrow which altitudes are shown on the map -- altitudes outside the range gray out below but stay listed. Or click "Specific altitude" above and type an exact predicted apogee instead of picking from the ladder; clear the field (or the &times; button) to go back.</div>
 
       <div id="time-legend-block" style="display:none;">
         <div class="alt-list-title" style="margin-top:16px;">

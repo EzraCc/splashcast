@@ -582,18 +582,20 @@ document.getElementById('alt-range-reset').addEventListener('click', () => {
 });
 
 // --- direct-entry altitude ("Specific altitude") -- overrides the whole
-// range/ladder selection above in byAltitude/byTime, see render(). Reflects
-// state.customAlt into the checkbox/input/status text and dims the
-// range row while active; safe to call any time state.customAlt, hour, or
-// deploy changes (cheap -- reads zoneFor()'s cache, doesn't re-simulate).
-const altCustomToggle = document.getElementById('alt-custom-toggle');
+// range/ladder selection above in byAltitude/byTime, see render(). No
+// separate checkbox -- clicking into the input *is* the request to use it
+// (real user feedback: a checkbox-then-type flow made people click twice
+// for one intent). Reflects state.customAlt into the input/status text and
+// dims the range row while active; safe to call any time state.customAlt,
+// hour, or deploy changes (cheap -- reads zoneFor()'s cache, doesn't
+// re-simulate).
 const altCustomInput = document.getElementById('alt-custom-input');
+const altCustomClear = document.getElementById('alt-custom-clear');
 
 function syncAltCustomUI() {
   const active = state.customAlt !== null;
-  altCustomToggle.checked = active;
-  altCustomInput.disabled = !active;
   if (active) altCustomInput.value = state.customAlt;
+  altCustomClear.style.display = active ? '' : 'none';
   document.querySelector('.alt-range-row').classList.toggle('alt-custom-dimmed', active);
   const statusEl = document.getElementById('alt-custom-status');
   if (!active) { statusEl.textContent = ''; return; }
@@ -609,30 +611,47 @@ function syncAltCustomUI() {
       : 'No wind data for this altitude/hour');
 }
 
-altCustomToggle.addEventListener('change', () => {
-  if (altCustomToggle.checked) {
-    const maxAlt = DATA.altitudes[DATA.altitudes.length - 1];
-    const seed = Number(altCustomInput.value) || state.compareAlt || Math.round(maxAlt / 2);
-    state.customAlt = Math.min(maxAlt, Math.max(1, Math.round(seed)));
-    // Isolate/pin among the ladder rows stops meaning anything once a
-    // single specific-altitude zone is the whole view -- clear rather than
-    // leave a dangling selection that resurfaces confusingly if this gets
-    // unchecked later.
-    state.pinnedAlt = null;
-    state.isolatedAlt = null;
-  } else {
-    state.customAlt = null;
-  }
+// Activates on focus alone (before any typing) -- clicking into the field is
+// the whole ask, per user feedback; a value already needs to be showing for
+// that to mean anything, so seed one immediately rather than leaving it
+// blank until the first keystroke.
+function activateAltCustom() {
+  if (state.customAlt !== null) return; // already active, focus alone shouldn't re-seed over a real edit in progress
+  const maxAlt = DATA.altitudes[DATA.altitudes.length - 1];
+  const seed = Number(altCustomInput.value) || state.compareAlt || Math.round(maxAlt / 2);
+  state.customAlt = Math.min(maxAlt, Math.max(1, Math.round(seed)));
+  // Isolate/pin among the ladder rows stops meaning anything once a single
+  // specific-altitude zone is the whole view -- clear rather than leave a
+  // dangling selection that resurfaces confusingly if this gets cleared
+  // later.
+  state.pinnedAlt = null;
+  state.isolatedAlt = null;
   syncAltCustomUI();
   render();
-});
+}
+altCustomInput.addEventListener('focus', activateAltCustom);
 altCustomInput.addEventListener('change', () => {
+  // Clearing the field (deleting all digits, then blur/Enter) turns the
+  // override off again -- the symmetric opposite of focus turning it on,
+  // so there's no separate control needed just to get back to blank+off.
+  if (altCustomInput.value.trim() === '') {
+    state.customAlt = null;
+    syncAltCustomUI();
+    render();
+    return;
+  }
   const maxAlt = DATA.altitudes[DATA.altitudes.length - 1];
   let v = Number(altCustomInput.value);
   if (!Number.isFinite(v)) v = state.customAlt ?? maxAlt;
   v = Math.min(maxAlt, Math.max(1, Math.round(v)));
   altCustomInput.value = v;
   state.customAlt = v;
+  syncAltCustomUI();
+  render();
+});
+altCustomClear.addEventListener('click', () => {
+  state.customAlt = null;
+  altCustomInput.value = '';
   syncAltCustomUI();
   render();
 });
