@@ -582,6 +582,17 @@
     border: 1px solid var(--border); border-radius: 4px;
     background: var(--surface-1); color: var(--text-primary); font-size: 0.78rem;
   }
+  /* Drogue on Single deploy -- zoneFor() never reads it for that deploy, so
+     the input is disabled (see buildRateEditor()), dimmed here to match. */
+  .rate-edit input[type="number"]:disabled { opacity: 0.45; cursor: not-allowed; }
+  /* Same amber --hot-* tokens as the cloud-panel "models agree it's cloudy"
+     flag (see that block's own comment) -- this app's one established
+     warning color, reused here rather than inventing another. */
+  .rate-warning {
+    margin-top: 6px; padding: 6px 8px; border-radius: 6px;
+    background: var(--hot-bg); border: 1px solid var(--hot-border); color: var(--hot-text);
+    font-size: 0.75rem; line-height: 1.4;
+  }
 
   .buffer-note { display: flex; align-items: center; gap: 10px; font-size: 0.8rem; color: var(--text-secondary); max-width: 620px; }
   .buffer-swatch { width: 20px; height: 14px; border-radius: 3px; flex-shrink: 0; background: #4a3aa7; opacity: 0.30; border: 1px solid #4a3aa7; }

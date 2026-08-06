@@ -791,10 +791,11 @@ function buildRateLegend() {
 function buildRateEditor() {
   const el = document.getElementById('rate-edit');
   el.innerHTML = '';
+  showRateWarning(false); // stale otherwise -- #rate-warning lives outside #rate-edit, so a full rebuild wouldn't otherwise touch it
   const limits = DATA.descent_params.rate_limits_fps;
 
   const head = (text) => { const d = document.createElement('div'); d.className = 'rate-edit-head'; d.textContent = text; el.appendChild(d); };
-  head(''); head('Drogue'); head('Main');
+  head(''); head('Drogue (fps)'); head('Main (fps)');
 
   RATE_LEGEND_ITEMS.forEach(({ key, label, shape }) => {
     const swatchStyle = shape === 'circle' ? 'border-radius:50%;' : 'border-radius:3px;';
@@ -810,17 +811,36 @@ function buildRateEditor() {
       input.max = limits[part][1];
       input.step = 1;
       input.value = state.rateFps[key][part];
+      // Single deploy is one canopy the whole way -- zoneFor()'s phase
+      // construction never reads the drogue rate for it, so editing it
+      // would silently do nothing. Disabled, not hidden: keeps the grid's
+      // column structure stable across a deploy switch, and the value is
+      // still visible for reference (and still applies immediately if the
+      // user switches back to Dual).
+      input.disabled = part === 'drogue' && state.deploy === 'single';
       // 'change' (blur/Enter/stepper), not 'input' -- typing "120" fires at
       // "1" mid-keystroke on 'input', and a transient 1fps rate would blow
       // up the view box (see growBaseViewBox()) before the user finishes.
       input.addEventListener('change', () => {
         let v = Number(input.value);
         if (!Number.isFinite(v)) v = state.rateFps[key][part];
+        // Flagged separately from the generic clamp below -- Tripoli USC
+        // §11-1's 35 fps max landing speed (limits.main[1]) is a real
+        // safety-code number, not just an input sanity bound like drogue's,
+        // so exceeding it gets an explicit on-screen reason instead of
+        // silently reverting to a smaller number.
+        showRateWarning(part === 'main' && v > limits.main[1]);
         v = Math.min(limits[part][1], Math.max(limits[part][0], v));
         input.value = v;
         state.rateFps[key][part] = v;
         invalidateZones();
-        buildRateEditor(); // refresh hint text against the new numbers
+        // updateRateHint() only, NOT buildRateEditor() -- a full rebuild
+        // destroys and recreates every <input> in this grid, including
+        // whichever one the browser was about to move focus to on Tab.
+        // The destroyed element is a stale reference by the time the
+        // browser tries to focus it, so Tab silently drops focus instead
+        // of advancing. Real user report, not theoretical.
+        updateRateHint();
         render();
       });
       el.appendChild(input);
@@ -828,6 +848,15 @@ function buildRateEditor() {
   });
 
   updateRateHint();
+}
+
+// Shown only while actively relevant: every rate-input change event calls
+// this (see buildRateEditor()'s change handler), passing false whenever
+// that particular edit isn't a main-over-35fps attempt -- so it hides
+// itself again the moment the user moves on, rather than needing a timer
+// or a dismiss button.
+function showRateWarning(show) {
+  document.getElementById('rate-warning').style.display = show ? '' : 'none';
 }
 
 // Split from applyModeUI() -- the hint's numeric half depends on
@@ -3284,6 +3313,10 @@ function initFromData() {
     // row list's unavailable rows and the slider's thumb positions.
     buildAltList();
     buildAltRange();
+    // Single deploy's phase construction (zoneFor()) never reads the drogue
+    // rate at all -- disable those inputs rather than leave them editable
+    // and silently ignored.
+    buildRateEditor();
   });
   buildTimeLegend();
   buildAltList();

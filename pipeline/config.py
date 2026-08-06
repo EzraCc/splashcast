@@ -435,7 +435,7 @@ def validate_altitude_density() -> list[str]:
 # the old "10fps"/"20fps" names while the viewer's History mode looked up
 # "slow"/"fast" regardless of deploy -- they never matched, so History was
 # silently empty for Single. They match now.
-SINGLE_DEPLOY_RATES_FPS = {"slow": 10.0, "fast": 20.0}
+SINGLE_DEPLOY_RATES_FPS = {"slow": 15.0, "fast": 20.0}
 # Above this altitude, single-deploy points are dropped from the sim entirely.
 # Not a number codified in Tripoli's Unified Safety Code -- the closest rule
 # is §11-1's 35 ft/s max landing speed, which argues against high-altitude
@@ -445,16 +445,22 @@ SINGLE_DEPLOY_RATES_FPS = {"slow": 10.0, "fast": 20.0}
 SINGLE_DEPLOY_MAX_ALT_FT = 10000
 # Dual-deploy: (drogue_fps, main_fps) pairs -- drogue extremes paired with
 # main's corresponding extreme (not a fixed midpoint -- see Phase 1 note in
-# docs/spec.md).
-DUAL_DEPLOY_RATES_FPS = {"slow": (80.0, 10.0), "fast": (100.0, 20.0)}
+# docs/spec.md). Updated 2026-08-05 per user direction, replacing the
+# original placeholder numbers with values closer to real observed rates
+# -- these are still just the viewer's editable *defaults* now (see
+# app.js's rate editor), not a hard constant, but worth keeping close to
+# reality since most users won't bother changing them.
+DUAL_DEPLOY_RATES_FPS = {"slow": (50.0, 15.0), "fast": (80.0, 20.0)}
 MAIN_DEPLOY_ALTITUDE_FT = 800.0
 DESCENT_STEP_FT = 50.0
 # Bounds for the viewer's editable drogue/main fps number inputs -- input
 # limits, not physics; the sim itself has no opinion on what's realistic.
-# Main's ceiling of 60 deliberately allows modeling a knowingly-undersized
-# canopy (Tripoli USC §11-1's 35 ft/s max landing speed is a design target
-# for a real rig, not a hard limit worth enforcing here).
-RATE_INPUT_LIMITS_FPS = {"drogue": (20.0, 200.0), "main": (5.0, 60.0)}
+# Main's ceiling is Tripoli USC §11-1's 35 ft/s max landing speed --
+# enforced (per explicit user direction, 2026-08-05, overriding an earlier
+# looser 60fps ceiling that treated it as just a design target) rather than
+# left editable past it. app.js's rate editor shows a warning when a typed
+# value gets clamped here specifically, not just silently reverts it.
+RATE_INPUT_LIMITS_FPS = {"drogue": (20.0, 200.0), "main": (5.0, 35.0)}
 
 
 def default_rates_fps_payload() -> dict:

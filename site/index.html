@@ -34,10 +34,6 @@
         <div class="toggle-btns" id="hour-toggle"></div>
       </div>
       <div class="toggle-group">
-        <span class="group-label">Deploy</span>
-        <div class="toggle-btns" id="deploy-toggle"></div>
-      </div>
-      <div class="toggle-group">
         <button id="copy-link-btn" type="button" class="copy-link-btn" title="Copy a link to exactly this site/date/view">Copy link</button>
       </div>
     </div>
@@ -123,8 +119,13 @@
         Rate <button class="info-btn" type="button" data-hint="rate-hint" title="Show interaction hint">i</button>
         <button id="rate-reset" class="zone-color-reset-btn" type="button" title="Reset to this site's default rates">&#8635;</button>
       </div>
+      <div class="toggle-group">
+        <span class="group-label">Deploy</span>
+        <div class="toggle-btns" id="deploy-toggle"></div>
+      </div>
       <div id="rate-legend"></div>
       <div class="rate-edit" id="rate-edit"></div>
+      <div class="rate-warning" id="rate-warning" style="display:none;">Main capped at 35 fps &mdash; Tripoli Unified Safety Code &sect;11-1's max landing speed.</div>
       <div class="alt-hint" id="rate-hint">Hover a rate to isolate it; click to pin, click again to release.</div>
     </div>
 
@@ -159,7 +160,7 @@
   </div>
 
   <p class="footnote">
-    Descent-only drift per model (GFS/HRRR/ECMWF/ICON/ARPEGE/GEM &mdash; only models with real pressure-level wind), integrated from apogee to ground, wind sampled every 50 ft of descent. Zone = convex hull of all models' points at that altitude, for both rate variants shown (single: <code>10/20 fps</code>, dual: drogue <code>80/100 fps</code>, main <code>10/20 fps</code>) &mdash; all ground-level rates, scaled up per descent step for the thinner air at altitude (see the Rate legend's info button for how much). Point color = model, point shape = rate (circle = faster, square = slower) &mdash; hover any point for exact numbers. Not a go/no-go call &mdash; for a launch director to read against the actual approved landing zone once available.
+    Descent-only drift per model (GFS/HRRR/ECMWF/ICON/ARPEGE/GEM &mdash; only models with real pressure-level wind), integrated from apogee to ground in your browser, wind sampled every 50 ft of descent. Zone = convex hull of all models' points at that altitude, for both Fast/Slow rate variants shown &mdash; editable drogue/main ground-level fps below the Rate legend, scaled up per descent step for the thinner air at altitude (see the Rate legend's info button for how much). Point color = model, point shape = rate (circle = faster, square = slower) &mdash; hover any point for exact numbers. Not a go/no-go call &mdash; for a launch director to read against the actual approved landing zone once available.
   </p>
 
   <div class="tooltip" id="tooltip"></div>
