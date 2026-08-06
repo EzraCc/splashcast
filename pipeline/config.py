@@ -115,9 +115,10 @@ SITES = {
 # to be per-site). Every level was empirically confirmed against the live API
 # (not just docs -- doc pages have been wrong here before) to return real wind
 # data for every model in LIVE_PROFILE_MODELS at least to 100 hPa (~53,000ft).
-# levels_mb_for_site() picks, for each of a site's target apogee altitudes,
-# the smallest available level at or above that target, so the profile always
-# reaches it.
+# levels_mb_for_site() requests every level up to a site's own ceiling (plus
+# one above it), not just the levels nearest ALTITUDES_MASTER_FT's values --
+# see that function's own docstring for why the two were deliberately
+# decoupled (2026-08).
 PRESSURE_LEVEL_MASTER_MB = [
     (1000, 364), (975, 1061), (950, 1773), (925, 2500), (900, 3243), (875, 4003),
     (850, 4781), (825, 5578), (800, 6394), (775, 7232), (750, 8091), (725, 8974),
@@ -131,13 +132,28 @@ PRESSURE_LEVEL_MASTER_MB = [
 
 
 def levels_mb_for_site(site_id: str) -> list[int]:
-    levels = []
-    for alt in altitudes_for_site(site_id):
-        candidates = [lvl for lvl, lvl_alt in PRESSURE_LEVEL_MASTER_MB if lvl_alt >= alt]
-        chosen = min(candidates, key=lambda lvl: dict(PRESSURE_LEVEL_MASTER_MB)[lvl]) if candidates else PRESSURE_LEVEL_MASTER_MB[-1][0]
-        if chosen not in levels:
-            levels.append(chosen)
-    return sorted(levels, reverse=True)
+    """Every pressure level the models offer up to this site's own ceiling,
+    plus the first one above it.
+
+    Deliberately NOT derived from altitudes_for_site() any more (it was,
+    through 2026-08): the apogee list is a user-facing sampling choice, while
+    this is the actual vertical resolution of the wind field -- tying the
+    second to the first threw away most of the real levels the models
+    publish (e.g. Hutto only ever requested 5 of the 44 available), leaving
+    interp() to linearly bridge gaps of 1,500-2,400ft and average real wind
+    shear away.
+
+    Ceiling is waiver_ft + this site's ground elevation, because
+    PRESSURE_LEVEL_MASTER_MB's altitudes are MSL and waiver_ft is AGL -- the
+    old AGL-vs-MSL mismatch here left at least one site's top requested level
+    short of its own waiver in AGL terms.
+    """
+    ceiling_ft = SITES[site_id]["waiver_ft"] + elev_ft_for_site(site_id)
+    levels = [lvl for lvl, alt in PRESSURE_LEVEL_MASTER_MB if alt <= ceiling_ft]
+    above = [lvl for lvl, alt in PRESSURE_LEVEL_MASTER_MB if alt > ceiling_ft]
+    if above:
+        levels.append(above[0])  # table is ascending in altitude -- first one over the top
+    return sorted(set(levels), reverse=True)
 
 # NBM has no isobaric wind profile (post-processed guidance product, not a full
 # 3D field model) -- only near-surface heights are available.
@@ -356,7 +372,22 @@ SPLASH_HOURS_LOCAL = [9, 11, 13, 15]
 # (points above it dropped) and always appends the waiver itself as the final
 # point if the capped list doesn't already end there, so every site's profile
 # reaches its real legal ceiling even between two master-list points.
-ALTITUDES_MASTER_FT = [2000, 4000, 6000, 8000, 10000, 13500, 17000, 20000, 25000, 30000, 40000, 50000]
+#
+# Density is bounded by PRESSURE_LEVEL_MASTER_MB, not chosen freely --
+# validate_altitude_density() below checks every gap here against the models'
+# real vertical resolution in that same band, so this never claims finer
+# apogee resolution than the wind field actually supports. Round numbers, not
+# the pressure table's own MSL altitudes converted to AGL: those come out
+# site-specific and unreadable (e.g. 1,854ft at one site vs 1,990ft at
+# another for the "same" level) and would break exact-match lookups like a
+# published real-flight summary's altitude_bucket_used_ft. 10 of the previous
+# 12 values survive verbatim here (all but 13,500/17,000).
+ALTITUDES_MASTER_FT = [
+    1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000,   # 1,000ft steps -- where most flights apogee
+    12000, 14000, 16000, 18000, 20000,                              # 2,000ft
+    22500, 25000, 27500, 30000,                                     # 2,500ft
+    35000, 40000, 45000, 50000,                                     # 5,000ft
+]
 
 
 def altitudes_for_site(site_id: str) -> list[int]:
@@ -366,8 +397,45 @@ def altitudes_for_site(site_id: str) -> list[int]:
         altitudes.append(waiver_ft)
     return altitudes
 
+
+def validate_altitude_density() -> list[str]:
+    """Every ALTITUDES_MASTER_FT gap vs. the models' real vertical resolution
+    in that same band (the tightest gap between the two PRESSURE_LEVEL_MASTER_MB
+    altitudes bracketing the ladder gap's midpoint). Returns a list of
+    violation descriptions (empty == fine). Not an import-time assert -- a
+    cron pull shouldn't die on a curation question; run via `python config.py`
+    or call this directly."""
+    import bisect
+
+    pressure_alts = sorted(alt for _, alt in PRESSURE_LEVEL_MASTER_MB)
+    violations = []
+    for lo, hi in zip(ALTITUDES_MASTER_FT, ALTITUDES_MASTER_FT[1:]):
+        mid = (lo + hi) / 2
+        i = bisect.bisect_left(pressure_alts, mid)
+        lo_i = max(0, i - 1)
+        hi_i = min(len(pressure_alts) - 1, lo_i + 1)
+        local_model_res = pressure_alts[hi_i] - pressure_alts[lo_i]
+        ladder_gap = hi - lo
+        if ladder_gap < local_model_res:
+            violations.append(
+                f"{lo}-{hi}ft: ladder gap {ladder_gap}ft is finer than the models' "
+                f"~{local_model_res}ft resolution there"
+            )
+    return violations
+
 # Single-deploy: one rate for the whole descent (narrow real-world range).
-SINGLE_DEPLOY_RATES_FPS = {"10fps": 10.0, "20fps": 20.0}
+# Keyed slow/fast, not a literal "10fps"/"20fps" (through 2026-08) -- once
+# these numbers became viewer-editable (see app.js's rate editor), a label
+# that says "10fps" while the actual value is something else the user typed
+# would be a lie on screen. slow/fast take DUAL_DEPLOY_RATES_FPS's `main`
+# component directly (single deploy is one canopy the whole way, i.e. the
+# main, from apogee to ground) -- asserted equal in default_rates_fps_payload()
+# below rather than left as a coincidence two dicts happen to share. This
+# also repairs a latent bug: points_history.json's single-deploy keys used
+# the old "10fps"/"20fps" names while the viewer's History mode looked up
+# "slow"/"fast" regardless of deploy -- they never matched, so History was
+# silently empty for Single. They match now.
+SINGLE_DEPLOY_RATES_FPS = {"slow": 15.0, "fast": 20.0}
 # Above this altitude, single-deploy points are dropped from the sim entirely.
 # Not a number codified in Tripoli's Unified Safety Code -- the closest rule
 # is §11-1's 35 ft/s max landing speed, which argues against high-altitude
@@ -377,7 +445,50 @@ SINGLE_DEPLOY_RATES_FPS = {"10fps": 10.0, "20fps": 20.0}
 SINGLE_DEPLOY_MAX_ALT_FT = 10000
 # Dual-deploy: (drogue_fps, main_fps) pairs -- drogue extremes paired with
 # main's corresponding extreme (not a fixed midpoint -- see Phase 1 note in
-# docs/spec.md).
-DUAL_DEPLOY_RATES_FPS = {"slow": (80.0, 10.0), "fast": (100.0, 20.0)}
+# docs/spec.md). Updated 2026-08-05 per user direction, replacing the
+# original placeholder numbers with values closer to real observed rates
+# -- these are still just the viewer's editable *defaults* now (see
+# app.js's rate editor), not a hard constant, but worth keeping close to
+# reality since most users won't bother changing them.
+DUAL_DEPLOY_RATES_FPS = {"slow": (50.0, 15.0), "fast": (80.0, 20.0)}
 MAIN_DEPLOY_ALTITUDE_FT = 800.0
 DESCENT_STEP_FT = 50.0
+# Bounds for the viewer's editable drogue/main fps number inputs -- input
+# limits, not physics; the sim itself has no opinion on what's realistic.
+# Main's ceiling is Tripoli USC §11-1's 35 ft/s max landing speed --
+# enforced (per explicit user direction, 2026-08-05, overriding an earlier
+# looser 60fps ceiling that treated it as just a design target) rather than
+# left editable past it. app.js's rate editor shows a warning when a typed
+# value gets clamped here specifically, not just silently reverts it.
+RATE_INPUT_LIMITS_FPS = {"drogue": (20.0, 200.0), "main": (5.0, 35.0)}
+
+
+def default_rates_fps_payload() -> dict:
+    """{"fast": {"drogue": .., "main": ..}, "slow": {...}} -- the viewer's
+    editable rate-editor defaults, and the single source of truth for the
+    published JSON's descent_params.default_rates_fps. Asserts
+    SINGLE_DEPLOY_RATES_FPS agrees with DUAL_DEPLOY_RATES_FPS's main
+    component (see that dict's own comment) rather than trusting the two
+    were kept in sync by hand."""
+    out = {}
+    for name, (drogue, main) in DUAL_DEPLOY_RATES_FPS.items():
+        assert SINGLE_DEPLOY_RATES_FPS[name] == main, (
+            f"SINGLE_DEPLOY_RATES_FPS[{name!r}]={SINGLE_DEPLOY_RATES_FPS[name]!r} "
+            f"must equal DUAL_DEPLOY_RATES_FPS[{name!r}]'s main component ({main!r})"
+        )
+        out[name] = {"drogue": drogue, "main": main}
+    return out
+
+
+if __name__ == "__main__":
+    violations = validate_altitude_density()
+    if violations:
+        print(f"{len(violations)} ALTITUDES_MASTER_FT density violation(s):")
+        for v in violations:
+            print(f"  - {v}")
+    else:
+        print("ALTITUDES_MASTER_FT: no density violations "
+              f"({len(ALTITUDES_MASTER_FT)} altitudes, {len(PRESSURE_LEVEL_MASTER_MB)} pressure levels available).")
+    for site_id in SITES:
+        print(f"  {site_id}: {len(altitudes_for_site(site_id))} altitudes, "
+              f"{len(levels_mb_for_site(site_id))} pressure levels")

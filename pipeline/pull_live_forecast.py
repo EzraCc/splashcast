@@ -5,8 +5,9 @@ pull_historical.py for that) from Open-Meteo's free endpoints: NOAA's GFS/
 HRRR/NAM/NBM plus ECMWF/DWD ICON/Meteo-France ARPEGE/Environment Canada GEM,
 each on its own endpoint (config.LIVE_MODELS[key]["url"]) rather than one
 shared URL. Pulls surface wind (10m) for all 8 models, and pressure-level
-wind up to each site's own waiver altitude (config.levels_mb_for_site()) for
-the 6 in config.LIVE_PROFILE_MODELS -- NAM (live-side only) and NBM have no
+wind at every level the models offer up to each site's own ceiling
+(config.levels_mb_for_site()) for the 6 in config.LIVE_PROFILE_MODELS -- NAM
+(live-side only) and NBM have no
 pressure-level profile here, so they're limited to near-surface heights
 (config.LIVE_NBM_HEIGHTS_M for NBM). Also pulls cloud cover by layer
 (low/mid/high -- the safety-code-relevant field, since no model exposes a
@@ -55,6 +56,13 @@ _LEVEL_RE = re.compile(r"^(?P<var>.+)_(?P<value>\d+)(?P<unit>hPa|m)$")
 # even approaching 3s, waiting anywhere near that long only delays detecting
 # a real failure, not more often catching a slow-but-real response. 10s
 # leaves ~4x headroom over the slowest success actually observed.
+# Re-checked 2026-08-05 against argonia's grouped gfs/hrrr/nam/nbm request
+# after levels_mb_for_site() stopped thinning to the apogee list (49 -> 124
+# hourly variables, 88.7KB -> 229KB response): 0.72-1.08s over 5 requests,
+# no meaningful latency change despite the ~2.6x larger payload -- Open-Meteo
+# isn't request-size-bound here. Re-checked again same day after dropping
+# geopotential_height_{lvl}hPa (124 -> 87 variables, 229KB -> 146.5KB):
+# 0.71-0.97s over 5 requests, same conclusion. Timeout left as-is.
 REQUEST_TIMEOUT_S = 10
 
 STAT_LABELS = {
@@ -85,10 +93,20 @@ def _hourly_variables(model_key: str, site_id: str) -> list[str]:
         for h in config.LIVE_NBM_HEIGHTS_M:
             variables += [f"wind_speed_{h}m", f"wind_direction_{h}m"]
     else:
-        # Sized per site to reach its own waiver (config.levels_mb_for_site()),
-        # not one fixed bracket for every site.
+        # Every pressure level the models offer up to this site's own
+        # ceiling (config.levels_mb_for_site()) -- not one fixed bracket for
+        # every site, and (since 2026-08) not thinned down to whatever the
+        # user-facing altitude list happens to sample either. Wind only, not
+        # geopotential_height_{lvl}hPa (dropped 2026-08) -- pulled since this
+        # field existed but consumed nowhere: build_profile_single() places
+        # each level via std_atm_ft()'s ICAO approximation, not a real
+        # per-hour geometric height. Using it for that would be a genuine
+        # accuracy improvement, but a separate change (alters every
+        # published point's altitude mapping, needs its own validation
+        # against the ISA baseline, touches pull_historical.py's parallel
+        # path too) -- see docs/spec.md §9's "still open" list.
         for lvl in config.levels_mb_for_site(site_id):
-            variables += [f"wind_speed_{lvl}hPa", f"wind_direction_{lvl}hPa", f"geopotential_height_{lvl}hPa"]
+            variables += [f"wind_speed_{lvl}hPa", f"wind_direction_{lvl}hPa"]
     return variables
 
 

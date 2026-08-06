@@ -67,7 +67,7 @@ let REAL_FLIGHTS = [];
 // pin on one flight and a hover over a different flight's marker can be
 // true at the same time; activeRealFlight() below resolves which one wins
 // (hover takes precedence while it lasts, same pattern as
-// state.isolatedModel ?? state.pinnedModel elsewhere in this file).
+// state.isolatedRate ?? state.pinnedRate elsewhere in this file).
 let pinnedRealFlightIndex = null;
 let hoveredRealFlightIndex = null;
 // The pad offset in effect right before pinning a real flight snapped it to
@@ -252,21 +252,17 @@ const MODEL_LEGEND_ORDER = ['gfs', 'ecmwf', 'gem', 'icon', 'arpege', 'hrrr'];
 // so it's never ambiguous with a model's projection.
 const MODEL_SHAPES = { gfs: 'circle', ecmwf: 'square', gem: 'triangle-up', icon: 'diamond', arpege: 'triangle-down', hrrr: 'plus' };
 // Circle = the faster rate, square = the slower one, so fast/slow reads at a
-// glance without needing to hover -- covers both naming schemes (single
-// deploy's 10/20fps, dual deploy's slow/fast).
-const RATE_SHAPE = { '10fps': 'square', '20fps': 'circle', slow: 'square', fast: 'circle' };
+// glance without needing to hover. Single deploy uses the same fast/slow
+// names as dual now (config.py's SINGLE_DEPLOY_RATES_FPS renamed 2026-08 --
+// see zoneFor()), so this no longer needs to cover two different naming
+// schemes.
+const RATE_SHAPE = { slow: 'square', fast: 'circle' };
 
-// Fast/slow legend toggle: circle=fast, square=slow per RATE_SHAPE above (the
-// same mapping the shapes already use), so this doesn't re-hardcode which of
-// single-deploy's "10fps"/"20fps" or dual-deploy's "slow"/"fast" counts as
-// which -- both are "fast" or "slow" through the same lookup.
 function activeRate() {
   return state.isolatedRate ?? state.pinnedRate; // 'fast' | 'slow' | null
 }
 function rateMatches(pt, active) {
-  if (!active) return true;
-  const isFast = (RATE_SHAPE[pt.rate] || 'circle') === 'circle';
-  return active === 'fast' ? isFast : !isFast;
+  return !active || pt.rate === active;
 }
 
 // Populated by initFromData() once the selected launch date's JSON has
@@ -334,10 +330,37 @@ function freshState() {
     hour: DATA.hours[0], deploy: DATA.deploys[0],
     isolatedAlt: null, pinnedAlt: null,
     isolatedHour: null, pinnedHour: null,
-    isolatedModel: null, pinnedModel: null,
+    // Multi-select checkboxes, not hover-isolate/click-pin like every other
+    // legend here -- see buildModelLegend()'s own comment for why models
+    // specifically got this treatment. null is a sentinel ("not resolved
+    // yet"), not "no models selected" -- buildModelLegend() resolves it to
+    // every model with real data the first time it runs for this state.
+    selectedModels: null,
+    // Snapshot of selectedModels from right before a double-click solo, so a
+    // second double-click on that same (now-soloed) model can undo it --
+    // null whenever there's nothing to undo (no solo in effect, or it's
+    // since been superseded by a plain click). See buildModelLegend()'s
+    // dblclick handler.
+    preSoloModels: null,
     isolatedRate: null, pinnedRate: null,
     isolatedCapture: null, pinnedCapture: null, // History mode only -- which capture_date ("forecast age") to isolate
     compareAlt: DATA.altitudes[0], // which altitude "by time of day" mode compares across hours
+    // Coarse pre-filter in front of isolatedAlt/pinnedAlt/compareAlt above --
+    // see buildAltRange(). Defaults to the site's full ladder.
+    altMin: DATA.altitudes[0], altMax: DATA.altitudes[DATA.altitudes.length - 1],
+    // Direct-entry altitude (see syncAltCustomUI()) -- null unless the
+    // "Specific altitude" checkbox is on. A real ft value, not restricted
+    // to DATA.altitudes, since zoneFor() can simulate any altitude now
+    // that the drift calc is client-side. Overrides the whole
+    // range/ladder selection above in byAltitude/byTime (see render()).
+    customAlt: null,
+    // Editable Fast/Slow drogue+main fps (see buildRateEditor()) -- changes
+    // which points exist, not just how they're drawn, so it lives here
+    // rather than as a standing "what-if" global like boostAngleDeg.
+    // structuredClone, not a plain reference -- DATA.descent_params.default_rates_fps
+    // must never be mutated (it's the reset target and the permalink's
+    // "is this the default" comparison).
+    rateFps: structuredClone(DATA.descent_params.default_rates_fps),
   };
   if (!urlStateApplied) {
     urlStateApplied = true;
@@ -351,13 +374,65 @@ function freshState() {
     if (rate === 'fast' || rate === 'slow') base.pinnedRate = rate;
     const alt = Number(URL_PARAMS.get('alt'));
     if (DATA.altitudes.includes(alt)) base.pinnedAlt = alt;
-    const model = URL_PARAMS.get('model');
-    if (Object.keys(MODEL_LABELS).includes(model)) base.pinnedModel = model;
+    // models=<comma-separated keys> -- validated against MODEL_LABELS only,
+    // not against "has data" (that's context-dependent -- byAltitude vs
+    // History read different availability sources, and horizon/capture can
+    // change which models actually have data anyway); buildModelLegend()
+    // re-validates against real availability every time it resolves this.
+    const modelsParam = URL_PARAMS.get('models');
+    if (modelsParam) {
+      const requested = new Set(modelsParam.split(',').filter(m => Object.keys(MODEL_LABELS).includes(m)));
+      if (requested.size) base.selectedModels = requested;
+    }
     const compare = Number(URL_PARAMS.get('compare'));
     if (DATA.altitudes.includes(compare)) base.compareAlt = compare;
     const capture = URL_PARAMS.get('capture');
     if (HISTORY && HISTORY.captures.includes(capture)) base.pinnedCapture = capture;
     if (base.mode === 'byHistory' && !base.pinnedRate) base.pinnedRate = 'fast';
+    // Same defensive includes() guard as alt/compare above -- a link from a
+    // different site, or from before the master altitude ladder changed,
+    // just degrades to the full range instead of an empty map.
+    const altMin = Number(URL_PARAMS.get('altmin'));
+    if (DATA.altitudes.includes(altMin)) base.altMin = altMin;
+    const altMax = Number(URL_PARAMS.get('altmax'));
+    if (DATA.altitudes.includes(altMax) && altMax >= base.altMin) base.altMax = altMax;
+    // A URL can carry alt/compare and altmin/altmax independently (e.g. an
+    // older link built before altmin/altmax existed, then hand-narrowed) --
+    // clamp both into the resolved range so byTime/byHistory never end up
+    // showing a zone outside the range the selects display as active.
+    const inRange = a => a >= base.altMin && a <= base.altMax;
+    const nearestInRange = target => {
+      const candidates = DATA.altitudes.filter(inRange);
+      return candidates.length
+        ? candidates.reduce((best, a) => Math.abs(a - target) < Math.abs(best - target) ? a : best)
+        : null;
+    };
+    if (base.pinnedAlt !== null && !inRange(base.pinnedAlt)) base.pinnedAlt = null;
+    if (base.compareAlt !== null && !inRange(base.compareAlt)) base.compareAlt = nearestInRange(base.compareAlt);
+    // customalt=<ft> -- real value, not restricted to DATA.altitudes/inRange
+    // (that's the whole point of it), just bounded to (0, site waiver].
+    const customAlt = Number(URL_PARAMS.get('customalt'));
+    if (Number.isFinite(customAlt) && customAlt > 0 && customAlt <= DATA.altitudes[DATA.altitudes.length - 1]) {
+      base.customAlt = Math.round(customAlt);
+    }
+    // rates=<fastDrogue>/<fastMain>,<slowDrogue>/<slowMain> -- defensive like
+    // every other param here: a malformed component falls back to that
+    // preset/part's own default rather than half-applying, and every
+    // surviving number gets clamped into rate_limits_fps (a hand-edited URL
+    // could carry anything).
+    const ratesParam = URL_PARAMS.get('rates');
+    if (ratesParam) {
+      const limits = DATA.descent_params.rate_limits_fps;
+      const clamp = (part, v) => Math.min(limits[part][1], Math.max(limits[part][0], v));
+      const [fastStr, slowStr] = ratesParam.split(',');
+      const parsed = { fast: fastStr, slow: slowStr };
+      for (const name of ['fast', 'slow']) {
+        const m = parsed[name] && parsed[name].match(/^(\d+(?:\.\d+)?)\/(\d+(?:\.\d+)?)$/);
+        if (m) {
+          base.rateFps[name] = { drogue: clamp('drogue', Number(m[1])), main: clamp('main', Number(m[2])) };
+        }
+      }
+    }
   }
   return base;
 }
@@ -368,6 +443,12 @@ function freshState() {
 // (which would stomp the pinnedAlt/pinnedRate a permalink just supplied).
 function applyModeUI(mode) {
   document.getElementById('hour-toggle-group').classList.toggle('disabled', mode === 'byTime');
+  // History reads points_history.json, precomputed server-side at only the
+  // discrete ladder's own altitudes -- state.customAlt has nothing to show
+  // there (render()'s byHistory branch never reads it). Gated visually
+  // rather than clearing the value, so switching to History to check
+  // something and back doesn't lose what was typed.
+  document.getElementById('alt-custom-control').classList.toggle('disabled', mode === 'byHistory');
   document.getElementById('time-legend-block').style.display = (mode === 'byTime' || mode === 'byHistory') ? '' : 'none';
   document.getElementById('time-legend-title').textContent = mode === 'byHistory' ? 'Forecast age' : 'Time of day';
   document.getElementById('time-color-controls').style.display = mode === 'byHistory' ? 'none' : '';
@@ -379,11 +460,9 @@ function applyModeUI(mode) {
     ? 'Each row is one capture date -- swatch shade shows how many days before launch it was pulled (lighter = further out, darker = closer to launch). Hover to isolate just that capture (map + accuracy table); click to pin, click again to release.'
     : 'Hover a time to isolate it. Click to pin; click again to release.';
   document.getElementById('model-hint').textContent = mode === 'byHistory'
-    ? 'Color and shape both mean model here (same colors as the main map) -- shape is the colorblind-safe backup. Hover a model to isolate its path; click to pin, click again to release.'
-    : 'Hover a model to isolate it -- zones collapse to a line (a single model\'s fast/slow points fall on the same bearing from the pad). Click to pin; click again to release.';
-  document.getElementById('rate-hint').textContent =
-    'Fast = single deploy 20 fps, or dual deploy drogue 100 fps + main 20 fps. Slow = single deploy 10 fps, or dual deploy drogue 80 fps + main 10 fps.'
-    + (mode === 'byHistory' ? ' History starts on fast -- click to switch, click again to clear.' : ' Hover a rate to isolate it; click to pin, click again to release.');
+    ? 'Color and shape both mean model here (same colors as the main map) -- shape is the colorblind-safe backup. Click a model to toggle it on/off; double-click to solo just that one, double-click it again to bring back whatever was selected before.'
+    : 'Click a model to toggle it on/off, like a checkbox -- all start selected. Double-click to solo just that one (zones collapse to a line when only one model is selected, since a single model\'s fast/slow points fall on the same bearing from the pad); double-click it again to bring back whatever was selected before.';
+  updateRateHint();
 }
 
 // --- toggles ---
@@ -412,7 +491,12 @@ function setMode(mode) {
   // doesn't apply here
   state.isolatedAlt = null; state.pinnedAlt = null;
   state.isolatedHour = null; state.pinnedHour = null;
-  state.isolatedModel = null; state.pinnedModel = null;
+  // null sentinel -- byAltitude/byTime and byHistory read different
+  // availability sources (modelsWithData() vs historyModelsAvailable()), so
+  // re-resolve to "all available" for whichever mode this is switching to
+  // rather than carrying over a selection that might not even exist there.
+  state.selectedModels = null;
+  state.preSoloModels = null; // nothing to undo across a mode switch
   state.isolatedCapture = null; state.pinnedCapture = null;
   // Rate resets here too, same as everything else above -- otherwise the
   // rate History auto-pins (below) leaks into byAltitude/byTime afterward,
@@ -425,21 +509,278 @@ function setMode(mode) {
   if (mode === 'byHistory' && !state.pinnedRate) state.pinnedRate = 'fast';
   applyModeUI(mode);
   buildAltList();
+  buildAltRange();
   buildTimeLegend();
   buildModelLegend();
-  buildRateLegend();
+  buildRateEditor();
   // note: no render() here -- buildToggle() already calls it after this
   // onChange callback returns, for the mode-toggle click that triggers this.
 }
 
+// --- altitude range: coarse min/max filter in front of the per-row list below ---
+function altInRange(alt) { return alt >= state.altMin && alt <= state.altMax; }
+// Descending -- the row list and the slider beside it both read top-to-bottom
+// as high-to-low altitude, matching the real world (sky above, ground below)
+// rather than the ascending order DATA.altitudes/config.ALTITUDES_MASTER_FT
+// happen to store it in.
+function altitudesDescending() { return [...DATA.altitudes].sort((a, b) => b - a); }
+function altitudesInRange() { return altitudesDescending().filter(altInRange); }
+// Altitudes that actually have a zone for the current hour/deploy -- single
+// deploy is dropped above config.SINGLE_DEPLOY_MAX_ALT_FT (10,000ft)
+// pipeline-side, so a high-waiver site on Single has real zones for only
+// part of DATA.altitudes.
+function altitudesWithZones() {
+  return new Set(zonesFor(state.hour, state.deploy).map(z => z.altitude));
+}
+
+// Row centers, in px from the top of #alt-list's content, for whichever rows
+// are currently rendered there. offsetTop/offsetHeight (not
+// getBoundingClientRect()) deliberately -- they reflect position within the
+// full content box regardless of scroll, so this stays correct even if
+// .alt-list ever scrolls internally. Relies on buildAltList() having already
+// run for the current dataset/mode (every buildAltRange() call site calls it
+// first) so #alt-list's rows exist and are in the same order as
+// altitudesDescending().
+function altRowCentersPx() {
+  return [...document.getElementById('alt-list').children].map(row => row.offsetTop + row.offsetHeight / 2);
+}
+
+// Repositions the two thumbs/fill/readout from current state -- cheap, safe
+// to call on every altMin/altMax change (drag, keyboard, reset, permalink
+// load, real-flight snap). Drag/keyboard interaction itself is wired up once
+// in initAltRangeSlider() below, not rebuilt here, so an in-progress drag
+// never loses its listeners mid-gesture.
+function buildAltRange() {
+  const listEl = document.getElementById('alt-list');
+  const sliderEl = document.getElementById('alt-range-slider');
+  // Matches #alt-list's real content height exactly (not a formula/estimate)
+  // so each thumb's % position lines up with its row's actual center, not
+  // just a proportional guess -- see altRowCentersPx()'s own comment.
+  const listHeight = listEl.scrollHeight;
+  sliderEl.style.height = listHeight + 'px';
+
+  const alts = altitudesDescending(); // index 0 = highest (top), last = lowest (bottom)
+  const n = alts.length;
+  const maxIdx = alts.indexOf(state.altMax);
+  const minIdx = alts.indexOf(state.altMin);
+  const centers = altRowCentersPx();
+  const pct = i => listHeight > 0 ? (centers[i] / listHeight) * 100 : 50;
+
+  const maxThumb = document.getElementById('alt-max-thumb');
+  const minThumb = document.getElementById('alt-min-thumb');
+  const fill = document.getElementById('alt-range-fill');
+  maxThumb.style.top = pct(maxIdx) + '%';
+  minThumb.style.top = pct(minIdx) + '%';
+  fill.style.top = pct(maxIdx) + '%';
+  fill.style.height = (pct(minIdx) - pct(maxIdx)) + '%';
+
+  [[maxThumb, state.altMax], [minThumb, state.altMin]].forEach(([thumb, val]) => {
+    thumb.setAttribute('aria-valuemin', alts[n - 1]);
+    thumb.setAttribute('aria-valuemax', alts[0]);
+    thumb.setAttribute('aria-valuenow', val);
+    thumb.setAttribute('aria-valuetext', val.toLocaleString() + ' ft');
+  });
+
+  const full = state.altMin === alts[n - 1] && state.altMax === alts[0];
+  document.getElementById('alt-range-readout-text').textContent = full
+    ? 'All altitudes' : `${state.altMin.toLocaleString()}–${state.altMax.toLocaleString()} ft`;
+}
+
+function onAltRangeChanged() {
+  if (state.pinnedAlt !== null && !altInRange(state.pinnedAlt)) state.pinnedAlt = null;
+  if (state.isolatedAlt !== null && !altInRange(state.isolatedAlt)) state.isolatedAlt = null;
+  if (state.compareAlt !== null && !altInRange(state.compareAlt)) {
+    const inRange = altitudesInRange();
+    state.compareAlt = inRange.length ? inRange.reduce((best, a) =>
+      Math.abs(a - state.compareAlt) < Math.abs(best - state.compareAlt) ? a : best) : null;
+  }
+  buildAltList();
+  buildAltRange();
+  render();
+}
+
+document.getElementById('alt-range-reset').addEventListener('click', () => {
+  state.altMin = DATA.altitudes[0];
+  state.altMax = DATA.altitudes[DATA.altitudes.length - 1];
+  onAltRangeChanged();
+});
+
+// --- direct-entry altitude ("Specific altitude") -- overrides the whole
+// range/ladder selection above in byAltitude/byTime, see render(). No
+// separate checkbox -- clicking into the input *is* the request to use it
+// (real user feedback: a checkbox-then-type flow made people click twice
+// for one intent). Reflects state.customAlt into the input/status text and
+// dims the range row while active; safe to call any time state.customAlt,
+// hour, or deploy changes (cheap -- reads zoneFor()'s cache, doesn't
+// re-simulate).
+const altCustomInput = document.getElementById('alt-custom-input');
+const altCustomClear = document.getElementById('alt-custom-clear');
+
+function syncAltCustomUI() {
+  const active = state.customAlt !== null;
+  if (active) altCustomInput.value = state.customAlt;
+  altCustomClear.style.display = active ? '' : 'none';
+  document.querySelector('.alt-range-row').classList.toggle('alt-custom-dimmed', active);
+  const statusEl = document.getElementById('alt-custom-status');
+  if (!active) { statusEl.textContent = ''; return; }
+  // zoneFor() itself already handles "no zone" gracefully (returns null --
+  // single deploy above SINGLE_DEPLOY_MAX_ALT_FT, or an hour with no
+  // published profile at all); this surfaces *why* rather than leaving the
+  // map silently blank, which the row-list's .unavailable graying already
+  // does for the ladder-based selector but a bare number input can't.
+  const zone = zoneFor(state.hour, state.deploy, state.customAlt);
+  statusEl.textContent = zone ? '' :
+    (state.deploy === 'single'
+      ? `No single-deploy zone above ${DATA.descent_params.single_deploy_max_alt_ft.toLocaleString()} ft`
+      : 'No wind data for this altitude/hour');
+}
+
+// Activates on focus alone (before any typing) -- clicking into the field is
+// the whole ask, per user feedback; a value already needs to be showing for
+// that to mean anything, so seed one immediately rather than leaving it
+// blank until the first keystroke.
+function activateAltCustom() {
+  if (state.customAlt !== null) return; // already active, focus alone shouldn't re-seed over a real edit in progress
+  const maxAlt = DATA.altitudes[DATA.altitudes.length - 1];
+  const seed = Number(altCustomInput.value) || state.compareAlt || Math.round(maxAlt / 2);
+  state.customAlt = Math.min(maxAlt, Math.max(1, Math.round(seed)));
+  // Isolate/pin among the ladder rows stops meaning anything once a single
+  // specific-altitude zone is the whole view -- clear rather than leave a
+  // dangling selection that resurfaces confusingly if this gets cleared
+  // later.
+  state.pinnedAlt = null;
+  state.isolatedAlt = null;
+  syncAltCustomUI();
+  render();
+}
+altCustomInput.addEventListener('focus', activateAltCustom);
+altCustomInput.addEventListener('change', () => {
+  // Clearing the field (deleting all digits, then blur/Enter) turns the
+  // override off again -- the symmetric opposite of focus turning it on,
+  // so there's no separate control needed just to get back to blank+off.
+  if (altCustomInput.value.trim() === '') {
+    state.customAlt = null;
+    syncAltCustomUI();
+    render();
+    return;
+  }
+  const maxAlt = DATA.altitudes[DATA.altitudes.length - 1];
+  let v = Number(altCustomInput.value);
+  if (!Number.isFinite(v)) v = state.customAlt ?? maxAlt;
+  v = Math.min(maxAlt, Math.max(1, Math.round(v)));
+  altCustomInput.value = v;
+  state.customAlt = v;
+  syncAltCustomUI();
+  render();
+});
+altCustomClear.addEventListener('click', () => {
+  state.customAlt = null;
+  altCustomInput.value = '';
+  syncAltCustomUI();
+  render();
+});
+
+// Drag (pointer events, so mouse/touch/pen share one code path) + keyboard
+// wiring for the two thumbs -- attached once at load, not rebuilt per
+// dataset (buildAltRange() above only repositions). Always reads
+// altitudesDescending()/state fresh rather than closing over a snapshot, so
+// it stays correct across site/date switches without needing to be re-armed.
+function initAltRangeSlider() {
+  const maxThumb = document.getElementById('alt-max-thumb');
+  const minThumb = document.getElementById('alt-min-thumb');
+
+  // Nearest row *center* to the pointer, not a linear fraction of the
+  // slider's own height -- the two aren't the same thing (a naive
+  // index/(n-1) fraction puts index 0 at the slider's top edge, not the
+  // first row's center, which is exactly the misalignment this was built to
+  // fix). Measures the live rows directly rather than re-deriving their
+  // positions, so it's automatically correct for whatever's currently
+  // rendered.
+  function indexFromClientY(clientY) {
+    const rows = [...document.getElementById('alt-list').children];
+    const listRect = document.getElementById('alt-list').getBoundingClientRect();
+    let bestIdx = 0, bestDist = Infinity;
+    rows.forEach((row, i) => {
+      const center = listRect.top + row.offsetTop + row.offsetHeight / 2;
+      const dist = Math.abs(clientY - center);
+      if (dist < bestDist) { bestDist = dist; bestIdx = i; }
+    });
+    return bestIdx;
+  }
+
+  // which thumb's index moves to idx, clamped so the two thumbs can never
+  // cross (max-thumb's index can't exceed min-thumb's, and vice versa --
+  // remember higher index = lower altitude, since the array is descending).
+  function commitIndex(which, idx) {
+    const alts = altitudesDescending();
+    const n = alts.length;
+    const maxIdx = alts.indexOf(state.altMax);
+    const minIdx = alts.indexOf(state.altMin);
+    if (which === 'max') {
+      idx = Math.max(0, Math.min(idx, minIdx));
+      if (idx === maxIdx) return;
+      state.altMax = alts[idx];
+    } else {
+      idx = Math.min(n - 1, Math.max(idx, maxIdx));
+      if (idx === minIdx) return;
+      state.altMin = alts[idx];
+    }
+    onAltRangeChanged();
+  }
+
+  function startDrag(which, thumbEl) {
+    return evt => {
+      evt.preventDefault();
+      thumbEl.setPointerCapture(evt.pointerId);
+      const move = e => commitIndex(which, indexFromClientY(e.clientY));
+      const stop = () => {
+        document.removeEventListener('pointermove', move);
+        document.removeEventListener('pointerup', stop);
+      };
+      document.addEventListener('pointermove', move);
+      document.addEventListener('pointerup', stop);
+      commitIndex(which, indexFromClientY(evt.clientY));
+    };
+  }
+  maxThumb.addEventListener('pointerdown', startDrag('max', maxThumb));
+  minThumb.addEventListener('pointerdown', startDrag('min', minThumb));
+
+  function keyStep(which) {
+    return evt => {
+      const alts = altitudesDescending();
+      const maxIdx = alts.indexOf(state.altMax);
+      const minIdx = alts.indexOf(state.altMin);
+      const cur = which === 'max' ? maxIdx : minIdx;
+      if (evt.key === 'Home') { commitIndex(which, which === 'max' ? 0 : maxIdx); evt.preventDefault(); return; }
+      if (evt.key === 'End') { commitIndex(which, which === 'max' ? minIdx : alts.length - 1); evt.preventDefault(); return; }
+      const delta = { ArrowUp: -1, ArrowLeft: -1, ArrowDown: 1, ArrowRight: 1, PageUp: -3, PageDown: 3 }[evt.key];
+      if (delta === undefined) return;
+      evt.preventDefault();
+      commitIndex(which, cur + delta);
+    };
+  }
+  maxThumb.addEventListener('keydown', keyStep('max'));
+  minThumb.addEventListener('keydown', keyStep('min'));
+}
+initAltRangeSlider();
+
 // --- altitude list: hover-isolate in "by altitude" mode, single-select in "by time" mode ---
+// Always renders every altitude in the site's full ladder (descending), never
+// just the in-range subset -- the slider beside it positions its stops
+// against the full list too (see altRangeSliderHeightPx()), and removing
+// rows as the range narrows made the list reflow/shift, breaking that visual
+// alignment. Out-of-range rows get the same dimmed/non-interactive treatment
+// as a real no-zone row (.unavailable) instead of disappearing.
 function buildAltList() {
   const el = document.getElementById('alt-list');
   el.innerHTML = '';
-  DATA.altitudes.forEach(alt => {
+  const withZones = altitudesWithZones();
+  altitudesDescending().forEach(alt => {
     const row = document.createElement('div');
-    row.className = 'alt-row';
+    const available = withZones.has(alt) && altInRange(alt);
+    row.className = 'alt-row' + (available ? '' : ' unavailable');
     row.innerHTML = `<div class="alt-swatch" style="background:${ALT_COLORS_HEX[alt]}"></div><span>${alt.toLocaleString()} ft</span>`;
+    if (!available) { el.appendChild(row); return; }
 
     if (state.mode === 'byAltitude') {
       row.addEventListener('mouseenter', () => { state.isolatedAlt = alt; applyIsolation(); });
@@ -467,15 +808,17 @@ function buildAltList() {
   });
 }
 
-// Which models actually contributed a point anywhere in the current DATA
-// (any hour/deploy/altitude) -- a model beyond its forecast horizon for this
-// lead time (e.g. HRRR ~48h out, by a T-5/T-7 capture) has none at all. Used
-// to gray those out in the legend instead of leaving them hoverable/
-// clickable with nothing behind them, which just looked broken.
+// Which models published a usable wind profile at any hour -- a model beyond
+// its forecast horizon for this lead time (e.g. HRRR ~48h out, by a T-5/T-7
+// capture) has none at all. Used to gray those out in the legend instead of
+// leaving them hoverable/clickable with nothing behind them, which just
+// looked broken. No simulation needed -- this is just which keys exist in
+// DATA.wind_profiles, unlike the old DATA.data-based version which had to
+// scan every already-simulated point.
 function modelsWithData() {
   const present = new Set();
-  Object.values(DATA.data).forEach(zones => {
-    zones.forEach(zone => zone.points.forEach(pt => present.add(pt.model)));
+  Object.values(DATA.wind_profiles || {}).forEach(models => {
+    Object.keys(models).forEach(m => present.add(m));
   });
   return present;
 }
@@ -490,15 +833,37 @@ function historyModelsAvailable() {
   return new Set((HISTORY.points_by_key[key] || []).map(p => p.model));
 }
 
+// Multi-select checkboxes, not hover-isolate/click-pin like every other
+// legend in this file -- unlike a single altitude/rate/hour, "which models
+// contributed to this zone" is naturally a set (you might want GFS+ECMWF
+// together, or all-but-HRRR), and now that the drift sim runs client-side
+// (zoneFor()) there's no cost to recomputing the hull from any subset on
+// every click. Click toggles one model; double-click solos it (same as
+// "select only this one"). state.selectedModels is the source of truth
+// (drawZone()/renderHistory()/renderAccuracyTable() all read it directly);
+// this function also resolves its null sentinel to "every available model"
+// the first time it runs for a given state (see freshState()'s comment).
 function buildModelLegend() {
   const el = document.getElementById('model-legend');
   el.innerHTML = '';
   const isHistory = state.mode === 'byHistory';
   const available = isHistory ? historyModelsAvailable() : modelsWithData();
+  if (state.selectedModels === null) {
+    state.selectedModels = new Set(available);
+  } else {
+    // Drop anything selected that isn't actually available here (e.g. a
+    // permalink's ?models= naming one beyond this capture's horizon, or a
+    // mode switch that reads a different availability source) -- falls
+    // back to "all available" rather than leaving a confusing empty view
+    // if that drops every selected model.
+    const stillValid = new Set([...state.selectedModels].filter(m => available.has(m)));
+    state.selectedModels = stillValid.size ? stillValid : new Set(available);
+  }
   MODEL_LEGEND_ORDER.forEach(m => {
     const hasData = available.has(m);
+    const selected = state.selectedModels.has(m);
     const row = document.createElement('div');
-    row.className = 'alt-row' + (hasData ? '' : ' unavailable');
+    row.className = 'alt-row' + (hasData ? (selected ? ' pinned' : ' deselected') : ' unavailable');
     const label = MODEL_LABELS[m] || m.toUpperCase();
     // History mode swatch shows shape (its markers' distinguishing feature
     // there, for colorblind-safe redundancy) filled with the same color as
@@ -508,15 +873,39 @@ function buildModelLegend() {
       : `<div class="alt-swatch" style="background:${hasData ? MODEL_COLORS_HEX[m] : 'var(--text-muted)'}"></div>`;
     row.innerHTML = `${swatch}<span>${label}${hasData ? '' : ' (no data)'}</span>`;
     if (hasData) {
-      row.addEventListener('mouseenter', () => { state.isolatedModel = m; render(); });
-      row.addEventListener('mouseleave', () => { state.isolatedModel = null; render(); });
+      // click vs dblclick: a browser fires click on both presses of a
+      // double-click before the dblclick event itself, so the single-click
+      // toggle is delayed briefly -- if a second click lands within the
+      // window, it's a dblclick instead and the pending toggle is dropped.
+      // Per-row timer (not shared across the legend) so double-clicking one
+      // model can't be confused by a stray click on another.
+      let clickTimer = null;
       row.addEventListener('click', () => {
-        state.pinnedModel = (state.pinnedModel === m) ? null : m;
-        [...el.children].forEach(r => r.classList.remove('pinned'));
-        if (state.pinnedModel === m) row.classList.add('pinned');
+        if (clickTimer) return; // already mid-dblclick for this row
+        clickTimer = setTimeout(() => {
+          clickTimer = null;
+          if (state.selectedModels.has(m)) state.selectedModels.delete(m);
+          else state.selectedModels.add(m);
+          state.preSoloModels = null; // a manual toggle supersedes any pending solo-undo
+          buildModelLegend();
+          render();
+        }, 250);
+      });
+      row.addEventListener('dblclick', () => {
+        if (clickTimer) { clearTimeout(clickTimer); clickTimer = null; }
+        // Second double-click on the model that's currently soloed undoes it
+        // back to whatever was selected right before -- otherwise this is a
+        // fresh solo, so stash the pre-solo selection for that undo.
+        if (state.preSoloModels && state.selectedModels.size === 1 && state.selectedModels.has(m)) {
+          state.selectedModels = state.preSoloModels;
+          state.preSoloModels = null;
+        } else {
+          state.preSoloModels = new Set(state.selectedModels);
+          state.selectedModels = new Set([m]);
+        }
+        buildModelLegend();
         render();
       });
-      if (state.pinnedModel === m) row.classList.add('pinned');
     } else {
       row.title = `${label} has no data for this lead time -- likely beyond this model's forecast horizon.`;
     }
@@ -524,36 +913,135 @@ function buildModelLegend() {
   });
 }
 
+document.getElementById('model-reset').addEventListener('click', () => {
+  state.selectedModels = null; // sentinel -- re-resolve to "all available"
+  state.preSoloModels = null; // nothing to undo across a reset
+  buildModelLegend();
+  render();
+});
+
+// Fast/slow keys shared with the rate editor below -- shape drives both
+// RATE_SHAPE (marker shape on the map) and the editor's row swatches.
 const RATE_LEGEND_ITEMS = [
   { key: 'fast', label: 'Fast', shape: 'circle' },
   { key: 'slow', label: 'Slow', shape: 'square' },
 ];
 
-function buildRateLegend() {
-  const el = document.getElementById('rate-legend');
+// Editable drogue/main fps per Fast/Slow preset -- see state.rateFps's own
+// declaration in freshState() for why this lives in `state` rather than as
+// a standing "what-if" global like boostAngleDeg. Always both deploy modes'
+// worth of numbers (drogue + main) regardless of the current deploy toggle
+// -- single deploy only ever uses `main` (see zoneFor()), but the editor
+// edits the shared preset definitions, not a deploy-specific view of them.
+function buildRateEditor() {
+  const el = document.getElementById('rate-edit');
   el.innerHTML = '';
+  showRateWarning(false); // stale otherwise -- #rate-warning lives outside #rate-edit, so a full rebuild wouldn't otherwise touch it
+  const limits = DATA.descent_params.rate_limits_fps;
+
+  // Unit lives once in the section title ("Rate (fps)") now, not repeated
+  // per column.
+  const head = (text) => { const d = document.createElement('div'); d.className = 'rate-edit-head'; d.textContent = text; el.appendChild(d); };
+  head(''); head('Drogue'); head('Main');
+
   RATE_LEGEND_ITEMS.forEach(({ key, label, shape }) => {
-    const row = document.createElement('div');
-    row.className = 'alt-row';
     const swatchStyle = shape === 'circle' ? 'border-radius:50%;' : 'border-radius:3px;';
-    row.innerHTML = `<div style="width:16px;height:16px;${swatchStyle}background:var(--text-secondary);flex-shrink:0;"></div><span>${label}</span>`;
-    row.addEventListener('mouseenter', () => { state.isolatedRate = key; render(); });
-    row.addEventListener('mouseleave', () => { state.isolatedRate = null; render(); });
-    row.addEventListener('click', () => {
+    const labelEl = document.createElement('div');
+    labelEl.className = 'rate-edit-label';
+    labelEl.innerHTML = `<div style="width:12px;height:12px;${swatchStyle}background:var(--text-secondary);flex-shrink:0;"></div><span>${label}</span>`;
+    // Hover-isolate/click-pin, same behavior the standalone #rate-legend
+    // used to provide before it was folded into this grid (2026-08-05) --
+    // Fast/Slow no longer needs to appear twice in the sidebar (once as a
+    // pure legend, once as this editor's row labels).
+    labelEl.addEventListener('mouseenter', () => { state.isolatedRate = key; render(); });
+    labelEl.addEventListener('mouseleave', () => { state.isolatedRate = null; render(); });
+    labelEl.addEventListener('click', () => {
       // Toggle, same as the altitude list -- clicking the already-selected
       // rate again clears it rather than being stuck permanently selected.
       // History defaults to 'fast' the first time that mode is entered (see
       // setMode()) so it doesn't start out showing nothing, but from there
       // behaves the same as byAltitude/byTime.
       state.pinnedRate = (state.pinnedRate === key) ? null : key;
-      [...el.children].forEach(r => r.classList.remove('pinned'));
-      if (state.pinnedRate === key) row.classList.add('pinned');
+      el.querySelectorAll('.rate-edit-label').forEach(r => r.classList.remove('pinned'));
+      if (state.pinnedRate === key) labelEl.classList.add('pinned');
       render();
     });
-    if (state.pinnedRate === key) row.classList.add('pinned');
-    el.appendChild(row);
+    if (state.pinnedRate === key) labelEl.classList.add('pinned');
+    el.appendChild(labelEl);
+
+    ['drogue', 'main'].forEach(part => {
+      const input = document.createElement('input');
+      input.type = 'number';
+      input.min = limits[part][0];
+      input.max = limits[part][1];
+      input.step = 1;
+      input.value = state.rateFps[key][part];
+      // Single deploy is one canopy the whole way -- zoneFor()'s phase
+      // construction never reads the drogue rate for it, so editing it
+      // would silently do nothing. Disabled, not hidden: keeps the grid's
+      // column structure stable across a deploy switch, and the value is
+      // still visible for reference (and still applies immediately if the
+      // user switches back to Dual).
+      input.disabled = part === 'drogue' && state.deploy === 'single';
+      // 'change' (blur/Enter/stepper), not 'input' -- typing "120" fires at
+      // "1" mid-keystroke on 'input', and a transient 1fps rate would blow
+      // up the view box (see growBaseViewBox()) before the user finishes.
+      input.addEventListener('change', () => {
+        let v = Number(input.value);
+        if (!Number.isFinite(v)) v = state.rateFps[key][part];
+        // Flagged separately from the generic clamp below -- Tripoli USC
+        // §11-1's 35 fps max landing speed (limits.main[1]) is a real
+        // safety-code number, not just an input sanity bound like drogue's,
+        // so exceeding it gets an explicit on-screen reason instead of
+        // silently reverting to a smaller number.
+        showRateWarning(part === 'main' && v > limits.main[1]);
+        v = Math.min(limits[part][1], Math.max(limits[part][0], v));
+        input.value = v;
+        state.rateFps[key][part] = v;
+        invalidateZones();
+        // updateRateHint() only, NOT buildRateEditor() -- a full rebuild
+        // destroys and recreates every <input> in this grid, including
+        // whichever one the browser was about to move focus to on Tab.
+        // The destroyed element is a stale reference by the time the
+        // browser tries to focus it, so Tab silently drops focus instead
+        // of advancing. Real user report, not theoretical.
+        updateRateHint();
+        render();
+      });
+      el.appendChild(input);
+    });
   });
+
+  updateRateHint();
 }
+
+// Shown only while actively relevant: every rate-input change event calls
+// this (see buildRateEditor()'s change handler), passing false whenever
+// that particular edit isn't a main-over-35fps attempt -- so it hides
+// itself again the moment the user moves on, rather than needing a timer
+// or a dismiss button.
+function showRateWarning(show) {
+  document.getElementById('rate-warning').style.display = show ? '' : 'none';
+}
+
+// Split from applyModeUI() -- the hint's numeric half depends on
+// state.rateFps (editable, changes independently of mode), the interaction
+// half depends on state.mode. Called from both buildRateEditor() (a rate
+// just changed) and applyModeUI() (mode just changed) so either alone keeps
+// the full sentence correct.
+function updateRateHint() {
+  const f = state.rateFps.fast, s = state.rateFps.slow;
+  document.getElementById('rate-hint').textContent =
+    `Fast = ${f.drogue}/${f.main} fps (drogue/main), Slow = ${s.drogue}/${s.main} fps -- editable above (ground-level rates; the sim scales each faster for the thinner air higher up, so the actual drogue rate near a 30,000-50,000ft apogee can be 1.5-2.5x the ground number). Reset with the button above the legend.`
+    + (state.mode === 'byHistory' ? ' History starts on fast -- click to switch, click again to clear.' : ' Hover a rate to isolate it; click to pin, click again to release.');
+}
+
+document.getElementById('rate-reset').addEventListener('click', () => {
+  state.rateFps = structuredClone(DATA.descent_params.default_rates_fps);
+  invalidateZones();
+  buildRateEditor();
+  render();
+});
 
 function buildTimeLegend() {
   const el = document.getElementById('time-legend');
@@ -1041,7 +1529,12 @@ function showTooltip(evt, hoveredPt) {
     const whenPart = state.mode === 'byTime' ? ` &middot; ${HOUR_LABELS[rp.hour]}`
       : state.mode === 'byHistory' ? ` &middot; ${leadDaysLabel(rp.capture_date, HISTORY.target_date)} (captured ${rp.capture_date})`
       : '';
-    return `<div class="tt-row"><b>${MODEL_LABELS[rp.model] || rp.model.toUpperCase()}</b> &middot; ${rp.rate}${whenPart}<br>` +
+    // Rate name alone ("fast") is ambiguous now that the numbers behind it
+    // are user-editable -- show the live fps values from state.rateFps
+    // rather than a name the viewer's own controls could disagree with.
+    const r = state.rateFps ? state.rateFps[rp.rate] : null;
+    const rateLabel = r ? (state.deploy === 'single' ? `${rp.rate} (${r.main} fps)` : `${rp.rate} (${r.drogue}/${r.main} fps)`) : rp.rate;
+    return `<div class="tt-row"><b>${MODEL_LABELS[rp.model] || rp.model.toUpperCase()}</b> &middot; ${rateLabel}${whenPart}<br>` +
       `apogee ${rp.altitude.toLocaleString()} ft<br>` +
       `offset: ${rp.x_ft >= 0 ? '+' : ''}${rp.x_ft.toFixed(0)} ft E, ${rp.y_ft >= 0 ? '+' : ''}${rp.y_ft.toFixed(0)} ft N<br>` +
       `distance from pad: ${dist.toFixed(0)} ft</div>`;
@@ -1857,6 +2350,155 @@ function bufferedPointsFt(pointsFt, radiusFt, n = 12) {
   return out;
 }
 
+// --- client-side descent-drift simulation ----------------------------------
+// Ported from pipeline/splash_zones.py's air_density_ratio()/descent_rate_at()/
+// interp()/simulate(). Same reason the hull/buffer port above exists, one
+// step further: the fast/slow descent rates are now user-editable (see
+// buildRateEditor()), so every landing point has to be integrated here from
+// the published wind profile rather than baked into the JSON at whatever
+// rates that day's pull happened to use. That's also what removed the old
+// `data` key entirely -- the pull now publishes a few hundred wind numbers
+// (DATA.wind_profiles) instead of a pre-simulated point for every
+// altitude x rate x model combination (hutto 2026-08-01: 143.9KB -> 10.5KB).
+// std_atm_ft() is deliberately NOT ported -- pressure levels are already
+// resolved to AGL feet server-side, in build_profile_single().
+//
+// Mirrors splash_zones.py's ICAO constants exactly (see that file's own
+// comment for the ISA-table verification) -- not re-derived or re-verified
+// here, just copied, so the two stay numerically identical by construction.
+const ICAO_T0_K = 288.15;
+const ICAO_LAPSE_K_PER_M = 0.0065;
+const ICAO_TROP_TOP_M = 11000.0;
+const ICAO_TROP_EXP = 5.25588;
+const ICAO_STRAT_COEF_PER_M = 1.5768e-4;
+const ICAO_RHO_RATIO_AT_TROPOPAUSE = (1 - ICAO_LAPSE_K_PER_M * ICAO_TROP_TOP_M / ICAO_T0_K) ** (ICAO_TROP_EXP - 1);
+const FT_PER_M = 3.28084;
+const MPH_TO_FTPS = 5280 / 3600;
+
+function airDensityRatio(altMMsl) {
+  if (altMMsl <= ICAO_TROP_TOP_M) {
+    const theta = 1 - ICAO_LAPSE_K_PER_M * altMMsl / ICAO_T0_K;
+    return theta ** (ICAO_TROP_EXP - 1);
+  }
+  return ICAO_RHO_RATIO_AT_TROPOPAUSE * Math.exp(-ICAO_STRAT_COEF_PER_M * (altMMsl - ICAO_TROP_TOP_M));
+}
+
+// groundRhoRatio is a default param, not recomputed per call like the Python
+// does -- it's constant per site for the whole sim, and simulateDrift()
+// below calls this once per integration step, so hoisting it avoids two
+// Math.pow() calls x every step while descentRateAt() still reads as a
+// faithful standalone port with the same argument order.
+function descentRateAt(altAglFt, groundRateFtps, siteElevFt, groundRhoRatio = airDensityRatio(siteElevFt / FT_PER_M)) {
+  const rhoHere = airDensityRatio((altAglFt + siteElevFt) / FT_PER_M);
+  return groundRateFtps * Math.sqrt(groundRhoRatio / rhoHere);
+}
+
+// Wind [speedMph, dirDeg] at `alt`, linearly interpolated (circular for
+// direction) between the two profile points bracketing it -- mirrors
+// interp(). `profile` is one of DATA.wind_profiles[hour][model], already
+// sorted by altitude server-side.
+function interpWind(profile, alt) {
+  if (alt <= profile[0][0]) return [profile[0][1], profile[0][2]];
+  const last = profile[profile.length - 1];
+  if (alt >= last[0]) return [last[1], last[2]];
+  for (let i = 0; i < profile.length - 1; i++) {
+    const [a0, s0, d0] = profile[i];
+    const [a1, s1, d1] = profile[i + 1];
+    if (a0 <= alt && alt <= a1) {
+      const f = (alt - a0) / (a1 - a0);
+      const speed = s0 + f * (s1 - s0);
+      // Python's `%` on a negative operand returns non-negative; JS's
+      // doesn't -- both expressions below need the extra `+360, %360`
+      // wrap or a heading crossing 0deg silently flips the drift vector.
+      const diff = (((d1 - d0 + 180) % 360) + 360) % 360 - 180;
+      const direction = (((d0 + f * diff) % 360) + 360) % 360;
+      return [speed, direction];
+    }
+  }
+  throw new Error('unreachable -- profile is sorted and alt is bounded above');
+}
+
+// Integrate drift (xFt east, yFt north) across one or more descent phases --
+// mirrors simulate(). `phases` is [[rateFtps, segTopFt, segBottomFt], ...],
+// e.g. dual-deploy passes a drogue phase down to main-deploy altitude, then
+// a main phase down to the ground. rateFtps is scaled per-step by
+// descentRateAt() (thinner air at altitude -> faster actual fall than the
+// same drogue's ground-level rate), not held constant across the phase.
+function simulateDrift(profile, apogeeFt, phases, siteElevFt, stepFt) {
+  let x = 0, y = 0, alt = apogeeFt;
+  const groundRhoRatio = airDensityRatio(siteElevFt / FT_PER_M);
+  for (const [rateFtps, segTop, segBottom] of phases) {
+    const top = Math.min(alt, segTop);
+    const bottom = segBottom;
+    if (top <= bottom) continue;
+    const n = Math.max(1, Math.floor((top - bottom) / stepFt)); // top>bottom always here, so Math.floor==Math.trunc
+    const dz = (top - bottom) / n;
+    for (let i = 0; i < n; i++) {
+      const mid = top - (i + 0.5) * dz;
+      const [spdMph, drc] = interpWind(profile, mid);
+      const spdFtps = spdMph * MPH_TO_FTPS;
+      const u = -spdFtps * Math.sin(drc * Math.PI / 180);
+      const v = -spdFtps * Math.cos(drc * Math.PI / 180);
+      const dt = dz / descentRateAt(mid, rateFtps, siteElevFt, groundRhoRatio);
+      x += u * dt;
+      y += v * dt;
+    }
+    alt = bottom;
+  }
+  return [x, y];
+}
+
+// Zone cache: `${hour}_${deploy}_${altitude}` -> {altitude, points}. Cleared
+// on dataset load and on a rate edit -- and on nothing else, deliberately:
+// x_ft/y_ft don't depend on padOffsetFt (applied later, in ftToPx()) or on
+// boostAngleDeg (applied later, in computeBufferHullPx()), so dragging the
+// pad or moving the boost slider stays a pure redraw with zero re-simulation.
+// Also why several legend hover handlers (model/rate/hour) calling render()
+// on mouseenter/mouseleave don't re-simulate the whole grid on every mouse
+// movement -- a full grid computes once per (dataset, rate-setting), every
+// subsequent hover/pin/drag is a cache hit.
+let zoneCache = new Map();
+function invalidateZones() { zoneCache.clear(); }
+
+// One altitude's zone at the given hour/deploy, computed just-in-time from
+// DATA.wind_profiles at the current state.rateFps -- returns the same
+// {altitude, points: [{model, rate, x_ft, y_ft}]} shape drawZone() already
+// consumes (it was already reading only these two fields; see drawZone()'s
+// own comment). null above single_deploy_max_alt_ft for single deploy
+// (mirrors compute_splash_points()'s own skip) or if the hour has no
+// published profiles at all.
+function zoneFor(hour, deploy, altitudeFt) {
+  const cacheKey = `${hour}_${deploy}_${altitudeFt}`;
+  if (zoneCache.has(cacheKey)) return zoneCache.get(cacheKey);
+
+  const dp = DATA.descent_params;
+  const profiles = DATA.wind_profiles[hour];
+  let zone = null;
+  if (profiles && !(deploy === 'single' && altitudeFt > dp.single_deploy_max_alt_ft)) {
+    const points = [];
+    for (const [model, profile] of Object.entries(profiles)) {
+      for (const rateName of ['fast', 'slow']) {
+        const r = state.rateFps[rateName];
+        // Mirrors compute_splash_points()'s own phase construction exactly:
+        // dual is a drogue phase down to main-deploy altitude then a main
+        // phase to the ground; single is one main-rate phase the whole way.
+        const phases = deploy === 'dual'
+          ? [[r.drogue, altitudeFt, dp.main_deploy_altitude_ft], [r.main, dp.main_deploy_altitude_ft, 0]]
+          : [[r.main, altitudeFt, 0]];
+        const [x_ft, y_ft] = simulateDrift(profile, altitudeFt, phases, dp.site_elev_ft, dp.descent_step_ft);
+        points.push({ model, rate: rateName, x_ft, y_ft });
+      }
+    }
+    zone = { altitude: altitudeFt, points };
+  }
+  zoneCache.set(cacheKey, zone);
+  return zone;
+}
+
+function zonesFor(hour, deploy) {
+  return DATA.altitudes.map(alt => zoneFor(hour, deploy, alt)).filter(z => z !== null);
+}
+
 // Draggable launch pad: capped at DATA.max_pad_move_ft from the surveyed GPS
 // point -- per-site (config.SITES[...]["max_pad_move_ft"] server-side, see
 // its own comment there), since a club's real alternate pads aren't the
@@ -2199,9 +2841,23 @@ function drawRealFlightMarker() {
         // this is a normal user-facing selection worth leaving as-is.
         state.hour = flight.closest_hour;
         hourExplicitlyChosen = true;
-        state.compareAlt = flight.delta_from_predictions.altitude_bucket_used_ft;
-        buildToggle('hour-toggle', DATA.hours, HOUR_LABELS, 'hour', () => { hourExplicitlyChosen = true; });
+        // Nearest-match, not exact equality -- the published bucket may not
+        // exist verbatim in DATA.altitudes if this date's zone JSON predates
+        // a master-ladder change (see config.ALTITUDES_MASTER_FT). Widen the
+        // range filter to include it if the current selection excludes it.
+        const bucket = flight.delta_from_predictions.altitude_bucket_used_ft;
+        state.compareAlt = DATA.altitudes.reduce((best, a) =>
+          Math.abs(a - bucket) < Math.abs(best - bucket) ? a : best, DATA.altitudes[0]);
+        if (state.compareAlt < state.altMin) state.altMin = state.compareAlt;
+        if (state.compareAlt > state.altMax) state.altMax = state.compareAlt;
+        // A pinned real flight compares against its own published altitude
+        // bucket specifically -- a specific-altitude override active from
+        // before would show an unrelated zone instead, so clear it.
+        state.customAlt = null;
+        syncAltCustomUI();
+        buildToggle('hour-toggle', DATA.hours, HOUR_LABELS, 'hour', () => { hourExplicitlyChosen = true; syncAltCustomUI(); });
         buildAltList();
+        buildAltRange();
         render();
       } else {
         restorePadFromRealFlightSnap();
@@ -2240,19 +2896,18 @@ function renderHistory() {
   });
   const actual = HISTORY.actuals[key];
 
-  const activeModel = state.isolatedModel ?? state.pinnedModel;
   const activeCapture = state.isolatedCapture ?? state.pinnedCapture;
 
   // Splash polygon for the hovered/pinned forecast age: same buffer+core
   // hull treatment drawZone() uses for the main view, but built from that
-  // one capture date's points across models (or just the isolated model, if
-  // one's also active -- same composable filtering the accuracy table
-  // already does) -- lets the actual star be read against "how big was the
-  // projected area that day," not just its distance to each individual point.
+  // one capture date's points across the currently-selected models (same
+  // composable filtering the accuracy table already does) -- lets the
+  // actual star be read against "how big was the projected area that day,"
+  // not just its distance to each individual point.
   if (activeCapture) {
     const dayPoints = (HISTORY.points_by_key[key] || []).filter(pt => {
       if (pt.capture_date !== activeCapture) return false;
-      if (activeModel && pt.model !== activeModel) return false;
+      if (!state.selectedModels.has(pt.model)) return false;
       return true;
     });
     if (dayPoints.length) {
@@ -2276,7 +2931,7 @@ function renderHistory() {
   }
 
   Object.entries(seriesByModel).forEach(([model, series]) => {
-    if (activeModel && model !== activeModel) return;
+    if (!state.selectedModels.has(model)) return;
     let sorted = [...series].sort((a, b) => new Date(a.capture_date) - new Date(b.capture_date));
     if (activeCapture) sorted = sorted.filter(pt => pt.capture_date === activeCapture);
     if (!sorted.length) return;
@@ -2313,8 +2968,8 @@ function renderHistory() {
 
   drawRealFlightMarker();
   // A render can happen for reasons unrelated to this marker (e.g. toggling
-  // isolatedModel elsewhere) while the box is still pinned or hovered open
-  // -- reapply the swap so a fresh render doesn't silently revert it.
+  // a model checkbox elsewhere) while the box is still pinned or hovered
+  // open -- reapply the swap so a fresh render doesn't silently revert it.
   setRealFlightComparing(pinnedRealFlightIndex !== null || hoveredRealFlightIndex !== null);
 }
 
@@ -2387,19 +3042,21 @@ function renderAccuracyTable() {
   if (!actual) return; // stays hidden -- render() already set display:none
   buildAccuracyLegend();
 
-  // Respects the same isolate/pin filters as the map (model legend,
-  // Forecast-age legend) so the table always matches what's plotted --
-  // isolating one model narrows the rows, isolating one forecast age
-  // narrows the columns, "across models" (both stay open by default).
-  const activeModel = state.isolatedModel ?? state.pinnedModel;
+  // Respects the same model-checkbox selection and isolate/pin forecast-age
+  // filters as the map so the table always matches what's plotted --
+  // deselecting models narrows the rows, isolating one forecast age narrows
+  // the columns.
   const activeCapture = state.isolatedCapture ?? state.pinnedCapture;
 
   const seriesByModel = {};
   (HISTORY.points_by_key[key] || []).forEach(pt => {
-    if (activeModel && pt.model !== activeModel) return;
+    if (!state.selectedModels.has(pt.model)) return;
     (seriesByModel[pt.model] ??= []).push(pt);
   });
-  const models = Object.keys(seriesByModel).sort();
+  // Ordered to match the Model legend (MODEL_LEGEND_ORDER), not
+  // alphabetically -- so a model's row/column position reads the same here
+  // as its swatch position in the legend everywhere else in the viewer.
+  const models = MODEL_LEGEND_ORDER.filter(m => seriesByModel[m]);
   if (!models.length) return;
   const captures = activeCapture ? [activeCapture] : HISTORY.captures;
 
@@ -2450,11 +3107,12 @@ function renderAccuracyTable() {
 }
 
 function drawPoint(g, pt, hour, altitude, fillColor) {
-  // Recomputed from x_ft/y_ft via ftToPx() rather than trusting pt.px/pt.py
-  // (the server-baked pixel position) -- the baked value is only ever right
-  // when the pad hasn't been dragged (see padOffsetFt); recomputing here is
-  // what makes every rendered point actually move with the pad instead of
-  // just the hulls/buffer (which already went through ftToPx()).
+  // px/py computed here via ftToPx(), not carried on `pt` itself -- zoneFor()
+  // only produces raw x_ft/y_ft (see its own comment), and even before that
+  // change a baked pixel position would only ever be right when the pad
+  // hasn't been dragged (see padOffsetFt); computing it fresh here is what
+  // makes every rendered point actually move with the pad, same as the
+  // hulls/buffer (which already go through ftToPx() too).
   const [px, py] = ftToPx(pt.x_ft, pt.y_ft);
   const rp = Object.assign({}, pt, { altitude, hour, px, py });
   renderedPoints.push(rp);
@@ -2486,18 +3144,18 @@ function drawZone(zone, color, hour) {
   g.dataset.alt = zone.altitude;
   g.dataset.hour = hour;
 
-  const activeModel = state.isolatedModel ?? state.pinnedModel;
-  const points = zone.points.filter(pt => rateMatches(pt, activeRate()));
+  const points = zone.points.filter(pt => rateMatches(pt, activeRate()) && state.selectedModels.has(pt.model));
 
-  if (activeModel) {
-    // One model selected: the fast/slow points aren't a meaningful 2D spread
-    // any more (they're the *same* wind profile at two rates -- for single
-    // deploy they're exactly collinear with the pad, for dual deploy very
-    // close to it), so a filled hull would overstate the uncertainty. Draw
-    // the pad->near->far bearing as a line instead, colored by the zone
-    // (altitude or time, matching the non-isolated view), and only plot this
-    // model's own points.
-    const modelPoints = points.filter(p => p.model === activeModel);
+  if (state.selectedModels.size === 1) {
+    // Exactly one model selected (via single-click-to-only or double-click
+    // solo -- either path lands here the same way): the fast/slow points
+    // aren't a meaningful 2D spread any more (they're the *same* wind
+    // profile at two rates -- for single deploy they're exactly collinear
+    // with the pad, for dual deploy very close to it), so a filled hull
+    // would overstate the uncertainty. Draw the pad->near->far bearing as a
+    // line instead, colored by the zone (altitude or time, matching the
+    // multi-model view), and only plot this model's own points.
+    const modelPoints = points;
     if (modelPoints.length > 0) {
       const [sx, sy] = ftToPx(0, 0); // the pad -- offset-aware, not DATA.site_px directly
       const sorted = [...modelPoints].sort((a, b) => {
@@ -2521,12 +3179,12 @@ function drawZone(zone, color, hour) {
   }
 
   // Both hulls are recomputed from `points` -- the *currently visible*
-  // (rate-filtered) set -- rather than zone.points/zone.core_hull_px (every
-  // rate, baked server-side): isolating Fast or Slow should shrink the zone
-  // to what that rate alone actually covers, not just hide dots inside an
-  // unchanged both-rates outline. core_hull_px still seeds the initial
-  // render before any filter is touched (same points, same result), so this
-  // isn't a behavior change at the default "both rates" state.
+  // (rate-filtered) set: isolating Fast or Slow should shrink the zone to
+  // what that rate alone actually covers, not just hide dots inside an
+  // unchanged both-rates outline. `zone.points` itself is computed
+  // just-in-time by zoneFor() (see its own comment) from the published wind
+  // profile at whatever rate the rate editor currently has set -- there's
+  // no separate server-baked point set any more to fall back to.
   const buf = document.createElementNS(ns, 'polygon');
   buf.setAttribute('points', polyPoints(computeBufferHullPx(points, boostAngleDeg, zone.altitude)));
   buf.setAttribute('class', 'zone-buffer');
@@ -2568,7 +3226,17 @@ function buildPermalinkParams(includeDate) {
   if (deployExplicitlyChosen) p.set('deploy', state.deploy);
   if (boostAngleExplicitlyChosen) p.set('boost', boostAngleDeg);
   if (state.pinnedRate) p.set('rate', state.pinnedRate);
-  if (state.pinnedModel) p.set('model', state.pinnedModel);
+  // Only emit when it's a real subset -- same "don't pin defaults into the
+  // URL" convention as everywhere else here. buildModelLegend() always
+  // resolves the sentinel/re-validates before this can run (it runs on
+  // every render, and a permalink is only ever built from a live view), so
+  // state.selectedModels is a real Set by the time we get here.
+  if (state.selectedModels) {
+    const available = state.mode === 'byHistory' ? historyModelsAvailable() : modelsWithData();
+    if (state.selectedModels.size !== available.size) {
+      p.set('models', [...state.selectedModels].join(','));
+    }
+  }
   if (!tempShowApparent) p.set('temp', 'actual');
   if (cloudAltitudesExpanded) p.set('clouds', 'all');
   if (padOffsetFt.x !== 0 || padOffsetFt.y !== 0) {
@@ -2583,6 +3251,25 @@ function buildPermalinkParams(includeDate) {
   if (state.mode === 'byAltitude' && state.pinnedAlt !== null) p.set('alt', state.pinnedAlt);
   if ((state.mode === 'byTime' || state.mode === 'byHistory') && state.compareAlt !== null) p.set('compare', state.compareAlt);
   if (state.mode === 'byHistory' && state.pinnedCapture !== null) p.set('capture', state.pinnedCapture);
+  // Altitude range filter (see buildAltRange()) -- emitted only when actually
+  // narrowed from this site's full ladder, same "don't pin defaults into the
+  // URL" reasoning as hour/deploy/boost above. Real ft values, not list
+  // indices, so a link survives the master ladder changing (as it did
+  // 2026-08) and resolves sanely against a different site's shorter list.
+  if (state.altMin !== DATA.altitudes[0]) p.set('altmin', state.altMin);
+  if (state.altMax !== DATA.altitudes[DATA.altitudes.length - 1]) p.set('altmax', state.altMax);
+  // Direct-entry altitude (see syncAltCustomUI()) -- a real ft value, always
+  // worth sharing when set (there's no "default" for it to differ from,
+  // unlike altmin/altmax's ladder-derived defaults).
+  if (state.customAlt !== null) p.set('customalt', state.customAlt);
+  // Editable rates (see buildRateEditor()) -- emitted only when they differ
+  // from this dataset's own defaults, same convention as altmin/altmax
+  // above. fast-then-slow, drogue-then-main.
+  const dr = DATA.descent_params.default_rates_fps;
+  const r = state.rateFps;
+  if (r.fast.drogue !== dr.fast.drogue || r.fast.main !== dr.fast.main || r.slow.drogue !== dr.slow.drogue || r.slow.main !== dr.slow.main) {
+    p.set('rates', `${r.fast.drogue}/${r.fast.main},${r.slow.drogue}/${r.slow.main}`);
+  }
   return p;
 }
 
@@ -2591,10 +3278,62 @@ function syncUrl() {
   history.replaceState(null, '', `${location.pathname}?${buildPermalinkParams(dateExplicitlyChosen).toString()}`);
 }
 
+// BASE_VB seeds from the pull's own default-rate sweep (splash_zones.py's
+// build_viewer_data(), a disc-extent sweep at config.DUAL_DEPLOY_RATES_FPS/
+// SINGLE_DEPLOY_RATES_FPS) -- a user dialing in a slower rate client-side can
+// drift past that box. Grows (never shrinks -- a monotonic ceiling avoids the
+// zoom-out limit jittering as the selection changes) to whatever the
+// currently-drawn zones' buffer hulls actually reach, reassigned as a new
+// array each time (not mutated in place) so a fresh DATA.base_view_box on
+// the next dataset load starts clean. `zones` is whatever render() is about
+// to draw -- computing their buffer-hull px extent here duplicates a little
+// of drawZone()'s own work, but it's cheap (see simulateDrift()'s own
+// comment on performance headroom) and lets the background rect be sized
+// correctly *before* it's drawn, not after.
+function growBaseViewBox(zones) {
+  const allX = [], allY = [];
+  zones.forEach(zone => {
+    const points = zone.points.filter(pt => rateMatches(pt, activeRate()));
+    computeBufferHullPx(points, boostAngleDeg, zone.altitude).forEach(([x, y]) => { allX.push(x); allY.push(y); });
+  });
+  if (!allX.length) return;
+  const pad = 80;
+  const minX = Math.min(BASE_VB[0], Math.min(...allX) - pad);
+  const minY = Math.min(BASE_VB[1], Math.min(...allY) - pad);
+  const maxX = Math.max(BASE_VB[0] + BASE_VB[2], Math.max(...allX) + pad);
+  const maxY = Math.max(BASE_VB[1] + BASE_VB[3], Math.max(...allY) + pad);
+  const span = Math.max(maxX - minX, maxY - minY);
+  const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
+  BASE_VB = [cx - span / 2, cy - span / 2, span, span];
+  MAX_SPAN = Math.max(BASE_VB[2], BASE_VB[3]) * 1.4;
+}
+
 function render() {
   svg.innerHTML = '';
   renderedPoints = [];
   document.getElementById('accuracy-section').style.display = 'none'; // shown by renderAccuracyTable() in History mode only, when actuals exist
+
+  // Zones computed before the background rect below is sized/drawn -- see
+  // growBaseViewBox()'s own comment -- so a slower-than-default rate that
+  // drifts past the pull's own default-rate sweep still gets a correctly
+  // sized background instead of being clipped.
+  // state.customAlt (the "Specific altitude" field) overrides the whole
+  // ladder/range selection in both live-computed modes -- byHistory can't
+  // use it at all (points_history.json only has data at the discrete
+  // ladder's own altitudes, precomputed server-side; see syncAltCustomUI()'s
+  // comment) so that branch is untouched below.
+  let altitudeZones = [], timeZones = [];
+  if (state.mode === 'byAltitude') {
+    altitudeZones = state.customAlt !== null
+      ? [zoneFor(state.hour, state.deploy, state.customAlt)].filter(Boolean)
+      : zonesFor(state.hour, state.deploy).filter(z => altInRange(z.altitude));
+    growBaseViewBox(altitudeZones);
+  } else if (state.mode === 'byTime') {
+    const orderedHours = [...DATA.hours].sort((a, b) => b - a);
+    const alt = state.customAlt !== null ? state.customAlt : state.compareAlt;
+    timeZones = orderedHours.map(hour => ({ hour, zone: zoneFor(hour, state.deploy, alt) })).filter(hz => hz.zone);
+    growBaseViewBox(timeZones.map(hz => hz.zone));
+  }
 
   // background covering the full pannable extent, then two geo-registered image
   // layers on top: a coarser wide-area satellite image for context when zoomed
@@ -2632,11 +3371,12 @@ function render() {
   svg.appendChild(image);
 
   if (state.mode === 'byAltitude') {
-    // one time of day, all 5 altitudes, colored by altitude
-    const key = `${state.hour}_${state.deploy}`;
-    const zones = DATA.data[key] || [];
-    const ordered = [...zones].sort((a, b) => b.altitude - a.altitude);
-    ordered.forEach(zone => drawZone(zone, ALT_COLORS_HEX[zone.altitude], state.hour));
+    // one time of day, every in-range altitude, colored by altitude.
+    // ALT_COLORS_HEX is a ramp built from DATA.altitudes (initFromData()) --
+    // a custom altitude won't be a key in it, so falls back to the user's
+    // own chosen base zone color directly rather than an undefined fill.
+    const ordered = [...altitudeZones].sort((a, b) => b.altitude - a.altitude);
+    ordered.forEach(zone => drawZone(zone, ALT_COLORS_HEX[zone.altitude] || zoneBaseColor, state.hour));
   } else if (state.mode === 'byHistory') {
     renderHistory();
     renderAccuracyTable();
@@ -2645,12 +3385,7 @@ function render() {
     // altitude, all 4 times of day at once, colored by time instead.
     // Drawn latest-time-first so earlier times layer on top, matching the
     // by-altitude view's "smallest/most-relevant on top" convention.
-    const orderedHours = [...DATA.hours].sort((a, b) => b - a);
-    orderedHours.forEach(hour => {
-      const key = `${hour}_${state.deploy}`;
-      const zone = (DATA.data[key] || []).find(z => z.altitude === state.compareAlt);
-      if (zone) drawZone(zone, TIME_COLORS_HEX[hour], hour);
-    });
+    timeZones.forEach(({ hour, zone }) => drawZone(zone, TIME_COLORS_HEX[hour], hour));
   }
 
   drawPadMarker();
@@ -2766,12 +3501,26 @@ function initFromData() {
   }
 
   buildToggle('mode-toggle', ['byAltitude', 'byTime', 'byHistory'], MODE_LABELS, 'mode', () => setMode(state.mode));
-  buildToggle('hour-toggle', DATA.hours, HOUR_LABELS, 'hour', () => { hourExplicitlyChosen = true; });
-  buildToggle('deploy-toggle', DATA.deploys, DEPLOY_LABELS, 'deploy', () => { deployExplicitlyChosen = true; });
+  buildToggle('hour-toggle', DATA.hours, HOUR_LABELS, 'hour', () => { hourExplicitlyChosen = true; syncAltCustomUI(); });
+  buildToggle('deploy-toggle', DATA.deploys, DEPLOY_LABELS, 'deploy', () => {
+    deployExplicitlyChosen = true;
+    // Which altitudes have a real zone changes with deploy (single-deploy
+    // drops above SINGLE_DEPLOY_MAX_ALT_FT pipeline-side) -- refresh both the
+    // row list's unavailable rows and the slider's thumb positions.
+    buildAltList();
+    buildAltRange();
+    // Single deploy's phase construction (zoneFor()) never reads the drogue
+    // rate at all -- disable those inputs rather than leave them editable
+    // and silently ignored.
+    buildRateEditor();
+    syncAltCustomUI(); // single/dual changes whether the custom altitude has a zone at all
+  });
   buildTimeLegend();
   buildAltList();
+  buildAltRange();
   buildModelLegend();
-  buildRateLegend();
+  buildRateEditor();
+  syncAltCustomUI(); // reflects a URL-loaded ?customalt= on first render
   banDismissed = false; // a dismiss on a previous site/date shouldn't suppress a genuinely new ban
   renderCloudPanel();
   renderRainTimeline();
@@ -2797,6 +3546,18 @@ async function loadDataset(entry) {
   subtitleEl.textContent = 'Loading…';
   const resp = await fetch(withVersion(entry.data_path));
   DATA = await resp.json();
+  // wind_profiles/descent_params landed 2026-08, replacing precomputed
+  // per-rate points -- everything downstream (freshState()'s rateFps seed,
+  // zoneFor(), the rate editor) assumes they exist. Rather than scatter
+  // defensive checks through all of that, bail out here before any of it
+  // runs: an old-schema file predates client-side rate control and has no
+  // zones to show at all, so say so plainly instead of leaving the
+  // previous date's map on screen or crashing partway through setup.
+  if (!DATA.wind_profiles) {
+    svg.innerHTML = '';
+    subtitleEl.innerHTML = `Target ${entry.target_date} &middot; <strong>this date predates client-side rate control -- re-run the pipeline to see its splash zones</strong>`;
+    return;
+  }
   // history_path is null for a target processed before this feature existed
   // -- HISTORY just stays null and the History view mode shows its own
   // "nothing published yet" state (see renderHistory()) instead of erroring.

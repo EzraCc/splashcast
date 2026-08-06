@@ -460,7 +460,95 @@
   .pad-marker.moved circle, .pad-marker.moved line { stroke: #e0b400; }
   .map-wrap.dragging-pad, .map-wrap.dragging-pad .pad-marker { cursor: grabbing; }
 
-  .alt-list { display: flex; flex-direction: column; gap: 4px; }
+  /* Direct-entry alternative to the ladder/range below -- now that the
+     drift sim runs client-side (zoneFor() takes any altitude, not just
+     DATA.altitudes), a flyer with a real predicted apogee can type it
+     exactly instead of picking the nearest rung. No checkbox -- focusing
+     the input activates it directly (see app.js's activateAltCustom()),
+     since a checkbox-then-type flow was two clicks for one intent. Active
+     dims the range row below (see .alt-range-row.alt-custom-dimmed) rather
+     than hiding it, matching this app's usual "gray out, don't remove"
+     pattern for a control that's momentarily not the active one. */
+  /* Label on its own line, input row below it -- was one wrapping flex row,
+     but the label reads better with the box always underneath it instead
+     of sometimes trailing on the same line depending on sidebar width. */
+  .alt-custom-control { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; font-size: 0.8rem; color: var(--text-secondary); }
+  .alt-custom-label { cursor: pointer; user-select: none; }
+  .alt-custom-input-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .alt-custom-control input[type="number"] {
+    width: 90px; box-sizing: border-box; padding: 3px 6px;
+    border: 1px solid var(--border); border-radius: 5px;
+    background: var(--surface-1); color: var(--text-primary); font-size: 0.8rem;
+  }
+  .alt-custom-status { font-size: 0.72rem; color: var(--hot-text); }
+  /* Whole control, in History mode -- same treatment .toggle-group.disabled
+     already gives the hour-toggle in byTime mode. */
+  .alt-custom-control.disabled { opacity: 0.4; pointer-events: none; }
+
+  .alt-range-readout {
+    display: flex; align-items: center; justify-content: space-between; gap: 6px;
+    margin-bottom: 6px; font-size: 0.78rem; color: var(--text-secondary);
+  }
+  .alt-range-row { display: flex; gap: 10px; align-items: flex-start; }
+  .alt-range-row.alt-custom-dimmed { opacity: 0.35; pointer-events: none; }
+  /* A vertical fader, not a pair of <select>s -- narrow dropdowns read badly
+     in this sidebar's width, and the altitude set is still a fixed discrete
+     list either way (each drag position snaps to one of DATA.altitudes),
+     never free entry. Height and thumb positions are both set inline by
+     app.js's buildAltRange() from #alt-list's own real row positions
+     (offsetTop/offsetHeight of each rendered row), not a row-height formula
+     or flex-stretch against the list -- both were tried first: a formula
+     put each thumb at a proportional guess rather than its row's actual
+     center, and flex-stretch created a feedback loop during a drag
+     (narrowing the range used to remove rows, shrinking the stretched
+     slider mid-gesture and throwing the thumb past the cursor). Rows are
+     never removed now (buildAltList() always renders the full ladder,
+     graying out whatever's outside the range), which is what makes
+     measuring them mid-drag safe -- the list's height no longer changes as
+     a result of the drag itself. Deliberately no min-height floor: a CSS
+     floor taller than a short site's real list height (e.g. gunter's 3-6
+     rows) would win over the JS-computed inline height, decoupling the
+     slider from the list it's supposed to match and misaligning every
+     thumb by the difference -- confirmed exactly this way when a 120px
+     floor was tried against gunter's 104px-tall list (~2-16px off per
+     thumb). Row spacing stays comfortable to grab at any real site's count
+     without one.
+  */
+  .alt-range-slider {
+    position: relative; width: 20px; flex-shrink: 0;
+    touch-action: none;
+  }
+  .alt-range-track {
+    position: absolute; left: 50%; top: 0; bottom: 0; width: 4px;
+    transform: translateX(-50%); background: var(--border); border-radius: 2px;
+  }
+  .alt-range-fill {
+    position: absolute; left: 50%; width: 4px; transform: translateX(-50%);
+    background: var(--accent); border-radius: 2px; opacity: 0.55;
+  }
+  .alt-range-thumb {
+    position: absolute; left: 50%; width: 16px; height: 16px;
+    transform: translate(-50%, -50%);
+    background: var(--surface-1); border: 2px solid var(--accent); border-radius: 50%;
+    cursor: grab;
+  }
+  .alt-range-thumb:hover { background: var(--surface-2); }
+  .alt-range-thumb:active { cursor: grabbing; }
+  .alt-range-thumb:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  /* Deliberately unbounded/no internal scroll -- the slider beside it sizes
+     itself to match this element's real height exactly (buildAltRange()),
+     and an internal scroll here would let the two drift out of sync (the
+     slider isn't scrolled in tandem, so a row scrolled out of .alt-list's
+     view would no longer sit under its own thumb position). A future
+     site with a much denser ladder could make this sidebar tall enough to
+     push the Model/Rate legends down -- not an issue at any currently
+     published site's altitude count; revisit if it becomes one. */
+  /* position:relative so its rows' offsetTop (read by app.js's
+     altRowCentersPx()) resolves relative to this element itself -- without
+     it, a non-positioned element's offsetTop climbs to whatever positioned
+     ancestor is further up the page, giving row centers hundreds of px too
+     large and badly misaligning the slider beside it. */
+  .alt-list { position: relative; flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
   .alt-list-title {
     font-size: 0.78rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.03em;
     margin-bottom: 4px; display: flex; align-items: center; gap: 5px;
@@ -496,17 +584,57 @@
     font-size: 0.85rem; color: var(--text-secondary); cursor: pointer;
   }
   .alt-row:not(.static):hover, .alt-row.pinned { background: var(--surface-2); border-color: var(--border); color: var(--text-primary); }
-  /* Model/Rate legends are reference-only (no click/hover behavior) -- suppress
-     the hover highlight so they don't look like broken interactive controls. */
+  /* Accuracy-table legend rows (the "final projection"/"real flight" swatch
+     keys) are reference-only, no click/hover behavior -- suppress the hover
+     highlight so they don't look like broken interactive controls. */
   .alt-row.static { cursor: default; }
   /* A model with no data for the current date/lead time (e.g. HRRR beyond its
      forecast horizon) -- same idea as .static (no hover/click affordance) plus
      dimmed so it reads as "unavailable" rather than "just not hovered yet". */
   .alt-row.unavailable { cursor: default; opacity: 0.5; }
   .alt-row.unavailable:hover { background: none; border-color: transparent; color: var(--text-secondary); }
+  /* Model legend only: a checkbox-style toggle that's currently off. Unlike
+     .unavailable, still fully clickable (re-enabling it is one click away) --
+     just visually receded so selected models read as "in the picture". */
+  .alt-row.deselected { opacity: 0.45; }
   .alt-swatch { width: 16px; height: 16px; border-radius: 4px; flex-shrink: 0; }
   .alt-hint { font-size: 0.75rem; color: var(--text-muted); margin-top: 6px; line-height: 1.5; display: none; }
   .alt-hint.open { display: block; }
+
+  /* Fast/Slow drogue+main fps, editable. Grid: blank header cell, Drogue,
+     Main; one row per preset -- the label cell (.rate-edit-label below)
+     carries hover-isolate/click-pin, the two <input> cells are separately
+     interactive as plain number fields; being sibling grid cells rather
+     than nested elements keeps the two kinds of interaction from
+     conflicting (a standalone #rate-legend used to own the isolate/pin
+     half separately -- folded in here 2026-08-05, see buildRateEditor()'s
+     own comment, since Fast/Slow didn't need to appear twice). */
+  .rate-edit { display: grid; grid-template-columns: auto 1fr 1fr; gap: 4px 8px; align-items: center; margin-top: 6px; font-size: 0.78rem; color: var(--text-secondary); }
+  .rate-edit-head { color: var(--text-muted); font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.03em; }
+  /* Hover-isolate/click-pin, same affordance .alt-row rows use -- this cell
+     absorbed that behavior from the old standalone #rate-legend (removed
+     2026-08-05, see buildRateEditor()'s own comment). */
+  .rate-edit-label {
+    display: flex; align-items: center; gap: 6px; cursor: pointer;
+    padding: 2px 4px; margin: -2px -4px; border-radius: 5px;
+  }
+  .rate-edit-label:hover, .rate-edit-label.pinned { background: var(--surface-2); color: var(--text-primary); }
+  .rate-edit input[type="number"] {
+    width: 100%; box-sizing: border-box; padding: 2px 4px;
+    border: 1px solid var(--border); border-radius: 4px;
+    background: var(--surface-1); color: var(--text-primary); font-size: 0.78rem;
+  }
+  /* Drogue on Single deploy -- zoneFor() never reads it for that deploy, so
+     the input is disabled (see buildRateEditor()), dimmed here to match. */
+  .rate-edit input[type="number"]:disabled { opacity: 0.45; cursor: not-allowed; }
+  /* Same amber --hot-* tokens as the cloud-panel "models agree it's cloudy"
+     flag (see that block's own comment) -- this app's one established
+     warning color, reused here rather than inventing another. */
+  .rate-warning {
+    margin-top: 6px; padding: 6px 8px; border-radius: 6px;
+    background: var(--hot-bg); border: 1px solid var(--hot-border); color: var(--hot-text);
+    font-size: 0.75rem; line-height: 1.4;
+  }
 
   .buffer-note { display: flex; align-items: center; gap: 10px; font-size: 0.8rem; color: var(--text-secondary); max-width: 620px; }
   .buffer-swatch { width: 20px; height: 14px; border-radius: 3px; flex-shrink: 0; background: #4a3aa7; opacity: 0.30; border: 1px solid #4a3aa7; }

@@ -2,10 +2,21 @@
 
 Two stages (see config.py for the shared constants):
   1. compute_splash_points(): wind capture parquet -> per-model/hour/altitude/
-     deploy/rate drift points (apogee-to-ground descent integration).
-  2. build_zone_data(): drift points -> convex-hull zones in map-pixel space
-     (core hull + boost-angle-buffered hull), the exact JSON schema the
-     viewer's render()/drawZone() expect.
+     deploy/rate drift points (apogee-to-ground descent integration). Still
+     runs on every pull, but (as of 2026-08) no longer feeds the live zone
+     JSON directly -- only points_history.json/History mode and
+     compare_to_pipeline()'s hull check consume its output now.
+  2. build_viewer_data(): wind profiles (build_profile_single(), the same
+     per-model/hour data compute_splash_points() itself builds internally)
+     + the descent-sim constants (config.py's rate/altitude/step values) +
+     map-projection scaling -- the small JSON the viewer computes its own
+     zones from client-side (see app.js's simulateDrift(), a direct port of
+     this file's simulate()). The drift integration for whatever
+     hour/deploy/rate/altitude is currently selected happens in the
+     browser now, not here -- this used to publish every combination
+     pre-simulated (thousands of points per file); publishing the wind
+     profile instead let users edit the fast/slow rates live and cut
+     published file size by roughly 80-90%.
 
 CLI: `python splash_zones.py <target_date> [--site site_id]` finds that
 target's latest capture under pipeline/data/<site_id>/live/, runs both
@@ -98,9 +109,9 @@ def descent_rate_at(alt_agl_ft: float, ground_rate_ftps: float, site_elev_ft: fl
 def build_profile_single(df: pd.DataFrame, hour_dt: datetime, model_key: str, site_elev_ft: float, levels_mb: list[int]) -> list[tuple[float, float, float]]:
     """(agl_ft, speed_mph, dir_deg) profile for one model/hour, sorted by altitude.
 
-    Surface 10m wind anchors the bottom; each of `levels_mb` (this site's own
-    pressure-level bracket -- config.levels_mb_for_site(), sized to its
-    waiver) except 1000mb (its standard-atm height is unreliable this close
+    Surface 10m wind anchors the bottom; each of `levels_mb` (every level the
+    models offer up to this site's own ceiling -- config.levels_mb_for_site())
+    except 1000mb (its standard-atm height is unreliable this close
     to the surface -- surface wind covers that end of the profile instead)
     contributes one more point, converted from pressure level to AGL feet via
     `site_elev_ft` (this site's own ground elevation MSL --
@@ -189,13 +200,18 @@ def compute_splash_points(df: pd.DataFrame, target_date: date, site_id: str = "h
     Altitudes are per-site (config.altitudes_for_site()), not one fixed list
     for every site -- a 10,000ft-waiver site and a 50,000ft-waiver site need
     very different apogees simulated. Pressure levels sampled for the wind
-    profile are likewise per-site (config.levels_mb_for_site()), sized to
-    reach each site's own waiver. Single-deploy points are skipped above
-    config.SINGLE_DEPLOY_MAX_ALT_FT -- not a realistic recovery configuration
-    at higher altitude (see that constant's own comment in config.py).
+    profile are likewise per-site (config.levels_mb_for_site()), but sized to
+    reach the site's ceiling directly rather than derived from the altitude
+    list above -- the two are deliberately decoupled (2026-08) so the wind
+    profile itself uses the models' full real vertical resolution regardless
+    of how coarse or fine the user-facing apogee list is. Single-deploy
+    points are skipped above config.SINGLE_DEPLOY_MAX_ALT_FT -- not a
+    realistic recovery configuration at higher altitude (see that constant's
+    own comment in config.py).
     """
     site_elev_ft = config.elev_ft_for_site(site_id)
     levels_mb = config.levels_mb_for_site(site_id)
+    altitudes = config.altitudes_for_site(site_id)
     all_points = []
     for h in config.SPLASH_HOURS_LOCAL:
         hdt = datetime.combine(target_date, dtime(h, 0))
@@ -203,7 +219,7 @@ def compute_splash_points(df: pd.DataFrame, target_date: date, site_id: str = "h
             profile = build_profile_single(df, hdt, m, site_elev_ft, levels_mb)
             if len(profile) < 2:
                 continue
-            for alt in config.altitudes_for_site(site_id):
+            for alt in altitudes:
                 if alt <= config.SINGLE_DEPLOY_MAX_ALT_FT:
                     for rate_name, rate in config.SINGLE_DEPLOY_RATES_FPS.items():
                         x, y = simulate(profile, float(alt), [(rate, float(alt), 0)], site_elev_ft)
@@ -258,6 +274,7 @@ def compute_actual_points(site_id: str, target_date: date) -> dict[str, dict]:
         return {}
     raw = pd.read_parquet(raw_path)
     site_elev_ft = config.elev_ft_for_site(site_id)
+    altitudes = config.altitudes_for_site(site_id)
     actuals = {}
     for h in config.SPLASH_HOURS_LOCAL:
         # raw["valid_time"] is UTC-naive (straight from the GRIB2 files via
@@ -274,7 +291,7 @@ def compute_actual_points(site_id: str, target_date: date) -> dict[str, dict]:
         profile = build_actual_profile(hour_df, site_elev_ft)
         if len(profile) < 2:
             continue
-        for alt in config.altitudes_for_site(site_id):
+        for alt in altitudes:
             if alt <= config.SINGLE_DEPLOY_MAX_ALT_FT:
                 for rate_name, rate in config.SINGLE_DEPLOY_RATES_FPS.items():
                     x, y = simulate(profile, float(alt), [(rate, float(alt), 0)], site_elev_ft)
@@ -297,17 +314,13 @@ def hull_of(points_xy: list[tuple[float, float]]) -> list[list[float]]:
         return arr.tolist()
 
 
-def buffered_points(points_xy: list[tuple[float, float]], radius_ft: float, n: int = 12) -> list[tuple[float, float]]:
-    out = []
-    for x, y in points_xy:
-        for i in range(n):
-            theta = 2 * math.pi * i / n
-            out.append((x + radius_ft * math.cos(theta), y + radius_ft * math.sin(theta)))
-    return out
-
-
-def build_zone_data(pts: pd.DataFrame, site_meta: dict, site_id: str) -> dict:
-    """Drift points -> the exact JSON schema index.html's DATA expects."""
+def build_viewer_data(df: pd.DataFrame, pts: pd.DataFrame, site_meta: dict, site_id: str, target_date: date) -> dict:
+    """Wind profiles + descent-sim constants + map-projection scaling -- the
+    exact JSON schema index.html's DATA expects. `pts` (compute_splash_points()'s
+    output) is used only to size base_view_box (see below) -- the zones
+    themselves are no longer precomputed here, they're built client-side by
+    app.js's simulateDrift() from wind_profiles below, at whatever rate the
+    viewer's rate editor currently has selected."""
     detail = site_meta["detail"]
     wide = site_meta["wide"]
     img_w, img_h = detail["image_size_px"]
@@ -336,9 +349,33 @@ def build_zone_data(pts: pd.DataFrame, site_meta: dict, site_id: str) -> dict:
     wide_view_box = [round(wx0, 1), round(wy0, 1), round(wx1 - wx0, 1), round(wy1 - wy0, 1)]
 
     boost_angle_rad = math.radians(config.BOOST_ANGLE_OFF_VERTICAL_DEG)
-    hours = sorted(pts["hour"].unique())
-    deploys = sorted(pts["deploy"].unique())
-    altitudes = sorted(pts["altitude"].unique())
+    site_elev_ft = config.elev_ft_for_site(site_id)
+    levels_mb = config.levels_mb_for_site(site_id)
+    altitudes = config.altitudes_for_site(site_id)
+    # Unconditionally both -- the ladder's minimum (1,000ft) is always
+    # <= SINGLE_DEPLOY_MAX_ALT_FT, so single deploy always has at least one
+    # real altitude regardless of site. Previously derived from pts["deploy"]
+    # (compute_splash_points()'s own output), now a fixed literal since that
+    # grid no longer feeds this function.
+    deploys = ["dual", "single"]
+
+    # Wind profile per hour/model -- the same build_profile_single() call
+    # compute_splash_points() makes internally, just not fed into a drift
+    # integration here. This is the entire per-hour/per-model dataset the
+    # client needs to run simulateDrift() (app.js) for itself; everything
+    # else in this JSON is projection scaling and sim constants.
+    wind_profiles = {}
+    for h in config.SPLASH_HOURS_LOCAL:
+        hdt = datetime.combine(target_date, dtime(h, 0))
+        hour_profiles = {}
+        for m in config.LIVE_PROFILE_MODELS:
+            profile = build_profile_single(df, hdt, m, site_elev_ft, levels_mb)
+            if len(profile) < 2:
+                continue
+            hour_profiles[m] = [[round(a), round(s, 2), round(d, 2)] for a, s, d in profile]
+        if hour_profiles:
+            wind_profiles[h] = hour_profiles
+    hours = sorted(wind_profiles.keys())
 
     # ft_to_px() above is linear in x_ft/y_ft (no rotation/shear -- just an
     # equirectangular-ish local scale), so it reduces to px = site_px.x +
@@ -349,7 +386,10 @@ def build_zone_data(pts: pd.DataFrame, site_meta: dict, site_id: str) -> dict:
     # client-side: the buffer polygon only depends on raw points + this
     # scale, not on anything else server-side, so the viewer can recompute
     # it live from a slider instead of the angle being fixed at whatever
-    # this pull baked in.
+    # this pull baked in. As of 2026-08 this is load-bearing for the whole
+    # zone, not just the buffer -- the client derives every point's px/py
+    # itself (simulateDrift() -> ftToPx()) since raw ft coordinates are no
+    # longer pre-projected server-side at all.
     px_per_ft_x = (ft_to_m / m_per_deg_lon) / (lon_e - lon_w) * img_w
     px_per_ft_y = (ft_to_m / m_per_deg_lat) / (lat_n - lat_s) * img_h
 
@@ -369,47 +409,43 @@ def build_zone_data(pts: pd.DataFrame, site_meta: dict, site_id: str) -> dict:
         # against whatever the CURRENT site_lat/site_lon is at load time,
         # so an old shared link still points at the same real ground spot.
         "site_lat": site_lat, "site_lon": site_lon,
-        "data": {},
+        "wind_profiles": wind_profiles,
+        # Everything app.js's simulateDrift()/zoneFor() need to reproduce
+        # compute_splash_points()'s own phase construction and integration
+        # exactly, client-side, at whatever rate the viewer's rate editor
+        # currently has selected -- see config.py's default_rates_fps_payload()
+        # and RATE_INPUT_LIMITS_FPS.
+        "descent_params": {
+            "site_elev_ft": round(site_elev_ft, 1),
+            "main_deploy_altitude_ft": config.MAIN_DEPLOY_ALTITUDE_FT,
+            "single_deploy_max_alt_ft": config.SINGLE_DEPLOY_MAX_ALT_FT,
+            "descent_step_ft": config.DESCENT_STEP_FT,
+            "default_rates_fps": config.default_rates_fps_payload(),
+            "rate_limits_fps": {k: list(v) for k, v in config.RATE_INPUT_LIMITS_FPS.items()},
+        },
     }
 
+    # base_view_box sized from pts (still computed in run() regardless, to
+    # feed points_history.json) WITHOUT building a hull per altitude: a
+    # boost-angle buffer is a uniform-radius disc around each point, so its
+    # axis-aligned extent is exactly the extent of that point's four
+    # cardinal offsets (x+-radius,y) and (x,y+-radius) -- same result as
+    # hull_of(buffered_points(...)) gave before, without the 12-point ring
+    # or the hull computation. This box reflects the DEFAULT rates only
+    # (pts was computed at config.DUAL_DEPLOY_RATES_FPS/SINGLE_DEPLOY_RATES_FPS);
+    # a user dialing in a slower rate client-side can drift past it -- the
+    # viewer grows (never shrinks) the box live from what it actually draws
+    # (see app.js's growBaseViewBox()), so this is a starting point, not a
+    # hard bound.
     all_x, all_y = [0, img_w], [0, img_h]
-
-    for h in hours:
-        for dep in deploys:
-            key = f"{h}_{dep}"
-            zones = []
-            for alt in altitudes:
-                sub = pts[(pts["hour"] == h) & (pts["deploy"] == dep) & (pts["altitude"] == alt)]
-                if sub.empty:
-                    continue
-                raw_xy = list(zip(sub["x_ft"], sub["y_ft"]))
-                core_hull_px = [list(ft_to_px(x, y)) for x, y in hull_of(raw_xy)]
-
-                radius_ft = alt * math.tan(boost_angle_rad)
-                buffer_hull_px = [list(ft_to_px(x, y)) for x, y in hull_of(buffered_points(raw_xy, radius_ft))]
-                for x, y in buffer_hull_px:
-                    all_x.append(x)
-                    all_y.append(y)
-
-                points_out = []
-                for _, row in sub.iterrows():
-                    px, py = ft_to_px(row["x_ft"], row["y_ft"])
-                    all_x.append(px)
-                    all_y.append(py)
-                    points_out.append({
-                        "model": row["model"], "rate": row["rate"],
-                        "x_ft": round(row["x_ft"], 1), "y_ft": round(row["y_ft"], 1),
-                        "px": round(px, 1), "py": round(py, 1),
-                    })
-
-                zones.append({
-                    "altitude": int(alt),
-                    "core_hull_px": [[round(x, 1), round(y, 1)] for x, y in core_hull_px],
-                    "buffer_hull_px": [[round(x, 1), round(y, 1)] for x, y in buffer_hull_px],
-                    "buffer_radius_ft": round(radius_ft, 1),
-                    "points": points_out,
-                })
-            output["data"][key] = zones
+    for alt, sub in pts.groupby("altitude"):
+        radius_ft = alt * math.tan(boost_angle_rad)
+        for x_ft, y_ft in zip(sub["x_ft"], sub["y_ft"]):
+            for bx, by in ((x_ft - radius_ft, y_ft), (x_ft + radius_ft, y_ft),
+                           (x_ft, y_ft - radius_ft), (x_ft, y_ft + radius_ft)):
+                px, py = ft_to_px(bx, by)
+                all_x.append(px)
+                all_y.append(py)
 
     pad = 80
     min_x, max_x = min(all_x) - pad, max(all_x) + pad
@@ -630,15 +666,27 @@ def build_points_history(target_dir: Path, target_date: date, site_id: str = "hu
     pull a whole capture-to-capture series with one lookup instead of one
     fetch per day."""
     captures = _all_captures(target_dir)
+    current_altitudes = set(config.altitudes_for_site(site_id))
+    current_rates = set(config.SINGLE_DEPLOY_RATES_FPS) | set(config.DUAL_DEPLOY_RATES_FPS)
     frames = []
     for capture_date in captures:
         points_path = target_dir / f"splash_points_captured_{capture_date}.parquet"
-        if not points_path.exists():
+        pts = pd.read_parquet(points_path) if points_path.exists() else None
+        # A stored points parquet is keyed by whatever altitude ladder/rate
+        # names were current when it was written -- recompute when either no
+        # longer matches config, or points_history.json ends up ragged across
+        # captures (History mode would show a single-point series for any
+        # altitude only the newest capture has, or silently drop a rate whose
+        # name changed -- exactly what happened when SINGLE_DEPLOY_RATES_FPS's
+        # keys were renamed "10fps"/"20fps" -> "slow"/"fast", 2026-08). Every
+        # site's old level bracket already reached its waiver in MSL terms, so
+        # an altitude-ladder change never extrapolates past the stored wind
+        # profile -- only coarseness changes, which build_profile_single()/
+        # interp() already handle.
+        if pts is None or set(pts["altitude"].unique()) != current_altitudes or not set(pts["rate"].unique()) <= current_rates:
             df = pd.read_parquet(target_dir / f"captured_{capture_date}.parquet")
             pts = compute_splash_points(df, target_date, site_id)
             pts.to_parquet(points_path)
-        else:
-            pts = pd.read_parquet(points_path)
         pts = pts.copy()
         pts["capture_date"] = str(capture_date)
         frames.append(pts)
@@ -731,7 +779,7 @@ def run(target_date: date, site_id: str = "hutto") -> None:
 
     with open(config.SITE_DIR / "maps" / site_id / "site.json") as f:
         site_meta = json.load(f)
-    zone_data = build_zone_data(pts, site_meta, site_id)
+    zone_data = build_viewer_data(df, pts, site_meta, site_id, target_date)
 
     zone_data["clouds"] = build_cloud_data(df, target_date)
     zone_data["cloud_relevant_layers"] = config.CLOUD_LAYERS_BY_SITE[site_id]
@@ -782,9 +830,11 @@ def run(target_date: date, site_id: str = "hutto") -> None:
     manifest_path = regenerate_manifest(site_id, published_live_dir.parent)
     fetch_site_maps.refresh_regional_sites_metadata()
 
+    n_profiles = sum(len(models) for models in zone_data["wind_profiles"].values())
     print(f"[{site_id}] target {target_date} (capture {capture_date}, T-{(target_date - capture_date).days}): "
           f"{len(pts)} points -> pipeline/{points_path.relative_to(Path(config.DATA_DIR).parent)}, "
-          f"{len(zone_data['data'])} zone groups -> site/{zone_path.relative_to(config.SITE_DIR)}")
+          f"{n_profiles} wind profiles across {len(zone_data['wind_profiles'])} hours -> "
+          f"site/{zone_path.relative_to(config.SITE_DIR)}")
     print(f"history: {len(history['captures'])} capture(s) ({', '.join(history['captures'])}) -> "
           f"site/{history_path.relative_to(config.SITE_DIR)}")
 
