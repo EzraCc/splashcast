@@ -668,8 +668,13 @@ def build_points_history(target_dir: Path, target_date: date, site_id: str = "hu
     captures = _all_captures(target_dir)
     current_altitudes = set(config.altitudes_for_site(site_id))
     current_rates = set(config.SINGLE_DEPLOY_RATES_FPS) | set(config.DUAL_DEPLOY_RATES_FPS)
+    site_elev_ft = config.elev_ft_for_site(site_id)
+    levels_mb = config.levels_mb_for_site(site_id)
     frames = []
+    wind_profiles_by_capture: dict[str, dict] = {}
     for capture_date in captures:
+        df = pd.read_parquet(target_dir / f"captured_{capture_date}.parquet")
+
         points_path = target_dir / f"splash_points_captured_{capture_date}.parquet"
         pts = pd.read_parquet(points_path) if points_path.exists() else None
         # A stored points parquet is keyed by whatever altitude ladder/rate
@@ -684,12 +689,32 @@ def build_points_history(target_dir: Path, target_date: date, site_id: str = "hu
         # profile -- only coarseness changes, which build_profile_single()/
         # interp() already handle.
         if pts is None or set(pts["altitude"].unique()) != current_altitudes or not set(pts["rate"].unique()) <= current_rates:
-            df = pd.read_parquet(target_dir / f"captured_{capture_date}.parquet")
             pts = compute_splash_points(df, target_date, site_id)
             pts.to_parquet(points_path)
         pts = pts.copy()
         pts["capture_date"] = str(capture_date)
         frames.append(pts)
+
+        # This capture's own wind profile, same shape build_viewer_data()
+        # publishes for the live/latest capture -- lets the viewer simulate
+        # a History point at any altitude client-side (the "Specific
+        # altitude" override), not just the discrete ladder
+        # compute_splash_points() precomputed into points_by_key above.
+        # Cheap to rebuild every run: captured_*.parquet is tens of KB, and
+        # the payload win from the client-side migration was in the
+        # *precomputed point grid*, not the raw profile -- so there's no
+        # separate staleness check to maintain here, unlike pts above.
+        hour_profiles: dict[str, dict] = {}
+        for h in config.SPLASH_HOURS_LOCAL:
+            hdt = datetime.combine(target_date, dtime(h, 0))
+            model_profiles = {}
+            for m in config.LIVE_PROFILE_MODELS:
+                profile = build_profile_single(df, hdt, m, site_elev_ft, levels_mb)
+                if len(profile) >= 2:
+                    model_profiles[m] = profile
+            if model_profiles:
+                hour_profiles[str(h)] = model_profiles
+        wind_profiles_by_capture[str(capture_date)] = hour_profiles
 
     points_by_key: dict[str, list[dict]] = {}
     if frames:
@@ -706,11 +731,15 @@ def build_points_history(target_dir: Path, target_date: date, site_id: str = "hu
         "target_date": str(target_date),
         "captures": [str(c) for c in captures],
         "points_by_key": points_by_key,
+        "wind_profiles_by_capture": wind_profiles_by_capture,
         # HRRR-analysis-based best-guess (compute_actual_points()) if
         # pull_historical.py has backfilled this site/date -- {} otherwise
         # (most target dates won't have it yet). Real post-flight GPS
         # (spec.md Phase 3, not built) would replace this under the same key
-        # scheme once that lands, not need a second one.
+        # scheme once that lands, not need a second one. Only precomputed at
+        # the discrete ladder's own altitudes (same as points_by_key) -- a
+        # "Specific altitude" override has no actual/star marker to show,
+        # same tri-state UX users already see on dates with no actuals at all.
         "actuals": compute_actual_points(site_id, target_date),
     }
 

@@ -481,9 +481,6 @@
     background: var(--surface-1); color: var(--text-primary); font-size: 0.8rem;
   }
   .alt-custom-status { font-size: 0.72rem; color: var(--hot-text); }
-  /* Whole control, in History mode -- same treatment .toggle-group.disabled
-     already gives the hour-toggle in byTime mode. */
-  .alt-custom-control.disabled { opacity: 0.4; pointer-events: none; }
 
   .alt-range-readout {
     display: flex; align-items: center; justify-content: space-between; gap: 6px;

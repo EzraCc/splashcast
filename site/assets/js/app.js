@@ -443,18 +443,12 @@ function freshState() {
 // (which would stomp the pinnedAlt/pinnedRate a permalink just supplied).
 function applyModeUI(mode) {
   document.getElementById('hour-toggle-group').classList.toggle('disabled', mode === 'byTime');
-  // History reads points_history.json, precomputed server-side at only the
-  // discrete ladder's own altitudes -- state.customAlt has nothing to show
-  // there (render()'s byHistory branch never reads it). Gated visually
-  // rather than clearing the value, so switching to History to check
-  // something and back doesn't lose what was typed.
-  document.getElementById('alt-custom-control').classList.toggle('disabled', mode === 'byHistory');
   document.getElementById('time-legend-block').style.display = (mode === 'byTime' || mode === 'byHistory') ? '' : 'none';
   document.getElementById('time-legend-title').textContent = mode === 'byHistory' ? 'Forecast age' : 'Time of day';
   document.getElementById('time-color-controls').style.display = mode === 'byHistory' ? 'none' : '';
   document.getElementById('alt-hint').textContent =
     mode === 'byTime' ? 'Click an altitude to compare it across all times of day. Map colors now show time of day, not altitude.'
-    : mode === 'byHistory' ? 'Click an altitude to see how each model\'s point for it moved across capture dates.'
+    : mode === 'byHistory' ? 'Click an altitude to see how each model\'s point for it moved across capture dates. Or use "Specific altitude" below to see that instead -- the forecast-age markers simulate just like the map does, though the star (final projection) only ever shows at one of the altitudes listed here.'
     : 'Hover an altitude to isolate its zone. Click to pin it; click again to release. No single color reads well on every site\'s imagery -- pick one above that stands out here; shades for each altitude are generated from it.';
   document.getElementById('time-hint').textContent = mode === 'byHistory'
     ? 'Each row is one capture date -- swatch shade shows how many days before launch it was pulled (lighter = further out, darker = closer to launch). Hover to isolate just that capture (map + accuracy table); click to pin, click again to release.'
@@ -606,13 +600,13 @@ document.getElementById('alt-range-reset').addEventListener('click', () => {
 });
 
 // --- direct-entry altitude ("Specific altitude") -- overrides the whole
-// range/ladder selection above in byAltitude/byTime, see render(). No
-// separate checkbox -- clicking into the input *is* the request to use it
-// (real user feedback: a checkbox-then-type flow made people click twice
-// for one intent). Reflects state.customAlt into the input/status text and
-// dims the range row while active; safe to call any time state.customAlt,
-// hour, or deploy changes (cheap -- reads zoneFor()'s cache, doesn't
-// re-simulate).
+// range/ladder selection above in every mode, including History (see
+// render()/renderHistory()/historyPointsForAltitude()). No separate
+// checkbox -- clicking into the input *is* the request to use it (real user
+// feedback: a checkbox-then-type flow made people click twice for one
+// intent). Reflects state.customAlt into the input/status text and dims the
+// range row while active; safe to call any time state.customAlt, hour, or
+// deploy changes (cheap -- reads zoneFor()'s cache, doesn't re-simulate).
 const altCustomInput = document.getElementById('alt-custom-input');
 const altCustomClear = document.getElementById('alt-custom-clear');
 
@@ -829,6 +823,9 @@ function modelsWithData() {
 // from a different fetch (HISTORY, not DATA) with its own key.
 function historyModelsAvailable() {
   if (!HISTORY) return new Set();
+  if (state.customAlt !== null) {
+    return new Set(historyPointsForAltitude(state.hour, state.deploy, state.pinnedRate, state.customAlt).map(p => p.model));
+  }
   const key = `${state.hour}_${state.deploy}_${state.pinnedRate}_${state.compareAlt}`;
   return new Set((HISTORY.points_by_key[key] || []).map(p => p.model));
 }
@@ -2458,7 +2455,13 @@ function simulateDrift(profile, apogeeFt, phases, siteElevFt, stepFt) {
 // movement -- a full grid computes once per (dataset, rate-setting), every
 // subsequent hover/pin/drag is a cache hit.
 let zoneCache = new Map();
-function invalidateZones() { zoneCache.clear(); }
+// Same idea, separate map: keyed on hour_deploy_rateName_altitude (a single
+// named rate, not both fast/slow like zoneCache) and sourced from
+// HISTORY.wind_profiles_by_capture instead of DATA.wind_profiles -- see
+// historyPointsForAltitude() below. Cleared alongside zoneCache since both
+// depend on state.rateFps.
+let historyZoneCache = new Map();
+function invalidateZones() { zoneCache.clear(); historyZoneCache.clear(); }
 
 // One altitude's zone at the given hour/deploy, computed just-in-time from
 // DATA.wind_profiles at the current state.rateFps -- returns the same
@@ -2497,6 +2500,43 @@ function zoneFor(hour, deploy, altitudeFt) {
 
 function zonesFor(hour, deploy) {
   return DATA.altitudes.map(alt => zoneFor(hour, deploy, alt)).filter(z => z !== null);
+}
+
+// History mode's equivalent of zoneFor(), for a "Specific altitude" override
+// -- HISTORY.points_by_key only has data at the discrete ladder's own
+// altitudes (precomputed server-side), same limitation zoneFor() itself
+// doesn't have (it reads a published wind profile and can simulate any
+// altitude). Since build_points_history() now also publishes each capture's
+// own wind profile (wind_profiles_by_capture, same shape as
+// DATA.wind_profiles but one per capture date), this can do the same
+// just-in-time simulation renderHistory()/renderAccuracyTable() need,
+// across every capture instead of just the current one. Returns
+// [{capture_date, model, x_ft, y_ft}, ...] -- the same flat shape
+// HISTORY.points_by_key[key] already is, so callers don't need to branch on
+// where the points came from. Single rate (not both fast/slow, unlike
+// zoneFor()) since History always has exactly one rate pinned.
+function historyPointsForAltitude(hour, deploy, rateName, altitudeFt) {
+  const cacheKey = `${hour}_${deploy}_${rateName}_${altitudeFt}`;
+  if (historyZoneCache.has(cacheKey)) return historyZoneCache.get(cacheKey);
+
+  const dp = DATA.descent_params;
+  const points = [];
+  if (!(deploy === 'single' && altitudeFt > dp.single_deploy_max_alt_ft)) {
+    const r = state.rateFps[rateName];
+    const phases = deploy === 'dual'
+      ? [[r.drogue, altitudeFt, dp.main_deploy_altitude_ft], [r.main, dp.main_deploy_altitude_ft, 0]]
+      : [[r.main, altitudeFt, 0]];
+    for (const captureDate of (HISTORY?.captures || [])) {
+      const hourProfiles = HISTORY.wind_profiles_by_capture?.[captureDate]?.[hour];
+      if (!hourProfiles) continue;
+      for (const [model, profile] of Object.entries(hourProfiles)) {
+        const [x_ft, y_ft] = simulateDrift(profile, altitudeFt, phases, dp.site_elev_ft, dp.descent_step_ft);
+        points.push({ capture_date: captureDate, model, x_ft, y_ft });
+      }
+    }
+  }
+  historyZoneCache.set(cacheKey, points);
+  return points;
 }
 
 // Draggable launch pad: capped at DATA.max_pad_move_ft from the surveyed GPS
@@ -2889,9 +2929,21 @@ function renderHistory() {
   }
 
   const rate = state.pinnedRate; // always set once byHistory is entered -- see setMode()
-  const key = `${state.hour}_${state.deploy}_${rate}_${state.compareAlt}`;
+  // "Specific altitude" overrides the ladder selection here too, same as
+  // byAltitude/byTime -- computed just-in-time per capture date via
+  // historyPointsForAltitude() instead of the precomputed
+  // HISTORY.points_by_key lookup, which only has data at the ladder's own
+  // altitudes. actuals (the HRRR-analysis star) stays ladder-only either
+  // way (see build_points_history()'s comment) -- keying it off the same
+  // effective altitude means it naturally, silently doesn't show for a
+  // custom altitude, same tri-state UX as a date with no actuals at all.
+  const altitude = state.customAlt !== null ? state.customAlt : state.compareAlt;
+  const key = `${state.hour}_${state.deploy}_${rate}_${altitude}`;
+  const rawPoints = state.customAlt !== null
+    ? historyPointsForAltitude(state.hour, state.deploy, rate, altitude)
+    : (HISTORY.points_by_key[key] || []);
   const seriesByModel = {};
-  (HISTORY.points_by_key[key] || []).forEach(pt => {
+  rawPoints.forEach(pt => {
     (seriesByModel[pt.model] ??= []).push(pt);
   });
   const actual = HISTORY.actuals[key];
@@ -2905,14 +2957,14 @@ function renderHistory() {
   // actual star be read against "how big was the projected area that day,"
   // not just its distance to each individual point.
   if (activeCapture) {
-    const dayPoints = (HISTORY.points_by_key[key] || []).filter(pt => {
+    const dayPoints = rawPoints.filter(pt => {
       if (pt.capture_date !== activeCapture) return false;
       if (!state.selectedModels.has(pt.model)) return false;
       return true;
     });
     if (dayPoints.length) {
       const buf = document.createElementNS(ns, 'polygon');
-      buf.setAttribute('points', polyPoints(computeBufferHullPx(dayPoints, boostAngleDeg, state.compareAlt)));
+      buf.setAttribute('points', polyPoints(computeBufferHullPx(dayPoints, boostAngleDeg, altitude)));
       buf.setAttribute('class', 'zone-buffer');
       buf.setAttribute('fill', zoneBaseColor);
       buf.setAttribute('fill-opacity', '0.30');
@@ -2953,7 +3005,7 @@ function renderHistory() {
       const [px, py] = pxPts[i];
       const marker = drawMarker(svg, shape, px, py, 9, MODEL_COLORS_HEX[model] || 'var(--point-fill)');
       marker.classList.add('pt');
-      const rp = { model, rate, x_ft: pt.x_ft, y_ft: pt.y_ft, px, py, capture_date: pt.capture_date, altitude: state.compareAlt, hour: state.hour };
+      const rp = { model, rate, x_ft: pt.x_ft, y_ft: pt.y_ft, px, py, capture_date: pt.capture_date, altitude, hour: state.hour };
       renderedPoints.push(rp);
       marker.addEventListener('mousemove', evt => showTooltip(evt, rp));
       marker.addEventListener('mouseleave', hideTooltip);
@@ -3037,7 +3089,13 @@ function buildAccuracyLegend() {
 function renderAccuracyTable() {
   const section = document.getElementById('accuracy-section');
   const rate = state.pinnedRate;
-  const key = `${state.hour}_${state.deploy}_${rate}_${state.compareAlt}`;
+  // Same effective-altitude override renderHistory() uses. actuals is only
+  // ever precomputed at the discrete ladder's own altitudes (see
+  // build_points_history()'s comment), so a custom altitude simply finds no
+  // `actual` below and the whole table stays hidden -- same as any other
+  // date with no actuals published yet, not a special case to code around.
+  const altitude = state.customAlt !== null ? state.customAlt : state.compareAlt;
+  const key = `${state.hour}_${state.deploy}_${rate}_${altitude}`;
   const actual = HISTORY && HISTORY.actuals[key];
   if (!actual) return; // stays hidden -- render() already set display:none
   buildAccuracyLegend();
@@ -3318,10 +3376,10 @@ function render() {
   // drifts past the pull's own default-rate sweep still gets a correctly
   // sized background instead of being clipped.
   // state.customAlt (the "Specific altitude" field) overrides the whole
-  // ladder/range selection in both live-computed modes -- byHistory can't
-  // use it at all (points_history.json only has data at the discrete
-  // ladder's own altitudes, precomputed server-side; see syncAltCustomUI()'s
-  // comment) so that branch is untouched below.
+  // ladder/range selection in every mode -- byAltitude/byTime read it here
+  // via zoneFor(); byHistory reads it inside renderHistory()/
+  // renderAccuracyTable() themselves (via historyPointsForAltitude()) since
+  // that branch doesn't build zones the same way, so it's untouched below.
   let altitudeZones = [], timeZones = [];
   if (state.mode === 'byAltitude') {
     altitudeZones = state.customAlt !== null
