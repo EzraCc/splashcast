@@ -337,6 +337,12 @@ function freshState() {
     // Coarse pre-filter in front of isolatedAlt/pinnedAlt/compareAlt above --
     // see buildAltRange(). Defaults to the site's full ladder.
     altMin: DATA.altitudes[0], altMax: DATA.altitudes[DATA.altitudes.length - 1],
+    // Direct-entry altitude (see syncAltCustomUI()) -- null unless the
+    // "Specific altitude" checkbox is on. A real ft value, not restricted
+    // to DATA.altitudes, since zoneFor() can simulate any altitude now
+    // that the drift calc is client-side. Overrides the whole
+    // range/ladder selection above in byAltitude/byTime (see render()).
+    customAlt: null,
     // Editable Fast/Slow drogue+main fps (see buildRateEditor()) -- changes
     // which points exist, not just how they're drawn, so it lives here
     // rather than as a standing "what-if" global like boostAngleDeg.
@@ -384,6 +390,12 @@ function freshState() {
     };
     if (base.pinnedAlt !== null && !inRange(base.pinnedAlt)) base.pinnedAlt = null;
     if (base.compareAlt !== null && !inRange(base.compareAlt)) base.compareAlt = nearestInRange(base.compareAlt);
+    // customalt=<ft> -- real value, not restricted to DATA.altitudes/inRange
+    // (that's the whole point of it), just bounded to (0, site waiver].
+    const customAlt = Number(URL_PARAMS.get('customalt'));
+    if (Number.isFinite(customAlt) && customAlt > 0 && customAlt <= DATA.altitudes[DATA.altitudes.length - 1]) {
+      base.customAlt = Math.round(customAlt);
+    }
     // rates=<fastDrogue>/<fastMain>,<slowDrogue>/<slowMain> -- defensive like
     // every other param here: a malformed component falls back to that
     // preset/part's own default rather than half-applying, and every
@@ -412,6 +424,12 @@ function freshState() {
 // (which would stomp the pinnedAlt/pinnedRate a permalink just supplied).
 function applyModeUI(mode) {
   document.getElementById('hour-toggle-group').classList.toggle('disabled', mode === 'byTime');
+  // History reads points_history.json, precomputed server-side at only the
+  // discrete ladder's own altitudes -- state.customAlt has nothing to show
+  // there (render()'s byHistory branch never reads it). Gated visually
+  // rather than clearing the value, so switching to History to check
+  // something and back doesn't lose what was typed.
+  document.getElementById('alt-custom-control').classList.toggle('disabled', mode === 'byHistory');
   document.getElementById('time-legend-block').style.display = (mode === 'byTime' || mode === 'byHistory') ? '' : 'none';
   document.getElementById('time-legend-title').textContent = mode === 'byHistory' ? 'Forecast age' : 'Time of day';
   document.getElementById('time-color-controls').style.display = mode === 'byHistory' ? 'none' : '';
@@ -561,6 +579,62 @@ document.getElementById('alt-range-reset').addEventListener('click', () => {
   state.altMin = DATA.altitudes[0];
   state.altMax = DATA.altitudes[DATA.altitudes.length - 1];
   onAltRangeChanged();
+});
+
+// --- direct-entry altitude ("Specific altitude") -- overrides the whole
+// range/ladder selection above in byAltitude/byTime, see render(). Reflects
+// state.customAlt into the checkbox/input/status text and dims the
+// range row while active; safe to call any time state.customAlt, hour, or
+// deploy changes (cheap -- reads zoneFor()'s cache, doesn't re-simulate).
+const altCustomToggle = document.getElementById('alt-custom-toggle');
+const altCustomInput = document.getElementById('alt-custom-input');
+
+function syncAltCustomUI() {
+  const active = state.customAlt !== null;
+  altCustomToggle.checked = active;
+  altCustomInput.disabled = !active;
+  if (active) altCustomInput.value = state.customAlt;
+  document.querySelector('.alt-range-row').classList.toggle('alt-custom-dimmed', active);
+  const statusEl = document.getElementById('alt-custom-status');
+  if (!active) { statusEl.textContent = ''; return; }
+  // zoneFor() itself already handles "no zone" gracefully (returns null --
+  // single deploy above SINGLE_DEPLOY_MAX_ALT_FT, or an hour with no
+  // published profile at all); this surfaces *why* rather than leaving the
+  // map silently blank, which the row-list's .unavailable graying already
+  // does for the ladder-based selector but a bare number input can't.
+  const zone = zoneFor(state.hour, state.deploy, state.customAlt);
+  statusEl.textContent = zone ? '' :
+    (state.deploy === 'single'
+      ? `No single-deploy zone above ${DATA.descent_params.single_deploy_max_alt_ft.toLocaleString()} ft`
+      : 'No wind data for this altitude/hour');
+}
+
+altCustomToggle.addEventListener('change', () => {
+  if (altCustomToggle.checked) {
+    const maxAlt = DATA.altitudes[DATA.altitudes.length - 1];
+    const seed = Number(altCustomInput.value) || state.compareAlt || Math.round(maxAlt / 2);
+    state.customAlt = Math.min(maxAlt, Math.max(1, Math.round(seed)));
+    // Isolate/pin among the ladder rows stops meaning anything once a
+    // single specific-altitude zone is the whole view -- clear rather than
+    // leave a dangling selection that resurfaces confusingly if this gets
+    // unchecked later.
+    state.pinnedAlt = null;
+    state.isolatedAlt = null;
+  } else {
+    state.customAlt = null;
+  }
+  syncAltCustomUI();
+  render();
+});
+altCustomInput.addEventListener('change', () => {
+  const maxAlt = DATA.altitudes[DATA.altitudes.length - 1];
+  let v = Number(altCustomInput.value);
+  if (!Number.isFinite(v)) v = state.customAlt ?? maxAlt;
+  v = Math.min(maxAlt, Math.max(1, Math.round(v)));
+  altCustomInput.value = v;
+  state.customAlt = v;
+  syncAltCustomUI();
+  render();
 });
 
 // Drag (pointer events, so mouse/touch/pen share one code path) + keyboard
@@ -2680,7 +2754,12 @@ function drawRealFlightMarker() {
           Math.abs(a - bucket) < Math.abs(best - bucket) ? a : best, DATA.altitudes[0]);
         if (state.compareAlt < state.altMin) state.altMin = state.compareAlt;
         if (state.compareAlt > state.altMax) state.altMax = state.compareAlt;
-        buildToggle('hour-toggle', DATA.hours, HOUR_LABELS, 'hour', () => { hourExplicitlyChosen = true; });
+        // A pinned real flight compares against its own published altitude
+        // bucket specifically -- a specific-altitude override active from
+        // before would show an unrelated zone instead, so clear it.
+        state.customAlt = null;
+        syncAltCustomUI();
+        buildToggle('hour-toggle', DATA.hours, HOUR_LABELS, 'hour', () => { hourExplicitlyChosen = true; syncAltCustomUI(); });
         buildAltList();
         buildAltRange();
         render();
@@ -3072,6 +3151,10 @@ function buildPermalinkParams(includeDate) {
   // 2026-08) and resolves sanely against a different site's shorter list.
   if (state.altMin !== DATA.altitudes[0]) p.set('altmin', state.altMin);
   if (state.altMax !== DATA.altitudes[DATA.altitudes.length - 1]) p.set('altmax', state.altMax);
+  // Direct-entry altitude (see syncAltCustomUI()) -- a real ft value, always
+  // worth sharing when set (there's no "default" for it to differ from,
+  // unlike altmin/altmax's ladder-derived defaults).
+  if (state.customAlt !== null) p.set('customalt', state.customAlt);
   // Editable rates (see buildRateEditor()) -- emitted only when they differ
   // from this dataset's own defaults, same convention as altmin/altmax
   // above. fast-then-slow, drogue-then-main.
@@ -3127,13 +3210,21 @@ function render() {
   // growBaseViewBox()'s own comment -- so a slower-than-default rate that
   // drifts past the pull's own default-rate sweep still gets a correctly
   // sized background instead of being clipped.
+  // state.customAlt (the "Specific altitude" field) overrides the whole
+  // ladder/range selection in both live-computed modes -- byHistory can't
+  // use it at all (points_history.json only has data at the discrete
+  // ladder's own altitudes, precomputed server-side; see syncAltCustomUI()'s
+  // comment) so that branch is untouched below.
   let altitudeZones = [], timeZones = [];
   if (state.mode === 'byAltitude') {
-    altitudeZones = zonesFor(state.hour, state.deploy).filter(z => altInRange(z.altitude));
+    altitudeZones = state.customAlt !== null
+      ? [zoneFor(state.hour, state.deploy, state.customAlt)].filter(Boolean)
+      : zonesFor(state.hour, state.deploy).filter(z => altInRange(z.altitude));
     growBaseViewBox(altitudeZones);
   } else if (state.mode === 'byTime') {
     const orderedHours = [...DATA.hours].sort((a, b) => b - a);
-    timeZones = orderedHours.map(hour => ({ hour, zone: zoneFor(hour, state.deploy, state.compareAlt) })).filter(hz => hz.zone);
+    const alt = state.customAlt !== null ? state.customAlt : state.compareAlt;
+    timeZones = orderedHours.map(hour => ({ hour, zone: zoneFor(hour, state.deploy, alt) })).filter(hz => hz.zone);
     growBaseViewBox(timeZones.map(hz => hz.zone));
   }
 
@@ -3173,9 +3264,12 @@ function render() {
   svg.appendChild(image);
 
   if (state.mode === 'byAltitude') {
-    // one time of day, every in-range altitude, colored by altitude
+    // one time of day, every in-range altitude, colored by altitude.
+    // ALT_COLORS_HEX is a ramp built from DATA.altitudes (initFromData()) --
+    // a custom altitude won't be a key in it, so falls back to the user's
+    // own chosen base zone color directly rather than an undefined fill.
     const ordered = [...altitudeZones].sort((a, b) => b.altitude - a.altitude);
-    ordered.forEach(zone => drawZone(zone, ALT_COLORS_HEX[zone.altitude], state.hour));
+    ordered.forEach(zone => drawZone(zone, ALT_COLORS_HEX[zone.altitude] || zoneBaseColor, state.hour));
   } else if (state.mode === 'byHistory') {
     renderHistory();
     renderAccuracyTable();
@@ -3300,7 +3394,7 @@ function initFromData() {
   }
 
   buildToggle('mode-toggle', ['byAltitude', 'byTime', 'byHistory'], MODE_LABELS, 'mode', () => setMode(state.mode));
-  buildToggle('hour-toggle', DATA.hours, HOUR_LABELS, 'hour', () => { hourExplicitlyChosen = true; });
+  buildToggle('hour-toggle', DATA.hours, HOUR_LABELS, 'hour', () => { hourExplicitlyChosen = true; syncAltCustomUI(); });
   buildToggle('deploy-toggle', DATA.deploys, DEPLOY_LABELS, 'deploy', () => {
     deployExplicitlyChosen = true;
     // Which altitudes have a real zone changes with deploy (single-deploy
@@ -3312,12 +3406,14 @@ function initFromData() {
     // rate at all -- disable those inputs rather than leave them editable
     // and silently ignored.
     buildRateEditor();
+    syncAltCustomUI(); // single/dual changes whether the custom altitude has a zone at all
   });
   buildTimeLegend();
   buildAltList();
   buildAltRange();
   buildModelLegend();
   buildRateEditor();
+  syncAltCustomUI(); // reflects a URL-loaded ?customalt= on first render
   banDismissed = false; // a dismiss on a previous site/date shouldn't suppress a genuinely new ban
   renderCloudPanel();
   renderRainTimeline();

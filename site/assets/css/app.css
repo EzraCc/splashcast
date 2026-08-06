@@ -460,11 +460,32 @@
   .pad-marker.moved circle, .pad-marker.moved line { stroke: #e0b400; }
   .map-wrap.dragging-pad, .map-wrap.dragging-pad .pad-marker { cursor: grabbing; }
 
+  /* Direct-entry alternative to the ladder/range below -- now that the
+     drift sim runs client-side (zoneFor() takes any altitude, not just
+     DATA.altitudes), a flyer with a real predicted apogee can type it
+     exactly instead of picking the nearest rung. Checking this dims the
+     range row below (see .alt-range-row.alt-custom-dimmed) rather than
+     hiding it, matching this app's usual "gray out, don't remove" pattern
+     for a control that's momentarily not the active one. */
+  .alt-custom-control { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; font-size: 0.8rem; color: var(--text-secondary); }
+  .alt-custom-label { display: flex; align-items: center; gap: 5px; cursor: pointer; user-select: none; }
+  .alt-custom-control input[type="number"] {
+    width: 90px; box-sizing: border-box; padding: 3px 6px;
+    border: 1px solid var(--border); border-radius: 5px;
+    background: var(--surface-1); color: var(--text-primary); font-size: 0.8rem;
+  }
+  .alt-custom-control input[type="number"]:disabled { opacity: 0.45; cursor: not-allowed; }
+  .alt-custom-status { font-size: 0.72rem; color: var(--hot-text); }
+  /* Whole control, in History mode -- same treatment .toggle-group.disabled
+     already gives the hour-toggle in byTime mode. */
+  .alt-custom-control.disabled { opacity: 0.4; pointer-events: none; }
+
   .alt-range-readout {
     display: flex; align-items: center; justify-content: space-between; gap: 6px;
     margin-bottom: 6px; font-size: 0.78rem; color: var(--text-secondary);
   }
   .alt-range-row { display: flex; gap: 10px; align-items: flex-start; }
+  .alt-range-row.alt-custom-dimmed { opacity: 0.35; pointer-events: none; }
   /* A vertical fader, not a pair of <select>s -- narrow dropdowns read badly
      in this sidebar's width, and the altitude set is still a fixed discrete
      list either way (each drag position snaps to one of DATA.altitudes),
