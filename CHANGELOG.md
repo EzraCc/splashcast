@@ -4,6 +4,10 @@ Dated, terse log of notable changes. For the full design rationale and decision 
 
 ## 2026-08-05
 
+**Fix: History mode's accuracy table now orders models to match the legend everywhere else**
+- `renderAccuracyTable()`'s row order was `Object.keys(seriesByModel).sort()` -- alphabetical (`arpege, ecmwf, gem, gfs, hrrr, icon`), which doesn't match `MODEL_LEGEND_ORDER` (`gfs, ecmwf, gem, icon, arpege, hrrr`, the order every other legend/swatch in the viewer uses). Switched to `MODEL_LEGEND_ORDER.filter(m => seriesByModel[m])`, same pattern `buildModelLegend()` already uses to iterate models in a fixed, consistent order.
+- Verified in-browser: accuracy table's row order now reads `gfs, ecmwf, gem, icon, arpege, hrrr` (filtered to whichever models have real cells for the current selection), matching the Model legend exactly.
+
 **Follow-up: double-clicking an already-soloed model undoes the solo, restoring the prior selection**
 - User direction: a second double-click on the model just soloed should revert to whatever was selected before, not require manually re-checking each one. Added `state.preSoloModels`, a one-deep undo snapshot -- a double-click stashes the current `selectedModels` there before soloing; a double-click on that same still-soloed model swaps it back and clears the snapshot. Chains correctly if you solo a second model without undoing the first: the snapshot updates to "selection right before *this* solo," so undoing walks back one step at a time rather than always landing on "all available."
 - Any plain single-click toggle after a solo clears the snapshot (a manual edit makes "undo the solo" ambiguous, so it's dropped rather than silently restoring something the user no longer has in mind); `#model-reset` and mode switches clear it too, for the same reason `selectedModels` itself resets there.

@@ -3053,7 +3053,10 @@ function renderAccuracyTable() {
     if (!state.selectedModels.has(pt.model)) return;
     (seriesByModel[pt.model] ??= []).push(pt);
   });
-  const models = Object.keys(seriesByModel).sort();
+  // Ordered to match the Model legend (MODEL_LEGEND_ORDER), not
+  // alphabetically -- so a model's row/column position reads the same here
+  // as its swatch position in the legend everywhere else in the viewer.
+  const models = MODEL_LEGEND_ORDER.filter(m => seriesByModel[m]);
   if (!models.length) return;
   const captures = activeCapture ? [activeCapture] : HISTORY.captures;
 
