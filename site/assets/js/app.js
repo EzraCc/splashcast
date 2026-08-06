@@ -67,7 +67,7 @@ let REAL_FLIGHTS = [];
 // pin on one flight and a hover over a different flight's marker can be
 // true at the same time; activeRealFlight() below resolves which one wins
 // (hover takes precedence while it lasts, same pattern as
-// state.isolatedModel ?? state.pinnedModel elsewhere in this file).
+// state.isolatedRate ?? state.pinnedRate elsewhere in this file).
 let pinnedRealFlightIndex = null;
 let hoveredRealFlightIndex = null;
 // The pad offset in effect right before pinning a real flight snapped it to
@@ -330,7 +330,12 @@ function freshState() {
     hour: DATA.hours[0], deploy: DATA.deploys[0],
     isolatedAlt: null, pinnedAlt: null,
     isolatedHour: null, pinnedHour: null,
-    isolatedModel: null, pinnedModel: null,
+    // Multi-select checkboxes, not hover-isolate/click-pin like every other
+    // legend here -- see buildModelLegend()'s own comment for why models
+    // specifically got this treatment. null is a sentinel ("not resolved
+    // yet"), not "no models selected" -- buildModelLegend() resolves it to
+    // every model with real data the first time it runs for this state.
+    selectedModels: null,
     isolatedRate: null, pinnedRate: null,
     isolatedCapture: null, pinnedCapture: null, // History mode only -- which capture_date ("forecast age") to isolate
     compareAlt: DATA.altitudes[0], // which altitude "by time of day" mode compares across hours
@@ -363,8 +368,16 @@ function freshState() {
     if (rate === 'fast' || rate === 'slow') base.pinnedRate = rate;
     const alt = Number(URL_PARAMS.get('alt'));
     if (DATA.altitudes.includes(alt)) base.pinnedAlt = alt;
-    const model = URL_PARAMS.get('model');
-    if (Object.keys(MODEL_LABELS).includes(model)) base.pinnedModel = model;
+    // models=<comma-separated keys> -- validated against MODEL_LABELS only,
+    // not against "has data" (that's context-dependent -- byAltitude vs
+    // History read different availability sources, and horizon/capture can
+    // change which models actually have data anyway); buildModelLegend()
+    // re-validates against real availability every time it resolves this.
+    const modelsParam = URL_PARAMS.get('models');
+    if (modelsParam) {
+      const requested = new Set(modelsParam.split(',').filter(m => Object.keys(MODEL_LABELS).includes(m)));
+      if (requested.size) base.selectedModels = requested;
+    }
     const compare = Number(URL_PARAMS.get('compare'));
     if (DATA.altitudes.includes(compare)) base.compareAlt = compare;
     const capture = URL_PARAMS.get('capture');
@@ -441,8 +454,8 @@ function applyModeUI(mode) {
     ? 'Each row is one capture date -- swatch shade shows how many days before launch it was pulled (lighter = further out, darker = closer to launch). Hover to isolate just that capture (map + accuracy table); click to pin, click again to release.'
     : 'Hover a time to isolate it. Click to pin; click again to release.';
   document.getElementById('model-hint').textContent = mode === 'byHistory'
-    ? 'Color and shape both mean model here (same colors as the main map) -- shape is the colorblind-safe backup. Hover a model to isolate its path; click to pin, click again to release.'
-    : 'Hover a model to isolate it -- zones collapse to a line (a single model\'s fast/slow points fall on the same bearing from the pad). Click to pin; click again to release.';
+    ? 'Color and shape both mean model here (same colors as the main map) -- shape is the colorblind-safe backup. Click a model to toggle it on/off; double-click to solo just that one, click again to bring the rest back.'
+    : 'Click a model to toggle it on/off, like a checkbox -- all start selected. Double-click to solo just that one (zones collapse to a line when only one model is selected, since a single model\'s fast/slow points fall on the same bearing from the pad).';
   updateRateHint();
 }
 
@@ -472,7 +485,11 @@ function setMode(mode) {
   // doesn't apply here
   state.isolatedAlt = null; state.pinnedAlt = null;
   state.isolatedHour = null; state.pinnedHour = null;
-  state.isolatedModel = null; state.pinnedModel = null;
+  // null sentinel -- byAltitude/byTime and byHistory read different
+  // availability sources (modelsWithData() vs historyModelsAvailable()), so
+  // re-resolve to "all available" for whichever mode this is switching to
+  // rather than carrying over a selection that might not even exist there.
+  state.selectedModels = null;
   state.isolatedCapture = null; state.pinnedCapture = null;
   // Rate resets here too, same as everything else above -- otherwise the
   // rate History auto-pins (below) leaks into byAltitude/byTime afterward,
@@ -809,15 +826,37 @@ function historyModelsAvailable() {
   return new Set((HISTORY.points_by_key[key] || []).map(p => p.model));
 }
 
+// Multi-select checkboxes, not hover-isolate/click-pin like every other
+// legend in this file -- unlike a single altitude/rate/hour, "which models
+// contributed to this zone" is naturally a set (you might want GFS+ECMWF
+// together, or all-but-HRRR), and now that the drift sim runs client-side
+// (zoneFor()) there's no cost to recomputing the hull from any subset on
+// every click. Click toggles one model; double-click solos it (same as
+// "select only this one"). state.selectedModels is the source of truth
+// (drawZone()/renderHistory()/renderAccuracyTable() all read it directly);
+// this function also resolves its null sentinel to "every available model"
+// the first time it runs for a given state (see freshState()'s comment).
 function buildModelLegend() {
   const el = document.getElementById('model-legend');
   el.innerHTML = '';
   const isHistory = state.mode === 'byHistory';
   const available = isHistory ? historyModelsAvailable() : modelsWithData();
+  if (state.selectedModels === null) {
+    state.selectedModels = new Set(available);
+  } else {
+    // Drop anything selected that isn't actually available here (e.g. a
+    // permalink's ?models= naming one beyond this capture's horizon, or a
+    // mode switch that reads a different availability source) -- falls
+    // back to "all available" rather than leaving a confusing empty view
+    // if that drops every selected model.
+    const stillValid = new Set([...state.selectedModels].filter(m => available.has(m)));
+    state.selectedModels = stillValid.size ? stillValid : new Set(available);
+  }
   MODEL_LEGEND_ORDER.forEach(m => {
     const hasData = available.has(m);
+    const selected = state.selectedModels.has(m);
     const row = document.createElement('div');
-    row.className = 'alt-row' + (hasData ? '' : ' unavailable');
+    row.className = 'alt-row' + (hasData ? (selected ? ' pinned' : ' deselected') : ' unavailable');
     const label = MODEL_LABELS[m] || m.toUpperCase();
     // History mode swatch shows shape (its markers' distinguishing feature
     // there, for colorblind-safe redundancy) filled with the same color as
@@ -827,21 +866,41 @@ function buildModelLegend() {
       : `<div class="alt-swatch" style="background:${hasData ? MODEL_COLORS_HEX[m] : 'var(--text-muted)'}"></div>`;
     row.innerHTML = `${swatch}<span>${label}${hasData ? '' : ' (no data)'}</span>`;
     if (hasData) {
-      row.addEventListener('mouseenter', () => { state.isolatedModel = m; render(); });
-      row.addEventListener('mouseleave', () => { state.isolatedModel = null; render(); });
+      // click vs dblclick: a browser fires click on both presses of a
+      // double-click before the dblclick event itself, so the single-click
+      // toggle is delayed briefly -- if a second click lands within the
+      // window, it's a dblclick instead and the pending toggle is dropped.
+      // Per-row timer (not shared across the legend) so double-clicking one
+      // model can't be confused by a stray click on another.
+      let clickTimer = null;
       row.addEventListener('click', () => {
-        state.pinnedModel = (state.pinnedModel === m) ? null : m;
-        [...el.children].forEach(r => r.classList.remove('pinned'));
-        if (state.pinnedModel === m) row.classList.add('pinned');
+        if (clickTimer) return; // already mid-dblclick for this row
+        clickTimer = setTimeout(() => {
+          clickTimer = null;
+          if (state.selectedModels.has(m)) state.selectedModels.delete(m);
+          else state.selectedModels.add(m);
+          buildModelLegend();
+          render();
+        }, 250);
+      });
+      row.addEventListener('dblclick', () => {
+        if (clickTimer) { clearTimeout(clickTimer); clickTimer = null; }
+        state.selectedModels = new Set([m]);
+        buildModelLegend();
         render();
       });
-      if (state.pinnedModel === m) row.classList.add('pinned');
     } else {
       row.title = `${label} has no data for this lead time -- likely beyond this model's forecast horizon.`;
     }
     el.appendChild(row);
   });
 }
+
+document.getElementById('model-reset').addEventListener('click', () => {
+  state.selectedModels = null; // sentinel -- re-resolve to "all available"
+  buildModelLegend();
+  render();
+});
 
 // Fast/slow keys shared with the rate editor below -- shape drives both
 // RATE_SHAPE (marker shape on the map) and the editor's row swatches.
@@ -2819,19 +2878,18 @@ function renderHistory() {
   });
   const actual = HISTORY.actuals[key];
 
-  const activeModel = state.isolatedModel ?? state.pinnedModel;
   const activeCapture = state.isolatedCapture ?? state.pinnedCapture;
 
   // Splash polygon for the hovered/pinned forecast age: same buffer+core
   // hull treatment drawZone() uses for the main view, but built from that
-  // one capture date's points across models (or just the isolated model, if
-  // one's also active -- same composable filtering the accuracy table
-  // already does) -- lets the actual star be read against "how big was the
-  // projected area that day," not just its distance to each individual point.
+  // one capture date's points across the currently-selected models (same
+  // composable filtering the accuracy table already does) -- lets the
+  // actual star be read against "how big was the projected area that day,"
+  // not just its distance to each individual point.
   if (activeCapture) {
     const dayPoints = (HISTORY.points_by_key[key] || []).filter(pt => {
       if (pt.capture_date !== activeCapture) return false;
-      if (activeModel && pt.model !== activeModel) return false;
+      if (!state.selectedModels.has(pt.model)) return false;
       return true;
     });
     if (dayPoints.length) {
@@ -2855,7 +2913,7 @@ function renderHistory() {
   }
 
   Object.entries(seriesByModel).forEach(([model, series]) => {
-    if (activeModel && model !== activeModel) return;
+    if (!state.selectedModels.has(model)) return;
     let sorted = [...series].sort((a, b) => new Date(a.capture_date) - new Date(b.capture_date));
     if (activeCapture) sorted = sorted.filter(pt => pt.capture_date === activeCapture);
     if (!sorted.length) return;
@@ -2892,8 +2950,8 @@ function renderHistory() {
 
   drawRealFlightMarker();
   // A render can happen for reasons unrelated to this marker (e.g. toggling
-  // isolatedModel elsewhere) while the box is still pinned or hovered open
-  // -- reapply the swap so a fresh render doesn't silently revert it.
+  // a model checkbox elsewhere) while the box is still pinned or hovered
+  // open -- reapply the swap so a fresh render doesn't silently revert it.
   setRealFlightComparing(pinnedRealFlightIndex !== null || hoveredRealFlightIndex !== null);
 }
 
@@ -2966,16 +3024,15 @@ function renderAccuracyTable() {
   if (!actual) return; // stays hidden -- render() already set display:none
   buildAccuracyLegend();
 
-  // Respects the same isolate/pin filters as the map (model legend,
-  // Forecast-age legend) so the table always matches what's plotted --
-  // isolating one model narrows the rows, isolating one forecast age
-  // narrows the columns, "across models" (both stay open by default).
-  const activeModel = state.isolatedModel ?? state.pinnedModel;
+  // Respects the same model-checkbox selection and isolate/pin forecast-age
+  // filters as the map so the table always matches what's plotted --
+  // deselecting models narrows the rows, isolating one forecast age narrows
+  // the columns.
   const activeCapture = state.isolatedCapture ?? state.pinnedCapture;
 
   const seriesByModel = {};
   (HISTORY.points_by_key[key] || []).forEach(pt => {
-    if (activeModel && pt.model !== activeModel) return;
+    if (!state.selectedModels.has(pt.model)) return;
     (seriesByModel[pt.model] ??= []).push(pt);
   });
   const models = Object.keys(seriesByModel).sort();
@@ -3066,18 +3123,18 @@ function drawZone(zone, color, hour) {
   g.dataset.alt = zone.altitude;
   g.dataset.hour = hour;
 
-  const activeModel = state.isolatedModel ?? state.pinnedModel;
-  const points = zone.points.filter(pt => rateMatches(pt, activeRate()));
+  const points = zone.points.filter(pt => rateMatches(pt, activeRate()) && state.selectedModels.has(pt.model));
 
-  if (activeModel) {
-    // One model selected: the fast/slow points aren't a meaningful 2D spread
-    // any more (they're the *same* wind profile at two rates -- for single
-    // deploy they're exactly collinear with the pad, for dual deploy very
-    // close to it), so a filled hull would overstate the uncertainty. Draw
-    // the pad->near->far bearing as a line instead, colored by the zone
-    // (altitude or time, matching the non-isolated view), and only plot this
-    // model's own points.
-    const modelPoints = points.filter(p => p.model === activeModel);
+  if (state.selectedModels.size === 1) {
+    // Exactly one model selected (via single-click-to-only or double-click
+    // solo -- either path lands here the same way): the fast/slow points
+    // aren't a meaningful 2D spread any more (they're the *same* wind
+    // profile at two rates -- for single deploy they're exactly collinear
+    // with the pad, for dual deploy very close to it), so a filled hull
+    // would overstate the uncertainty. Draw the pad->near->far bearing as a
+    // line instead, colored by the zone (altitude or time, matching the
+    // multi-model view), and only plot this model's own points.
+    const modelPoints = points;
     if (modelPoints.length > 0) {
       const [sx, sy] = ftToPx(0, 0); // the pad -- offset-aware, not DATA.site_px directly
       const sorted = [...modelPoints].sort((a, b) => {
@@ -3148,7 +3205,17 @@ function buildPermalinkParams(includeDate) {
   if (deployExplicitlyChosen) p.set('deploy', state.deploy);
   if (boostAngleExplicitlyChosen) p.set('boost', boostAngleDeg);
   if (state.pinnedRate) p.set('rate', state.pinnedRate);
-  if (state.pinnedModel) p.set('model', state.pinnedModel);
+  // Only emit when it's a real subset -- same "don't pin defaults into the
+  // URL" convention as everywhere else here. buildModelLegend() always
+  // resolves the sentinel/re-validates before this can run (it runs on
+  // every render, and a permalink is only ever built from a live view), so
+  // state.selectedModels is a real Set by the time we get here.
+  if (state.selectedModels) {
+    const available = state.mode === 'byHistory' ? historyModelsAvailable() : modelsWithData();
+    if (state.selectedModels.size !== available.size) {
+      p.set('models', [...state.selectedModels].join(','));
+    }
+  }
   if (!tempShowApparent) p.set('temp', 'actual');
   if (cloudAltitudesExpanded) p.set('clouds', 'all');
   if (padOffsetFt.x !== 0 || padOffsetFt.y !== 0) {

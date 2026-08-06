@@ -469,8 +469,12 @@
      dims the range row below (see .alt-range-row.alt-custom-dimmed) rather
      than hiding it, matching this app's usual "gray out, don't remove"
      pattern for a control that's momentarily not the active one. */
-  .alt-custom-control { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; font-size: 0.8rem; color: var(--text-secondary); }
+  /* Label on its own line, input row below it -- was one wrapping flex row,
+     but the label reads better with the box always underneath it instead
+     of sometimes trailing on the same line depending on sidebar width. */
+  .alt-custom-control { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; font-size: 0.8rem; color: var(--text-secondary); }
   .alt-custom-label { cursor: pointer; user-select: none; }
+  .alt-custom-input-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
   .alt-custom-control input[type="number"] {
     width: 90px; box-sizing: border-box; padding: 3px 6px;
     border: 1px solid var(--border); border-radius: 5px;
@@ -580,14 +584,19 @@
     font-size: 0.85rem; color: var(--text-secondary); cursor: pointer;
   }
   .alt-row:not(.static):hover, .alt-row.pinned { background: var(--surface-2); border-color: var(--border); color: var(--text-primary); }
-  /* Model/Rate legends are reference-only (no click/hover behavior) -- suppress
-     the hover highlight so they don't look like broken interactive controls. */
+  /* Accuracy-table legend rows (the "final projection"/"real flight" swatch
+     keys) are reference-only, no click/hover behavior -- suppress the hover
+     highlight so they don't look like broken interactive controls. */
   .alt-row.static { cursor: default; }
   /* A model with no data for the current date/lead time (e.g. HRRR beyond its
      forecast horizon) -- same idea as .static (no hover/click affordance) plus
      dimmed so it reads as "unavailable" rather than "just not hovered yet". */
   .alt-row.unavailable { cursor: default; opacity: 0.5; }
   .alt-row.unavailable:hover { background: none; border-color: transparent; color: var(--text-secondary); }
+  /* Model legend only: a checkbox-style toggle that's currently off. Unlike
+     .unavailable, still fully clickable (re-enabling it is one click away) --
+     just visually receded so selected models read as "in the picture". */
+  .alt-row.deselected { opacity: 0.45; }
   .alt-swatch { width: 16px; height: 16px; border-radius: 4px; flex-shrink: 0; }
   .alt-hint { font-size: 0.75rem; color: var(--text-muted); margin-top: 6px; line-height: 1.5; display: none; }
   .alt-hint.open { display: block; }
