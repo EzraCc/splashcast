@@ -1646,12 +1646,14 @@ function appendValueBar(barsAbove, barsBelow, m, v, heightPct, opacity) {
 // real heading of its own, spanning every column the same way
 // .cloud-layer-divider already does. "Show all altitudes" lives here now,
 // not in the panel's own header -- it's a clouds-specific control, not a
-// whole-panel one.
-function addCloudSectionHeading(grid) {
+// whole-panel one. "showing Low"/"showing Low + Mid" lives here too, not
+// tacked onto the site-name/waiver line above the grid -- it's telling you
+// which of THIS heading's rows you're looking at, not a site-level fact.
+function addCloudSectionHeading(grid, shownLabel) {
   const heading = document.createElement('div');
   heading.className = 'weather-section-heading';
   const label = document.createElement('span');
-  label.textContent = '☁️ Clouds';
+  label.textContent = `☁️ Clouds — showing ${shownLabel}`;
   heading.appendChild(label);
   const expandBtn = document.createElement('button');
   expandBtn.className = 'cloud-expand-btn';
@@ -2069,18 +2071,19 @@ function renderWeatherPanel() {
 
   if (weatherPanelCollapsed) return;
 
+  // Site name/waiver is a site-level fact, not a clouds-specific one --
+  // stays up here regardless of which cloud layers happen to be showing
+  // (see addCloudSectionHeading() for that part, moved there instead of
+  // being appended onto this line). Nothing to say if there's no site
+  // metadata to show, so this just doesn't render at all in that case.
   if (DATA.clouds) {
     const site = regionalSites?.sites?.[currentSiteId];
-    const shownLayers = cloudAltitudesExpanded ? CLOUD_LAYERS.map(l => l.key) : relevantLayers;
-    const shownLabel = shownLayers.map(k => CLOUD_LAYERS.find(l => l.key === k).label).join(' + ');
-    const waiverNote = document.createElement('div');
-    waiverNote.className = 'waiver-note';
     if (site) {
-      waiverNote.innerHTML = `<b>${siteLabel(site)}</b> — ${site.waiver_ft.toLocaleString()}ft waiver, showing ${shownLabel} clouds`;
-    } else {
-      waiverNote.textContent = `Showing ${shownLabel} clouds`;
+      const waiverNote = document.createElement('div');
+      waiverNote.className = 'waiver-note';
+      waiverNote.innerHTML = `<b>${siteLabel(site)}</b> — ${site.waiver_ft.toLocaleString()}ft waiver`;
+      container.appendChild(waiverNote);
     }
-    container.appendChild(waiverNote);
   }
 
   const grid = document.createElement('div');
@@ -2089,7 +2092,9 @@ function renderWeatherPanel() {
 
   addWeatherHeaderRow(grid);
   if (DATA.clouds) {
-    addCloudSectionHeading(grid);
+    const shownLayers = cloudAltitudesExpanded ? CLOUD_LAYERS.map(l => l.key) : relevantLayers;
+    const shownLabel = shownLayers.map(k => CLOUD_LAYERS.find(l => l.key === k).label).join(' + ');
+    addCloudSectionHeading(grid, shownLabel);
     // Total is independently-computed whole-sky cover, not low+mid+high
     // summed -- placed above High (never mixed in with the altitude bands
     // themselves) so it reads as the big picture, not the headline number.

@@ -4,6 +4,11 @@ Dated, terse log of notable changes. For the full design rationale and decision 
 
 ## 2026-08-06
 
+**Follow-up: "showing Low clouds" moved off the site-name/waiver line and into the clouds heading**
+- Per direction: the waiver-note line (`AARG - Hutto — 10,000ft waiver, showing Low clouds`) mixed a site-level fact (name, waiver) with a clouds-specific one (which altitude bands are currently shown, a value that changes with "Show all altitudes") on the same line. Split apart: the waiver-note is now just `<site> — <waiver>ft waiver`, unconditionally cloud-layer-independent; `addCloudSectionHeading()` now takes the computed `shownLabel` and renders `☁️ Clouds — showing <label>` itself, right where the cloud rows actually start.
+- Waiver-note no longer renders at all when there's no site metadata to show (previously fell back to a bare "Showing X clouds" line with nothing else on it, which no longer makes sense once that text moved elsewhere).
+- Verified in-browser: waiver-note reads `AARG - Hutto — 10,000ft waiver` with no "showing" text; clouds heading reads `☁️ Clouds — showing Low`; clicking "Show all altitudes" updates the heading's label (`Low` -> `High + Mid + Low`) while the waiver-note stays unchanged; zero console errors; full weather-panel test suite still passes at every tested width/theme.
+
 **Follow-up: weather panel reordered (clouds, rain, temp); clouds gets its own heading, "Show all altitudes" moves into it**
 - Per direction: row order changed from rain/temp/clouds to clouds/rain/temp. New `addCloudSectionHeading()` gives clouds a real heading of its own ("☁️ Clouds", same icon-prefixed convention Rain/Temp's row labels already use) -- it's the one metric here that's more than a single row (Low/Mid/High, +Total when expanded), so unlike Rain/Temp's one-cell row label it spans every column (`grid-column: 1 / -1`, same span `.cloud-layer-divider` already uses).
 - "Show all altitudes" moved out of the panel's own `.weather-head` (title + collapse chevron only, now) into this new clouds-specific heading -- it only ever affected clouds, so it belongs with clouds, not floating at the whole-panel level above metrics it has no effect on.
