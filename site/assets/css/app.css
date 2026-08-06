@@ -284,6 +284,18 @@
     overflow-x: auto;
   }
   .weather-corner { grid-column: span 1; }
+  /* Full-width sub-heading for the cloud rows only -- clouds is the one
+     metric here that's more than a single row (Low/Mid/High, +Total when
+     expanded), so unlike Rain/Temp's one-cell .weather-row-label it gets a
+     real heading spanning every column, same grid-column:1/-1 span
+     .cloud-layer-divider already uses. "Show all altitudes" lives here,
+     not in the panel's own .weather-head -- it's a clouds-specific
+     control, not a whole-panel one. */
+  .weather-section-heading {
+    grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    font-size: var(--fs-sm); color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.03em;
+    padding-top: 4px;
+  }
   .weather-hr-label { font-size: var(--fs-xs); color: var(--text-muted); text-align: center; padding-bottom: 4px; }
   /* The hour columns' headers are buttons, not plain text -- they ARE the
      hour selector now (see addWeatherHeaderRow()'s own comment), replacing

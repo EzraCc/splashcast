@@ -1640,6 +1640,28 @@ function appendValueBar(barsAbove, barsBelow, m, v, heightPct, opacity) {
   barsBelow.appendChild(below);
 }
 
+// Full-width sub-heading for the cloud rows -- clouds is the only one of
+// the three metrics here that's more than one row (Low/Mid/High, +Total
+// when expanded), so unlike Rain/Temp's single-cell row label it gets a
+// real heading of its own, spanning every column the same way
+// .cloud-layer-divider already does. "Show all altitudes" lives here now,
+// not in the panel's own header -- it's a clouds-specific control, not a
+// whole-panel one.
+function addCloudSectionHeading(grid) {
+  const heading = document.createElement('div');
+  heading.className = 'weather-section-heading';
+  const label = document.createElement('span');
+  label.textContent = '☁️ Clouds';
+  heading.appendChild(label);
+  const expandBtn = document.createElement('button');
+  expandBtn.className = 'cloud-expand-btn';
+  expandBtn.type = 'button';
+  expandBtn.textContent = cloudAltitudesExpanded ? 'Show waiver altitudes only' : 'Show all altitudes';
+  expandBtn.addEventListener('click', () => { cloudAltitudesExpanded = !cloudAltitudesExpanded; renderWeatherPanel(); syncUrl(); });
+  heading.appendChild(expandBtn);
+  grid.appendChild(heading);
+}
+
 function addCloudRow(grid, layerKey, label, sub, beyondWaiver) {
   const lab = document.createElement('div');
   lab.className = 'cloud-layer-label' + (beyondWaiver ? ' beyond-waiver' : '');
@@ -2041,17 +2063,9 @@ function renderWeatherPanel() {
     if (evt.key === 'Enter' || evt.key === ' ') { evt.preventDefault(); toggleCollapsed(); }
   });
   head.appendChild(title);
+  container.appendChild(head);
 
   const relevantLayers = DATA.cloud_relevant_layers || ['low', 'mid', 'high'];
-  if (!weatherPanelCollapsed && DATA.clouds) {
-    const expandBtn = document.createElement('button');
-    expandBtn.className = 'cloud-expand-btn';
-    expandBtn.type = 'button';
-    expandBtn.textContent = cloudAltitudesExpanded ? 'Show waiver altitudes only' : 'Show all altitudes';
-    expandBtn.addEventListener('click', () => { cloudAltitudesExpanded = !cloudAltitudesExpanded; renderWeatherPanel(); syncUrl(); });
-    head.appendChild(expandBtn);
-  }
-  container.appendChild(head);
 
   if (weatherPanelCollapsed) return;
 
@@ -2074,9 +2088,8 @@ function renderWeatherPanel() {
   container.appendChild(grid);
 
   addWeatherHeaderRow(grid);
-  if (DATA.rain) addRainRow(grid);
-  if (DATA.temperature) addTempRow(grid);
   if (DATA.clouds) {
+    addCloudSectionHeading(grid);
     // Total is independently-computed whole-sky cover, not low+mid+high
     // summed -- placed above High (never mixed in with the altitude bands
     // themselves) so it reads as the big picture, not the headline number.
@@ -2089,6 +2102,8 @@ function renderWeatherPanel() {
     const rowsToShow = cloudAltitudesExpanded ? CLOUD_LAYERS : CLOUD_LAYERS.filter(l => relevantLayers.includes(l.key));
     rowsToShow.forEach(l => addCloudRow(grid, l.key, l.label, l.sub, cloudAltitudesExpanded && !relevantLayers.includes(l.key)));
   }
+  if (DATA.rain) addRainRow(grid);
+  if (DATA.temperature) addTempRow(grid);
 
   // No per-model color key here -- the main "Model" legend in the side
   // column already maps every model to this same color (MODEL_COLORS_HEX),
