@@ -4,6 +4,15 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Splashcast &mdash; Launch-Site Splash Zones</title>
+<!-- SVG first (scalable, crisp at any size, what modern browsers actually
+     use) -- favicon.ico as the fallback for older/non-SVG-aware contexts,
+     apple-touch-icon for iOS home-screen bookmarks. Same "splash zone"
+     ripple-rings motif the map itself renders, in the app's own default
+     zone color (DEFAULT_ZONE_BASE_COLOR in app.js) rather than an
+     arbitrary icon. -->
+<link rel="icon" type="image/svg+xml" href="favicon.svg">
+<link rel="icon" type="image/x-icon" href="favicon.ico">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
 <link rel="stylesheet" href="assets/css/app.css">
 </head>
 <body>
