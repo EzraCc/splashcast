@@ -475,7 +475,7 @@
   .alt-custom-control { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; font-size: 0.8rem; color: var(--text-secondary); }
   .alt-custom-label { cursor: pointer; user-select: none; }
   .alt-custom-input-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-  .alt-custom-control input[type="number"] {
+  .alt-custom-control input[type="text"] {
     width: 90px; box-sizing: border-box; padding: 3px 6px;
     border: 1px solid var(--border); border-radius: 5px;
     background: var(--surface-1); color: var(--text-primary); font-size: 0.8rem;

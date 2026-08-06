@@ -2,7 +2,14 @@
 
 Dated, terse log of notable changes. For the full design rationale and decision history, see [docs/spec.md](docs/spec.md).
 
-## 2026-08-05
+## 2026-08-06
+
+**"Specific altitude" field: real numeric mobile keyboard, live digit-only filtering**
+- Per direction: switched `#alt-custom-input` from `type="number"` to `type="text" inputmode="numeric" pattern="[0-9]*"` -- `type="number"` shows a keypad with decimal/minus keys on several real mobile browsers regardless of other hints (iOS Safari ignores `inputmode` once `type="number"` is set), which doesn't match an integer-feet field. This combination is the standard portable way to get a real digits-only keypad.
+- New `input` listener strips any non-digit character live as it's typed (paste included, since `input` fires for that too) rather than only cleaning up on blur -- typing/pasting `4a5-b.0c0` now lands as `4500` in the field itself, not just after commit.
+- Range validation (integer, clamped to `[1, this site's waiver]`) was already correct in the existing `change` handler (`DATA.altitudes[DATA.altitudes.length - 1]` is the site's real waiver value) -- unchanged, just now backed by an always-clean digit-only input instead of `type="number"`'s own looser character set.
+- Fixed a CSS selector that would've silently stopped applying (`input[type="number"]` -> `input[type="text"]`) as a result of the type change.
+- Verified in-browser (Playwright, both themes): input attributes correct (`type=text`, `inputmode=numeric`, `pattern=[0-9]*`); typing mixed garbage strips to digits-only live; a value above the site's waiver clamps to the waiver on commit; a value below 1 clamps to 1; zero console errors.
 
 **"Specific altitude" now works in History mode -- forecast-age (T-x) markers simulate at any altitude, not just the ladder**
 - Per direction: History's per-model T-x markers were disabled for a custom altitude for the same reason the whole feature originally launched byAltitude/byTime-only -- `points_history.json` only had precomputed points at the discrete ladder's own altitudes. Since each capture's raw wind profile is already read off disk every time `build_points_history()` runs (just not published), the fix was to publish it: `wind_profiles_by_capture: {capture_date: {hour: {model: [[agl_ft, speed_mph, dir_deg], ...]}}}`, same shape the live view's `wind_profiles` already uses, one per historical capture instead of just the latest.

@@ -607,8 +607,25 @@ document.getElementById('alt-range-reset').addEventListener('click', () => {
 // intent). Reflects state.customAlt into the input/status text and dims the
 // range row while active; safe to call any time state.customAlt, hour, or
 // deploy changes (cheap -- reads zoneFor()'s cache, doesn't re-simulate).
+//
+// type="text" + inputmode="numeric" + pattern="[0-9]*" -- deliberately not
+// type="number": that shows a mobile keypad with decimal/minus keys anyway
+// on several real browsers (iOS Safari ignores inputmode once type=number
+// is set), which doesn't match an integer-feet field. This combination is
+// the standard portable way to get a real numeric-only keypad on a text
+// input. Real validation (integer, clamped to this site's waiver) still
+// happens in JS below on every keystroke and again on commit -- the input
+// type is purely a mobile-keyboard/basic-pattern hint, not the source of
+// truth.
 const altCustomInput = document.getElementById('alt-custom-input');
 const altCustomClear = document.getElementById('alt-custom-clear');
+// Strips anything that isn't a digit as it's typed (pasted content included,
+// since 'input' fires for that too) -- keeps the field itself always
+// integer-clean rather than only cleaning up on blur/Enter.
+altCustomInput.addEventListener('input', () => {
+  const digitsOnly = altCustomInput.value.replace(/\D/g, '');
+  if (digitsOnly !== altCustomInput.value) altCustomInput.value = digitsOnly;
+});
 
 function syncAltCustomUI() {
   const active = state.customAlt !== null;
