@@ -280,7 +280,20 @@ path3dCanvas.addEventListener('pointermove', evt => {
   // sub-pixel jitter on what was meant as a click.
   if (path3dDragDistPx > 4) path3dClearViewPreset();
   path3dYaw += dx * 0.008;
-  path3dPitch = Math.max(-1.4, Math.min(1.4, path3dPitch - dy * 0.008));
+  // Pitch clamped to [0, 90deg] -- NOT allowed to go negative. A negative
+  // pitch means the camera has orbited past looking level and is now
+  // looking up from BELOW the horizon, which flips the sign of sin(pitch)
+  // in path3dRotate()'s sy term -- north (and everything else with a
+  // north component) then renders on the opposite side of the screen
+  // from where it did a moment before, which reads as "the chart broke"
+  // rather than "the camera went upside down" (confirmed directly: a
+  // large enough downward drag from the Top preset, pitch=90deg, swung
+  // pitch past 0 into negative territory and put S where N had been).
+  // Yaw is deliberately left unclamped -- spinning 360 degrees around the
+  // vertical axis is normal orbit-camera behavior and self-consistent
+  // (E/W swap screen sides together with the data, an expected result of
+  // walking around to the other side of the scene, not a broken one).
+  path3dPitch = Math.max(0, Math.min(Math.PI / 2, path3dPitch - dy * 0.008));
   hideTooltip();
   renderDescent3D();
 });
