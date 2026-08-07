@@ -482,10 +482,21 @@ function path3dDrawScene(paths, altFt) {
   // axis (the entire point of a 3D view here is showing vertical descent,
   // and altitude range routinely dwarfs horizontal drift), not an
   // oversight; X vs Y have no equivalent justification for differing.
+  // padOffsetFt (app.js) is the 2D map's "try a nearby setup spot"
+  // exploration -- a pure display-time shift of the whole rigid scene, not
+  // a re-simulation (same wind applies close by), exactly mirroring how
+  // ftToPx() adds it to x_ft/y_ft before scaling to pixels. Added here too
+  // so the 3D view stays in sync with the 2D map's own preview instead of
+  // always showing the true surveyed pad regardless of that exploration --
+  // per direction, the two should track each other. Applied to the raw ft
+  // value BEFORE normalization (both here and in maxXY below), not as a
+  // post-hoc screen-space nudge, so it's a real shift of the world, not a
+  // cosmetic one -- the origin marker and ground-plane image both move
+  // with it, same as the 2D map's own pad crosshair does.
   let maxXY = 1;
   const maxZ = Math.max(1, altFt);
   paths.forEach(p => p.path.forEach(pt => {
-    maxXY = Math.max(maxXY, Math.abs(pt.x_ft), Math.abs(pt.y_ft));
+    maxXY = Math.max(maxXY, Math.abs(pt.x_ft + padOffsetFt.x), Math.abs(pt.y_ft + padOffsetFt.y));
   }));
   const maxX = maxXY, maxY = maxXY;
 
@@ -493,7 +504,7 @@ function path3dDrawScene(paths, altFt) {
   const radius = Math.min(rect.width, rect.height) * 0.34 * path3dZoom;
 
   function toScreen(xFt, yFt, zFt) {
-    const r = path3dRotate(xFt / maxX, yFt / maxY, zFt / maxZ);
+    const r = path3dRotate((xFt + padOffsetFt.x) / maxX, (yFt + padOffsetFt.y) / maxY, zFt / maxZ);
     return [cx + r.sx * radius, cy - r.sy * radius, r.depth];
   }
 
