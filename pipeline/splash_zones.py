@@ -626,6 +626,88 @@ def build_temperature_data(df: pd.DataFrame, target_date: date) -> dict:
     return out
 
 
+# --- Wind, per model/hour (viewer's ground-level go/no-go row) -------------
+# Same rationale as build_rain_data()/build_temperature_data() above:
+# sourced from the raw captured dataframe, never passed through the drift
+# sim. This is ground-level (10m AGL) wind specifically -- the number
+# flyers/LCOs actually use as the go/no-go call (config.WIND_SPEED_NOGO_MPH,
+# Tripoli USC 9-3) -- a separate, much simpler thing from the winds-aloft
+# profile build_profile_single() already publishes for the drift sim.
+
+def build_wind_data(df: pd.DataFrame, target_date: date) -> dict:
+    """{"prior_day": {model: cell}, "morning": {model: cell}, "hourly":
+    {hour: {model: cell}}} where cell = {"speed": mph|None, "gust": mph|None,
+    "direction": deg|None}. hourly covers config.RAIN_WINDOW_START through
+    END_HOUR_LOCAL inclusive (8am-4pm), same time axis as
+    build_rain_data()/build_temperature_data() so all three line up.
+
+    Sourced from the same level_type=="height" & level_value==10.0 filter
+    build_profile_single() already uses for its own surface wind point.
+
+    prior_day/morning cells use the window's MAX sustained speed (same
+    "peak is the safety-relevant read" reasoning build_temperature_data()
+    already established) -- gust/direction for those two aggregate cells
+    are read from that SAME hour the max speed came from, not each field's
+    own independent max, so one cell's three numbers always describe one
+    real reading, never three cherry-picked from different hours.
+
+    "speed"/"gust"/"direction" are each None (not 0) when a model reports
+    no rows at all for that window -- same "missing, not zero" convention
+    as build_cloud_data()/build_rain_data(). "gust" is None wherever a
+    capture predates this field being pulled, or wherever a model simply
+    never got asked for it -- gust doesn't exist at any level besides this
+    one on Open-Meteo (confirmed live), so there's no fallback to reach for.
+
+    Restricted to LIVE_PROFILE_MODELS, same as build_rain_data()/
+    build_cloud_data()/build_temperature_data().
+
+    Not clamped to gust >= speed even though that's true almost everywhere:
+    confirmed directly against a real capture that GFS occasionally reports
+    a lower gust than its own sustained speed at the same hour (e.g. 6.7mph
+    gust vs 7.5mph speed) -- a real quirk of gust-parameterization products
+    at low wind speeds, not a parsing bug here. Published as-is, model's own
+    number, not silently "corrected" into something it didn't actually say.
+    """
+    prior_day_start = datetime.combine(target_date - timedelta(days=1), dtime(0, 0))
+    prior_day_end = datetime.combine(target_date, dtime(0, 0))
+    morning_start = datetime.combine(target_date, dtime(0, 0))
+    morning_end = datetime.combine(target_date, dtime(config.RAIN_WINDOW_START_HOUR_LOCAL, 0))
+    hours = list(range(config.RAIN_WINDOW_START_HOUR_LOCAL, config.RAIN_WINDOW_END_HOUR_LOCAL + 1))
+
+    def surface(m_df: pd.DataFrame) -> pd.DataFrame:
+        return m_df[(m_df["level_type"] == "height") & (m_df["level_value"] == 10.0)]
+
+    def cell_at(w: pd.DataFrame, hdt) -> dict:
+        def val(var: str) -> float | None:
+            row = w[(w["variable"] == var) & (w["valid_time_local"] == hdt)]
+            return round(float(row["value"].iloc[0]), 1) if len(row) else None
+        return {"speed": val("wind_speed"), "gust": val("wind_gusts"), "direction": val("wind_direction")}
+
+    def window_cell(m_df: pd.DataFrame, start: datetime, end: datetime) -> dict:
+        w = surface(m_df)
+        w = w[(w["valid_time_local"] >= start) & (w["valid_time_local"] < end)]
+        spd = w[w["variable"] == "wind_speed"]
+        if not len(spd):
+            return {"speed": None, "gust": None, "direction": None}
+        peak_time = spd.loc[spd["value"].idxmax(), "valid_time_local"]
+        return cell_at(w, peak_time)
+
+    def hour_cell(m_df: pd.DataFrame, hdt: datetime) -> dict:
+        return cell_at(surface(m_df), hdt)
+
+    out: dict = {"prior_day": {}, "morning": {}, "hourly": {h: {} for h in hours}}
+    for m in config.LIVE_PROFILE_MODELS:
+        m_df = df[df["model"] == m]
+        if m_df.empty:
+            continue
+        out["prior_day"][m] = window_cell(m_df, prior_day_start, prior_day_end)
+        out["morning"][m] = window_cell(m_df, morning_start, morning_end)
+        for h in hours:
+            hdt = datetime.combine(target_date, dtime(h, 0))
+            out["hourly"][h][m] = hour_cell(m_df, hdt)
+    return out
+
+
 # --- Manifest (drives the viewer's launch-date selector) -------------------
 
 def _latest_capture(target_dir: Path) -> date | None:
@@ -816,6 +898,8 @@ def run(target_date: date, site_id: str = "hutto") -> None:
 
     zone_data["rain"] = build_rain_data(df, target_date)
     zone_data["temperature"] = build_temperature_data(df, target_date)
+    zone_data["wind"] = build_wind_data(df, target_date)
+    zone_data["wind_nogo_mph"] = config.WIND_SPEED_NOGO_MPH
 
     # config.BURN_BAN_COUNTY_BY_SITE is authoritative here, not just "does a
     # _burnban.json file exist" -- captures pulled before the per-site fix

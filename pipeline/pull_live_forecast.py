@@ -4,8 +4,10 @@ Pulls the *current* forecast (not historical/archived data -- see
 pull_historical.py for that) from Open-Meteo's free endpoints: NOAA's GFS/
 HRRR/NAM/NBM plus ECMWF/DWD ICON/Meteo-France ARPEGE/Environment Canada GEM,
 each on its own endpoint (config.LIVE_MODELS[key]["url"]) rather than one
-shared URL. Pulls surface wind (10m) for all 8 models, and pressure-level
-wind at every level the models offer up to each site's own ceiling
+shared URL. Pulls surface wind speed/direction/gust (10m) for all 8 models
+-- gust is a surface-only diagnostic on Open-Meteo, not available at any
+other height or pressure level -- and pressure-level wind at every level
+the models offer up to each site's own ceiling
 (config.levels_mb_for_site()) for the 6 in config.LIVE_PROFILE_MODELS -- NAM
 (live-side only) and NBM have no
 pressure-level profile here, so they're limited to near-surface heights
@@ -84,7 +86,11 @@ def next_saturday(today: date) -> date:
 
 def _hourly_variables(model_key: str, site_id: str) -> list[str]:
     variables = [
-        "wind_speed_10m", "wind_direction_10m",
+        # wind_gusts_10m: confirmed live this is the ONLY height/level gust
+        # exists at on Open-Meteo -- wind_gusts_{lvl}hPa and wind_gusts_{h}m
+        # (other heights) both hard-error. There's no "gust aloft" to pull
+        # even in principle, not just a field this repo chose to skip.
+        "wind_speed_10m", "wind_direction_10m", "wind_gusts_10m",
         "cloud_cover", "cloud_cover_low", "cloud_cover_mid", "cloud_cover_high",
         "precipitation", "rain", "showers", "precipitation_probability",
         "temperature_2m", "apparent_temperature", "cape",

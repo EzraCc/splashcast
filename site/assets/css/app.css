@@ -19,6 +19,15 @@
     --hot-bg:         #fbe9d0;
     --hot-border:     #c17a17;
     --hot-text:       #8a5a10;
+    /* Wind row's graduated tier scale (windTier() in app.js) -- red reuses
+       --hot-* above verbatim (it's the one tier with a real cited limit,
+       DATA.wind_nogo_mph); these three are the display-only tiers below it.
+       Per-cell backgrounds are derived from these via color-mix() at the
+       rule site (same technique .burn-ban-chip.banned already uses)
+       instead of a bg/border/text triple per tier per theme. */
+    --wind-green:  #2e9e4f;
+    --wind-yellow: #b58900;
+    --wind-orange: #cc5500;
   }
   @media (prefers-color-scheme: dark) {
     :root:where(:not([data-theme="light"])) .viz-root {
@@ -37,6 +46,9 @@
       --hot-bg:         #3d2e12;
       --hot-border:     #e0a542;
       --hot-text:       #f0c27a;
+      --wind-green:  #3fc16a;
+      --wind-yellow: #e8c547;
+      --wind-orange: #ff8a48;
     }
   }
   :root[data-theme="dark"] .viz-root {
@@ -55,6 +67,9 @@
     --hot-bg:         #3d2e12;
     --hot-border:     #e0a542;
     --hot-text:       #f0c27a;
+    --wind-green:  #3fc16a;
+    --wind-yellow: #e8c547;
+    --wind-orange: #ff8a48;
   }
 
   * { box-sizing: border-box; }
@@ -178,13 +193,14 @@
   .layout {
     display: grid;
     grid-template-columns: 1fr 190px;
-    grid-template-areas: "map side" "notes side" "accuracy accuracy";
+    grid-template-areas: "map side" "notes side" "descent3d descent3d" "accuracy accuracy";
     gap: var(--sp-6);
     align-items: start;
   }
   .map-col-map { grid-area: map; min-width: 0; }
   .side-col { grid-area: side; }
   .map-col-notes { grid-area: notes; }
+  .descent3d-section { grid-area: descent3d; min-width: 0; }
   .accuracy-section { grid-area: accuracy; min-width: 0; }
 
   /* The sidebar has grown a lot denser than when 190px was first chosen --
@@ -417,8 +433,32 @@
      overlap. */
   .cloud-cell.cell-hot::after { content: "\26A0"; position: absolute; right: -4px; top: 2px; z-index: 2; }
 
+  /* Wind row's 3 display-only tiers (windTier() in app.js) -- the 4th, red,
+     reuses .cloud-cell.cell-hot above verbatim (zero new CSS for the one
+     tier that's an actual cited limit, DATA.wind_nogo_mph -- keeps that ⚠
+     badge meaningful as one real signal, not stacked across tiers that
+     aren't codified). Background/baseline derived via color-mix() from the
+     3 tokens above rather than a hand-maintained bg/border/text triple per
+     tier per theme. */
+  .cloud-cell.wind-cell.tier-green  { background: color-mix(in srgb, var(--wind-green) 14%, var(--surface-1)); }
+  .cloud-cell.wind-cell.tier-green  .baseline { background: var(--wind-green); }
+  .cloud-cell.wind-cell.tier-yellow { background: color-mix(in srgb, var(--wind-yellow) 16%, var(--surface-1)); }
+  .cloud-cell.wind-cell.tier-yellow .baseline { background: var(--wind-yellow); }
+  .cloud-cell.wind-cell.tier-orange { background: color-mix(in srgb, var(--wind-orange) 18%, var(--surface-1)); }
+  .cloud-cell.wind-cell.tier-orange .baseline { background: var(--wind-orange); }
+
   .cloud-legend { margin-top: 12px; padding-top: 9px; border-top: 1px solid var(--border); }
-  .cloud-legend .hot-key { display: flex; align-items: center; gap: 5px; font-size: var(--fs-xs); color: var(--hot-text); }
+  /* Wind legend key -- 4 small dots (one per tier), the only place the
+     tier scale is explained (unlike clouds' single ⚠ flag, which is
+     explained in-place by its own cell tooltip -- see addCloudRow()'s own
+     comment -- so it no longer gets a standalone legend row at all). */
+  .wind-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; }
+  .wind-tier-key { display: flex; align-items: center; gap: 5px; font-size: var(--fs-xs); color: var(--text-muted); }
+  .wind-tier-dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
+  .wind-tier-dot.tier-green  { background: var(--wind-green); }
+  .wind-tier-dot.tier-yellow { background: var(--wind-yellow); }
+  .wind-tier-dot.tier-orange { background: var(--wind-orange); }
+  .wind-tier-dot.tier-red    { background: var(--hot-border); }
 
   /* Temp's actual/feels-like toggle -- lives inline in its row label now
      (addTempRow()), not a full header row of its own. Stacked vertically,
@@ -443,6 +483,93 @@
      .no-data etc., defined above) at its default 52px height -- rain and
      temp used to be taller (64px) to leave room for a per-cell label that
      no longer exists (the shared header row above carries it once now). */
+
+  /* ==================== 3D descent-path view (descent3d.js) =================== */
+  /* .descent3d-section reuses .weather-panel's own background/border/padding
+     verbatim (see its class list in index.html) -- .weather-head/
+     .weather-title-toggle/.weather-chevron are reused too, for the same
+     generic collapse-header styling every other panel-with-a-title here
+     already uses. Only what's genuinely new to this section gets new rules
+     below. */
+  .descent3d-header-controls { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .descent3d-rate-toggle, .descent3d-view-toggle { flex-shrink: 0; }
+  .descent3d-body { margin-top: var(--sp-4); }
+  .descent3d-empty-hint { font-size: var(--fs-sm); color: var(--text-muted); padding: 20px 0; text-align: center; }
+  /* Canvas on the left, altitude control on the right -- matches the main
+     page's own map (left) + altitude ladder/slider (.side-col, right)
+     layout, so this panel reads as a small mirror of that convention
+     instead of putting the slider on the opposite side from what the rest
+     of the app trained the eye to expect. */
+  .descent3d-main { display: flex; gap: 10px; align-items: stretch; }
+  .descent3d-alt-col { display: flex; flex-direction: column; align-items: center; gap: 8px; flex-shrink: 0; }
+  .descent3d-alt-label {
+    font-size: var(--fs-xs); color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.03em;
+    text-align: center; line-height: 1.4;
+  }
+  .descent3d-alt-label span { font-size: var(--fs-sm); color: var(--text-primary); font-weight: 600; text-transform: none; letter-spacing: normal; }
+
+  /* Same visual language as .alt-range-slider (track/fill/thumb, sized/
+     styled the same way) but its own classes/behavior -- this one's a
+     single continuous-drag thumb (any real ft value, not snapped to the
+     discrete altitude ladder), not the dual min/max range-snap-to-list
+     variant .alt-range-slider is built for. */
+  .descent3d-alt-slider { position: relative; width: 24px; flex: 1 1 auto; touch-action: none; cursor: grab; }
+  .descent3d-alt-slider:active { cursor: grabbing; }
+  .descent3d-alt-slider:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .descent3d-alt-track {
+    position: absolute; left: 50%; top: 0; bottom: 0; width: 4px;
+    transform: translateX(-50%); background: var(--border); border-radius: 2px;
+  }
+  /* Bottom-anchored, not top -- grows upward from the pad (0ft) toward
+     whatever apogee is currently selected, same "stack rising off the
+     ground" reading the thumb's own position already implies. */
+  .descent3d-alt-fill {
+    position: absolute; left: 50%; bottom: 0; width: 4px; transform: translateX(-50%);
+    background: var(--accent); border-radius: 2px; opacity: 0.55;
+  }
+  /* translateX only, deliberately -- `bottom` already anchors this box's
+     BOTTOM edge (not its center), so a translateY(-50%) here would shift
+     the already-bottom-anchored box up by another half its own height on
+     top of that, overshooting the intended center position by a full
+     18px (confirmed directly: the thumb rendered high enough to overlap
+     the readout label above it, not just brush against it). translateY
+     centering is only correct paired with `top` positioning, which this
+     isn't -- see path3dUpdateAltSliderUI()'s own comment for the matching
+     JS-side fix. */
+  .descent3d-alt-thumb {
+    position: absolute; left: 50%; width: 18px; height: 18px;
+    transform: translateX(-50%);
+    background: var(--surface-1); border: 2px solid var(--accent); border-radius: 50%;
+  }
+
+  /* Same aspect-ratio-box + absolute-fill-canvas treatment .map-wrap uses
+     for its SVG -- consistent sizing pattern for the one other real
+     drawing surface in this app, just a <canvas> instead of an <svg>. 4/3
+     rather than .map-wrap's 1/1 -- this view isn't a map, no reason to
+     match its aspect, and 4/3 gives orbit/zoom interaction more usable
+     width on a typical desktop viewport. */
+  .descent3d-canvas-wrap {
+    flex: 1 1 auto; position: relative; min-width: 0; aspect-ratio: 4 / 3;
+    border-radius: 10px; overflow: hidden; border: 1px solid var(--border);
+    background: var(--map-bg); touch-action: none;
+  }
+  #descent3d-canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; cursor: grab; }
+  #descent3d-canvas.dragging { cursor: grabbing; }
+
+  @media (pointer: coarse) {
+    .descent3d-alt-thumb::before {
+      content: ''; position: absolute; top: 50%; left: 50%;
+      width: 44px; height: 44px; transform: translate(-50%, -50%);
+    }
+  }
+
+  /* No separate mobile layout -- the slider stays vertical (24px wide) and
+     the canvas keeps shrinking with it via flex + aspect-ratio at any
+     width, same as every other real-estate-constrained control in this
+     app (the sidebar's own vertical .alt-range-slider does the same,
+     unchanged all the way down to 375px). Flipping this one to a
+     horizontal slider on narrow screens would need its own separate drag-
+     axis math in descent3d.js for no real gain. */
 
   /* =========================== burn-ban status =========================== */
   /* Quiet by default (clear is the common case, most days) -- a small chip.
@@ -809,7 +936,7 @@
   @media (max-width: 760px) {
     .layout {
       grid-template-columns: 1fr;
-      grid-template-areas: "map" "side" "notes" "accuracy";
+      grid-template-areas: "map" "side" "notes" "descent3d" "accuracy";
     }
   }
 
