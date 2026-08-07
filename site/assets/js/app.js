@@ -911,6 +911,7 @@ function buildModelLegend() {
           else state.selectedModels.add(m);
           state.preSoloModels = null; // a manual toggle supersedes any pending solo-undo
           buildModelLegend();
+          renderWeatherPanel(); // weather rows follow the same model checkboxes the map does
           render();
         }, 250);
       });
@@ -927,6 +928,7 @@ function buildModelLegend() {
           state.selectedModels = new Set([m]);
         }
         buildModelLegend();
+        renderWeatherPanel();
         render();
       });
     } else {
@@ -940,6 +942,7 @@ document.getElementById('model-reset').addEventListener('click', () => {
   state.selectedModels = null; // sentinel -- re-resolve to "all available"
   state.preSoloModels = null; // nothing to undo across a reset
   buildModelLegend();
+  renderWeatherPanel();
   render();
 });
 
@@ -1591,6 +1594,18 @@ function hideTooltip() { tooltip.style.display = 'none'; }
 // can actually fly through are clear, discouraging people from prepping and
 // showing up over nothing.
 const CLOUD_MODELS = Object.keys(MODEL_COLORS_HEX);
+
+// Weather-panel rows (clouds/rain/temp/wind) now respect the same model
+// checkboxes the map's own drift paths/points already do, instead of
+// always showing every model regardless of what's deselected -- one
+// shared filter so a deselected model disappears everywhere at once, not
+// just from the map. `state.selectedModels === null` is the same
+// null-sentinel buildModelLegend() itself resolves to "every available
+// model" -- treated the same way here for the (normally brief) window
+// before that resolution has run.
+function weatherPanelModels() {
+  return CLOUD_MODELS.filter(m => state.selectedModels === null || state.selectedModels.has(m));
+}
 const CLOUD_LAYERS = [
   { key: 'high', label: 'High', sub: '26,200ft+' },
   { key: 'mid', label: 'Mid', sub: '9,800–26,200ft' },
@@ -1701,7 +1716,7 @@ function addCloudRow(grid, layerKey, label, sub, beyondWaiver) {
 
   DATA.hours.forEach(h => {
     const cell = document.createElement('div');
-    const vals = CLOUD_MODELS.map(m => ({ m, v: DATA.clouds[m][h] ? DATA.clouds[m][h][layerKey] : null }));
+    const vals = weatherPanelModels().map(m => ({ m, v: DATA.clouds[m][h] ? DATA.clouds[m][h][layerKey] : null }));
     const real = vals.filter(x => x.v !== null);
     const hot = isCloudHot(vals);
     cell.className = 'cloud-cell' + (hot ? ' cell-hot' : '');
@@ -1832,7 +1847,7 @@ function addRainCell(grid, cellData, tooltipLabel, tooltipWindow) {
   baseline.className = 'baseline';
   cell.appendChild(baseline);
 
-  const vals = CLOUD_MODELS.map(m => ({ m, ...(cellData[m] || { amount: null, chance: null }) }));
+  const vals = weatherPanelModels().map(m => ({ m, ...(cellData[m] || { amount: null, chance: null }) }));
   const real = vals.filter(x => x.amount !== null);
 
   if (real.length) {
@@ -1936,7 +1951,7 @@ function addTempCell(grid, cellData, scaleMin, scaleMax, tooltipLabel) {
   cell.appendChild(baseline);
 
   const field = tempShowApparent ? 'apparent' : 'actual';
-  const vals = CLOUD_MODELS.map(m => ({ m, v: cellData[m]?.[field] ?? null }));
+  const vals = weatherPanelModels().map(m => ({ m, v: cellData[m]?.[field] ?? null }));
   const real = vals.filter(x => x.v !== null);
 
   if (real.length) {
@@ -2059,7 +2074,7 @@ function addWindCell(grid, cellData, tooltipLabel) {
   baseline.className = 'baseline';
   cell.appendChild(baseline);
 
-  const vals = CLOUD_MODELS.map(m => ({ m, ...(cellData[m] || { speed: null, gust: null, direction: null }) }));
+  const vals = weatherPanelModels().map(m => ({ m, ...(cellData[m] || { speed: null, gust: null, direction: null }) }));
   const real = vals.filter(x => x.speed !== null);
   // Tiered off the worst (max) reported sustained speed in this cell -- see
   // windTier()'s own comment for why max, not mean.
