@@ -527,9 +527,18 @@
     position: absolute; left: 50%; bottom: 0; width: 4px; transform: translateX(-50%);
     background: var(--accent); border-radius: 2px; opacity: 0.55;
   }
+  /* translateX only, deliberately -- `bottom` already anchors this box's
+     BOTTOM edge (not its center), so a translateY(-50%) here would shift
+     the already-bottom-anchored box up by another half its own height on
+     top of that, overshooting the intended center position by a full
+     18px (confirmed directly: the thumb rendered high enough to overlap
+     the readout label above it, not just brush against it). translateY
+     centering is only correct paired with `top` positioning, which this
+     isn't -- see path3dUpdateAltSliderUI()'s own comment for the matching
+     JS-side fix. */
   .descent3d-alt-thumb {
     position: absolute; left: 50%; width: 18px; height: 18px;
-    transform: translate(-50%, -50%);
+    transform: translateX(-50%);
     background: var(--surface-1); border: 2px solid var(--accent); border-radius: 50%;
   }
 

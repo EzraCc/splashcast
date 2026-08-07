@@ -118,8 +118,19 @@ function path3dResolveAltFt() {
 function path3dUpdateAltSliderUI(altFt) {
   const max = path3dAltSliderMaxFt();
   const frac = max > 0 ? Math.max(0, Math.min(1, altFt / max)) : 0;
-  path3dAltFill.style.height = (frac * 100) + '%';
-  path3dAltThumb.style.bottom = (frac * 100) + '%';
+  // Two different quantities, not one shared formula -- .descent3d-alt-fill
+  // has no transform (its "height" IS the bar's own top-edge distance from
+  // the bottom), while .descent3d-alt-thumb is translateX-only (see its
+  // CSS comment) so its "bottom" IS its own bottom EDGE, not its center.
+  // Both are inset by the thumb's 9px radius so its circle never spills
+  // past the track's ends into whatever sits beside it (confirmed
+  // directly: at frac=1 the thumb's circle overlapped the "Apogee"
+  // readout label sitting just above the track). Deriving both from the
+  // SAME centerFromBottom keeps the fill's top edge and the thumb's own
+  // center exactly aligned with each other, per direction.
+  const centerFromBottom = `calc(9px + (100% - 18px) * ${frac})`;
+  path3dAltFill.style.height = centerFromBottom;
+  path3dAltThumb.style.bottom = `calc(${centerFromBottom} - 9px)`;
   path3dAltReadout.textContent = Math.round(altFt).toLocaleString() + ' ft';
   path3dAltSlider.setAttribute('aria-valuenow', String(Math.round(altFt)));
   path3dAltSlider.setAttribute('aria-valuemin', '0');
@@ -380,16 +391,28 @@ function path3dDetailPxToFt(px, py) {
 // Corners in real feet (relative to the pad), for the image's own 3
 // defining corners: top-left, top-right, bottom-left (a 4th corner is
 // redundant -- 3 points fully determine an affine map).
+//
+// Both layers go through the SAME fractional remap -- a delivered "_web"
+// JPEG's own real pixel dimensions (img.naturalWidth/Height) do NOT
+// necessarily match the resolution site_px/ft_to_px_scale were computed
+// against server-side (confirmed directly: hutto's detail_sat_web.jpg is
+// 1600x1600 but DATA.image_view_box says 3384x3384; hearne's is
+// 1599x1600 against a published 2035x2036 -- the "_web" files are resized
+// down for file size, independently of the geo-registration math). An
+// earlier version treated the detail image's own native pixel space as
+// if it WERE already detail-pixel-space with no remap at all, which
+// squashed it toward its own top-left corner by whatever the resize
+// factor happened to be -- correct at exactly pixel (0,0), increasingly
+// wrong moving away from it, which is why it looked closer to right for
+// hutto (small site_px offset from that corner) and badly wrong for
+// hearne (confirmed via a user screenshot: pad crosshair and 3D origin
+// landed nowhere near each other on the same imagery). DATA.image_view_box
+// (always [0,0,true_w,true_h]) is the detail image's own equivalent of
+// wide_view_box -- using it here the same way removes the asymmetry.
 function path3dGroundCornersFt(kind, img) {
   const w = img.naturalWidth, h = img.naturalHeight;
+  const [vx, vy, vw, vh] = kind === 'detail' ? DATA.image_view_box : DATA.wide_view_box;
   const corners = [[0, 0], [w, 0], [0, h]];
-  if (kind === 'detail') {
-    return corners.map(([px, py]) => path3dDetailPxToFt(px, py));
-  }
-  // wide: first remap its own native pixel space into detail-pixel space
-  // via DATA.wide_view_box ([vx, vy, vw, vh]), same as app.js's render()
-  // does when positioning the <image> element for the 2D map.
-  const [vx, vy, vw, vh] = DATA.wide_view_box;
   return corners.map(([px, py]) => path3dDetailPxToFt(vx + (px / w) * vw, vy + (py / h) * vh));
 }
 
