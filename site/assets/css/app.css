@@ -152,11 +152,16 @@
   .toggle-btns button:hover:not(.active) { background: var(--surface-2); }
   .toggle-group.disabled { opacity: 0.4; pointer-events: none; }
   /* Rail angle moved up into the controls bar from its old home below the
-     map (.map-col-notes) -- a fixed width here instead of the flex:1 1 auto
-     it used when it had a wide standalone row to itself, since .controls
-     wraps several compact toggle-groups side by side and letting the
-     slider stretch would eat the row. */
-  #boost-angle-slider { width: 100px; accent-color: var(--accent); }
+     map (.map-col-notes). A fixed 100px here (rather than the flex:1 1 auto
+     it used when it had a wide standalone row to itself) turned out too
+     narrow to drag precisely on a touchscreen -- 25 steps packed into 100px
+     is ~4px per step. min() instead of a flat value: grows to a real drag
+     range (up to 220px) on anything wider than a phone, but on a narrow
+     phone -- where .controls wraps this into its own row with plenty of
+     width to spare -- caps at 60% of the viewport rather than a fixed px
+     figure, so it can't overflow a viewport narrower than 220px/0.6 (367px)
+     the way a flat 220px would. */
+  #boost-angle-slider { width: min(220px, 60vw); accent-color: var(--accent); }
   .boost-angle-readout { color: var(--text-primary); font-weight: 600; font-size: var(--fs-base); }
   .copy-link-btn {
     border: 1px solid var(--border); border-radius: 8px; background: var(--surface-1); color: var(--text-primary);

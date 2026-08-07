@@ -490,11 +490,15 @@ function setMode(mode) {
   // doesn't apply here
   state.isolatedAlt = null; state.pinnedAlt = null;
   state.isolatedHour = null; state.pinnedHour = null;
-  // null sentinel -- byAltitude/byTime and byHistory read different
-  // availability sources (modelsWithData() vs historyModelsAvailable()), so
-  // re-resolve to "all available" for whichever mode this is switching to
-  // rather than carrying over a selection that might not even exist there.
-  state.selectedModels = null;
+  // selectedModels is deliberately NOT reset here -- carry the user's model
+  // checkboxes across a mode switch instead of silently reselecting every
+  // model. byAltitude/byTime and byHistory do read different availability
+  // sources (modelsWithData() vs historyModelsAvailable()), but
+  // buildModelLegend() already drops anything not valid for the new mode
+  // and only falls back to "all available" if that empties the selection
+  // entirely -- no separate reset needed here, and doing it here as well
+  // was overriding that logic on every single mode switch, not just the
+  // byHistory edge case it was meant for.
   state.preSoloModels = null; // nothing to undo across a mode switch
   state.isolatedCapture = null; state.pinnedCapture = null;
   // Rate resets here too, same as everything else above -- otherwise the
