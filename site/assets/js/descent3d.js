@@ -46,6 +46,11 @@ let path3dPitch = 22 * Math.PI / 180;
 let path3dZoom = 1;
 let path3dRate = 'fast';
 let path3dCollapsed = true;
+// Default ON -- unlike most of this app's toggles (default-minimal, opt
+// in), this is a brand-new visualization being evaluated for the first
+// time; showing it immediately makes that evaluation possible without an
+// extra click, and it's one click to turn back off if it's too busy.
+let path3dShowGround = true;
 
 // Set only by dragging this panel's own slider (altSlider's pointerdown
 // handler below) -- null means "follow the sidebar" (see resolveAltFt()).
@@ -72,6 +77,7 @@ const path3dTitleToggle = document.getElementById('descent3d-title-toggle');
 const path3dChevron = document.getElementById('descent3d-chevron');
 const path3dRateToggle = document.getElementById('descent3d-rate-toggle');
 const path3dViewToggle = document.getElementById('descent3d-view-toggle');
+const path3dGroundToggle = document.getElementById('descent3d-ground-toggle');
 const path3dAltSlider = document.getElementById('descent3d-alt-slider');
 const path3dAltFill = document.getElementById('descent3d-alt-fill');
 const path3dAltThumb = document.getElementById('descent3d-alt-thumb');
@@ -204,6 +210,12 @@ function path3dClearViewPreset() {
   path3dViewToggle.querySelectorAll('button').forEach(b => b.classList.remove('active'));
 }
 
+path3dGroundToggle.querySelector('button').addEventListener('click', evt => {
+  path3dShowGround = !path3dShowGround;
+  evt.currentTarget.classList.toggle('active', path3dShowGround);
+  renderDescent3D();
+});
+
 function path3dAltFromClientY(clientY) {
   const rect = path3dAltSlider.getBoundingClientRect();
   const frac = 1 - Math.max(0, Math.min(1, (clientY - rect.top) / rect.height));
@@ -320,6 +332,87 @@ if (window.ResizeObserver) {
   window.addEventListener('resize', () => { if (!path3dCollapsed) renderDescent3D(); });
 }
 
+// --- ground-plane imagery (satellite/road texture on the z=0 plane) -------
+// Reuses the exact same image files and geo-registration data the 2D map
+// already publishes (DATA.site_px/ft_to_px_scale/wide_view_box/
+// image_view_box, render()'s wideImage/detailImage construction in
+// app.js) -- no new pipeline work, purely a client-side addition. Lazy-
+// loaded per (site, layer) pair, cached, keyed off the same global
+// mapLayer ("sat"/"road") the 2D map's own Satellite/Road toggle already
+// drives, so that toggle switches this texture too.
+const path3dGroundImages = new Map();
+function path3dGetGroundImage(kind) {
+  const key = `${currentSiteId}_${mapLayer}_${kind}`;
+  let img = path3dGroundImages.get(key);
+  if (!img) {
+    img = new Image();
+    img.onload = () => { if (path3dShowGround && !path3dCollapsed) renderDescent3D(); };
+    img.src = `maps/${currentSiteId}/${kind}_${mapLayer}_web.jpg`;
+    path3dGroundImages.set(key, img);
+  }
+  return img;
+}
+
+// Both source images live in one shared pixel space (the DETAIL image's
+// own native pixel grid -- app.js's render() positions the wide image
+// into that same space via DATA.wide_view_box, not its own separate
+// space). Real feet convert to/from that space via
+// DATA.site_px/ft_to_px_scale (ft_to_px_scale's own comment in
+// splash_zones.py: "exposing scale.x/scale.y explicitly... is what lets
+// the boost-angle buffer move client-side" -- same published fields,
+// reused here for a different client-side geometry need).
+function path3dDetailPxToFt(px, py) {
+  return [(px - DATA.site_px[0]) / DATA.ft_to_px_scale.x, (DATA.site_px[1] - py) / DATA.ft_to_px_scale.y];
+}
+// Corners in real feet (relative to the pad), for the image's own 3
+// defining corners: top-left, top-right, bottom-left (a 4th corner is
+// redundant -- 3 points fully determine an affine map).
+function path3dGroundCornersFt(kind, img) {
+  const w = img.naturalWidth, h = img.naturalHeight;
+  const corners = [[0, 0], [w, 0], [0, h]];
+  if (kind === 'detail') {
+    return corners.map(([px, py]) => path3dDetailPxToFt(px, py));
+  }
+  // wide: first remap its own native pixel space into detail-pixel space
+  // via DATA.wide_view_box ([vx, vy, vw, vh]), same as app.js's render()
+  // does when positioning the <image> element for the 2D map.
+  const [vx, vy, vw, vh] = DATA.wide_view_box;
+  return corners.map(([px, py]) => path3dDetailPxToFt(vx + (px / w) * vw, vy + (py / h) * vh));
+}
+
+// Solves the 2x3 affine matrix [a,b,c,d,e,f] (ctx.transform()'s own
+// argument order) mapping source points (0,0)/(w,0)/(0,h) to their given
+// screen-space images -- i.e. reconstructs an affine map from 3
+// correspondences.  p0->s0, p1->s1, p2->s2 with p0=(0,0), p1=(w,0),
+// p2=(0,h): a=(s1x-s0x)/w, b=(s1y-s0y)/w, c=(s2x-s0x)/h, d=(s2y-s0y)/h,
+// e=s0x, f=s0y.
+function path3dSolveAffine(w, h, s0, s1, s2) {
+  return [(s1[0] - s0[0]) / w, (s1[1] - s0[1]) / w, (s2[0] - s0[0]) / h, (s2[1] - s0[1]) / h, s0[0], s0[1]];
+}
+
+// Orthographic projection of a flat (z=0) rectangle is exactly an affine
+// transform (toScreen(x,y,0) reduces to a 2x2 matrix multiply + constant
+// translation, the z-term drops out entirely) -- so this draws with zero
+// warping error, not an approximation. At the East/North view presets
+// (looking edge-on at the ground plane), the 3 corners' screen positions
+// collapse toward a line and the resulting transform squashes the image
+// to a near-zero-height sliver -- mathematically valid and visually
+// correct (you genuinely are looking at the ground edge-on from there),
+// not a bug to "fix" later.
+function path3dDrawGroundLayer(kind, toScreen) {
+  const img = path3dGetGroundImage(kind);
+  if (!img.complete || !img.naturalWidth) return; // not loaded yet -- onload above re-renders when ready
+  const cornersFt = path3dGroundCornersFt(kind, img);
+  const [s0, s1, s2] = cornersFt.map(([xFt, yFt]) => toScreen(xFt, yFt, 0));
+  const ctx = path3dCtx;
+  ctx.save();
+  // transform(), not setTransform() -- composes onto the devicePixelRatio
+  // scale path3dDrawScene() already applied, rather than replacing it.
+  ctx.transform(...path3dSolveAffine(img.naturalWidth, img.naturalHeight, s0, s1, s2));
+  ctx.drawImage(img, 0, 0);
+  ctx.restore();
+}
+
 function path3dShowEmpty(msg) {
   path3dEmptyHint.textContent = msg;
   path3dEmptyHint.style.display = '';
@@ -389,6 +482,15 @@ function path3dDrawScene(paths, altFt) {
   function toScreen(xFt, yFt, zFt) {
     const r = path3dRotate(xFt / maxX, yFt / maxY, zFt / maxZ);
     return [cx + r.sx * radius, cy - r.sy * radius, r.depth];
+  }
+
+  // Ground plane first, before axes/paths, so it reads as a floor
+  // underneath them -- wide layer behind (broad coverage), detail layer
+  // in front (sharper close-up near the pad), same compositing order the
+  // 2D map itself uses.
+  if (path3dShowGround) {
+    path3dDrawGroundLayer('wide', toScreen);
+    path3dDrawGroundLayer('detail', toScreen);
   }
 
   path3dDrawAxes(toScreen, maxX, maxY, maxZ, rect.width, rect.height);
