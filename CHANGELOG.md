@@ -2,6 +2,14 @@
 
 Dated, terse log of notable changes. For the full design rationale and decision history, see [docs/spec.md](docs/spec.md).
 
+## 2026-08-07
+
+**Follow-up: reverted the hour-button relocation above the "Weather" heading -- it broke horizontal-scroll alignment**
+- The 2026-08-06 change rendered the 9/11/1/3 hour buttons into their own separate `.weather-header-grid` instance above `.weather-head`, distinct from the data grid's `.weather-grid` below. Each is its own independent scroll container (`.weather-grid`'s `overflow-x: auto`), so on a narrow viewport where the row actually overflows, scrolling the data columns left the header buttons behind -- the two scrolled independently, which defeats the entire point of a shared column grid (the buttons no longer reliably labeled the columns under them).
+- Reverted to the pre-08-06 structure: `addWeatherHeaderRow()` is called once again as `.weather-grid`'s own first row (in `renderWeatherPanel()`), not a second grid instance. One scroll container, so the header and data always move together by construction -- not something that needs testing to hold, it's structurally guaranteed. Removed the now-dead `.weather-header-grid` CSS rule and the split-grid explanation in its comment; restored `index.html`'s comment above `#weather-panel` to match.
+- Trade-off knowingly reintroduced: the hour buttons are no longer clickable while the weather panel is collapsed (they unmount with the rest of `.weather-grid`) -- accepted, since correct column alignment matters more than that edge case.
+- Verified in-browser (Playwright, both themes, 375/760/1024/1440px): exactly one `.weather-grid` exists, no `.weather-header-grid` anywhere in the DOM; at 375px, where the row actually overflows (444px content in a 309px container), scrolling the grid moves the hour buttons and the data cells by the identical `scrollLeft` -- the specific regression this reverts; hour buttons still update `state.hour`/redraw the map; `byTime` mode still disables them via `#weather-panel.hours-disabled`; collapsing the panel now hides the buttons along with the rest of the grid (intentional, see trade-off above); zero horizontal page overflow; zero console errors.
+
 ## 2026-08-06
 
 **Rail-angle slider moved from below the map into the controls bar, next to View**
