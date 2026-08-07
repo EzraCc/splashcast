@@ -260,20 +260,24 @@
   }
   .cloud-expand-btn:hover { text-decoration: underline; }
 
-  /* One grid for every row -- header, rain, temp, and the cloud layer rows
-     all append their cells into this same container (see app.js's
-     renderWeatherPanel()/addWeatherHeaderRow()/addRainRow()/addTempRow()/
-     addCloudRow()), relying on CSS grid's row-wrapping auto-placement: as
-     long as each logical row's cells sum to exactly 7 column-units (label +
-     Prior day + Morning + 4 hours), it wraps to a new line on its own with
-     no explicit grid-row/grid-column-start bookkeeping needed. Label column
-     wider than the data columns -- needs to fit the temp row's inline
-     actual/feels-like toggle, not just a short "Rain"/"Low" string.
-     row-gap 16px, not smaller -- .cloud-cell .range-num floats to -14px
-     above its own cell (position:absolute relative to .cloud-cell), which
-     only avoids colliding with whatever's above it because every row here
-     leaves that much clearance below it. This is a real, deliberate pixel
-     coupling, not an arbitrary value -- don't shrink one without the other. */
+  /* Rain, temp, and the cloud layer rows all append their cells into one
+     shared grid container (see app.js's renderWeatherPanel()/addRainRow()/
+     addTempRow()/addCloudRow()), relying on CSS grid's row-wrapping
+     auto-placement: as long as each logical row's cells sum to exactly 7
+     column-units (label + Prior day + Morning + 4 hours), it wraps to a new
+     line on its own with no explicit grid-row/grid-column-start bookkeeping
+     needed. The header row (addWeatherHeaderRow()) uses this same class
+     but lives in its OWN separate grid instance above .weather-head, not
+     this container -- see .weather-header-grid below -- so the two never
+     share rows; only the column template (and cell widths) are shared.
+     Label column wider than the data columns -- needs to fit the temp
+     row's inline actual/feels-like toggle, not just a short "Rain"/"Low"
+     string. row-gap 16px, not smaller -- .cloud-cell .range-num floats to
+     -14px above its own cell (position:absolute relative to .cloud-cell),
+     which only avoids colliding with whatever's above it because every row
+     here leaves that much clearance below it. This is a real, deliberate
+     pixel coupling, not an arbitrary value -- don't shrink one without the
+     other. */
   .weather-grid {
     display: grid;
     grid-template-columns: minmax(78px, auto) repeat(2, minmax(56px, 1fr)) repeat(4, minmax(52px, 1fr));
@@ -283,6 +287,12 @@
        own text needs, same pattern already used for .accuracy-table-wrap. */
     overflow-x: auto;
   }
+  /* The header row's own grid instance -- sits above .weather-head (the
+     "Weather ▾" title), not inside the collapsible data grid below, since
+     the hour buttons drive the map itself and should stay clickable even
+     with the panel collapsed. row-gap doesn't matter here (single row) but
+     margin-bottom keeps it visually separate from the title under it. */
+  .weather-header-grid { margin-bottom: var(--sp-4); }
   .weather-corner { grid-column: span 1; }
   /* Full-width sub-heading for the cloud rows only -- clouds is the one
      metric here that's more than a single row (Low/Mid/High, +Total when

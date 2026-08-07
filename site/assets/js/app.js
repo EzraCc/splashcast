@@ -2050,6 +2050,18 @@ function renderWeatherPanel() {
   container.style.display = '';
   container.innerHTML = '';
 
+  // The header row (Prior day/Morning labels + the 9/11/1/3 hour buttons)
+  // renders above the "Weather" title itself, in its own single-row grid --
+  // not inside the collapsible grid below, and unconditionally (even while
+  // weatherPanelCollapsed), since the buttons are the map's own hour
+  // control as much as they are this panel's column header. Same
+  // .weather-grid column template as the data grid below for consistent
+  // cell widths, just a separate grid instance (not sharing rows with it).
+  const headerGrid = document.createElement('div');
+  headerGrid.className = 'weather-grid weather-header-grid';
+  container.appendChild(headerGrid);
+  addWeatherHeaderRow(headerGrid);
+
   const head = document.createElement('div');
   head.className = 'weather-head';
 
@@ -2090,7 +2102,6 @@ function renderWeatherPanel() {
   grid.className = 'weather-grid';
   container.appendChild(grid);
 
-  addWeatherHeaderRow(grid);
   if (DATA.clouds) {
     const shownLayers = cloudAltitudesExpanded ? CLOUD_LAYERS.map(l => l.key) : relevantLayers;
     const shownLabel = shownLayers.map(k => CLOUD_LAYERS.find(l => l.key === k).label).join(' + ');
