@@ -151,6 +151,13 @@
   .toggle-btns button.active { background: var(--accent); color: #fff; font-weight: 600; }
   .toggle-btns button:hover:not(.active) { background: var(--surface-2); }
   .toggle-group.disabled { opacity: 0.4; pointer-events: none; }
+  /* Rail angle moved up into the controls bar from its old home below the
+     map (.map-col-notes) -- a fixed width here instead of the flex:1 1 auto
+     it used when it had a wide standalone row to itself, since .controls
+     wraps several compact toggle-groups side by side and letting the
+     slider stretch would eat the row. */
+  #boost-angle-slider { width: 100px; accent-color: var(--accent); }
+  .boost-angle-readout { color: var(--text-primary); font-weight: 600; font-size: var(--fs-base); }
   .copy-link-btn {
     border: 1px solid var(--border); border-radius: 8px; background: var(--surface-1); color: var(--text-primary);
     padding: 7px 14px; font-size: var(--fs-base); cursor: pointer;
@@ -706,10 +713,6 @@
 
   .buffer-note { display: flex; align-items: center; gap: var(--sp-4); font-size: var(--fs-base); color: var(--text-secondary); max-width: 620px; }
   .buffer-swatch { width: 20px; height: 14px; border-radius: 3px; flex-shrink: 0; background: #4a3aa7; opacity: 0.30; border: 1px solid #4a3aa7; }
-  .boost-angle-control { display: flex; align-items: center; gap: var(--sp-4); margin-top: var(--sp-3); max-width: 620px; }
-  .boost-angle-control label { font-size: var(--fs-base); color: var(--text-secondary); white-space: nowrap; }
-  .boost-angle-control input[type="range"] { flex: 1 1 auto; accent-color: var(--accent); }
-  .boost-angle-control #boost-angle-readout { color: var(--text-primary); font-weight: 600; }
   .pad-move-control { display: flex; align-items: center; gap: var(--sp-4); margin-top: var(--sp-3); max-width: 620px; font-size: var(--fs-base); color: var(--text-secondary); flex-wrap: wrap; }
   #pad-readout { font-weight: 600; color: var(--text-primary); }
   #pad-reset-btn {

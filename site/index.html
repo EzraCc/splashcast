@@ -39,6 +39,11 @@
         <div class="toggle-btns" id="mode-toggle"></div>
       </div>
       <div class="toggle-group">
+        <label class="group-label" for="boost-angle-slider">Rail angle</label>
+        <input type="range" id="boost-angle-slider" min="0" max="25" step="1" value="10">
+        <span class="boost-angle-readout" id="boost-angle-readout">10&deg;</span>
+      </div>
+      <div class="toggle-group">
         <button id="copy-link-btn" type="button" class="copy-link-btn" title="Copy a link to exactly this site/date/view">Copy link</button>
       </div>
     </div>
@@ -152,11 +157,7 @@
         <div class="buffer-swatch" id="buffer-swatch"></div>
         <span>Rail-buffer band <button class="info-btn" type="button" data-hint="buffer-hint" title="Show details">i</button></span>
       </div>
-      <div class="alt-hint" id="buffer-hint">Faint outer band = a launch-rail/weathercock buffer added to the wind-only zone (grows with altitude), angle adjustable below. Starts zoomed to Chandler Road (south) / TX 29 East (north); zoom out for real satellite imagery of the wider area &mdash; some slower/higher scenarios drift well past the close view.</div>
-      <div class="boost-angle-control">
-        <label for="boost-angle-slider">Boost/rail angle buffer: <span id="boost-angle-readout">10&deg;</span></label>
-        <input type="range" id="boost-angle-slider" min="0" max="25" step="1" value="10">
-      </div>
+      <div class="alt-hint" id="buffer-hint">Faint outer band = a launch-rail/weathercock buffer added to the wind-only zone (grows with altitude), angle adjustable via "Rail angle" in the controls bar above the map. Starts zoomed to Chandler Road (south) / TX 29 East (north); zoom out for real satellite imagery of the wider area &mdash; some slower/higher scenarios drift well past the close view.</div>
       <div class="pad-move-control">
         <span id="pad-readout">Pad at surveyed GPS position</span>
         <button id="pad-reset-btn" type="button" style="display:none;">Reset pad position</button>
