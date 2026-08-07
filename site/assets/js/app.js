@@ -1156,6 +1156,13 @@ function applyIsolation() {
     });
   }
   syncUrl();
+  // Hover/pin on the altitude ladder only ever triggered this lightweight
+  // SVG-visibility toggle before, not a full render() -- without this the
+  // 3D view (descent3d.js) would go stale on every hover, since that's one
+  // of the altitude-resolution chain's own inputs (see its own comment).
+  // Guarded, not a hard reference, so app.js doesn't break if that file is
+  // ever missing/fails to load.
+  if (typeof renderDescent3D === 'function') renderDescent3D();
 }
 
 // --- pan / zoom (viewBox-based) ---
@@ -1479,7 +1486,6 @@ timeColorReset.addEventListener('click', () => {
 // --- pad-move reset/readout (dragging itself is wired in drawPadMarker()) ---
 const padReadout = document.getElementById('pad-readout');
 const padResetBtn = document.getElementById('pad-reset-btn');
-const padHint = document.getElementById('pad-hint');
 padResetBtn.addEventListener('click', () => {
   padOffsetFt = { x: 0, y: 0 };
   // Same reasoning as the pad-drag handler -- explicitly moving the pad
@@ -1604,6 +1610,25 @@ function isCloudHot(vals) {
   if (!real.length) return false;
   const atOrAbove = real.filter(x => x.v >= DATA.cloud_nogo_pct).length;
   return atOrAbove / real.length >= 0.5;
+}
+
+// Ground-level wind row's tier scale -- DATA.wind_nogo_mph (config.
+// WIND_SPEED_NOGO_MPH, Tripoli USC §9-3 / NAR Safety Code item 9's 20mph
+// sustained-wind limit) is the ONE real cited number here, same standing as
+// DATA.cloud_nogo_pct above. The two breakpoints below it are NOT codified
+// -- just a graduated "getting worse" read (calm/breezy/gusty) chosen for
+// display, kept out of config.py specifically so nothing there implies a
+// citation that doesn't exist. Tiered off the cell's WORST (max) reported
+// sustained speed, same "peak is the safety-relevant read" precedent
+// build_temperature_data() established pipeline-side.
+const WIND_TIER_YELLOW_MIN_MPH = 8;
+const WIND_TIER_ORANGE_MIN_MPH = 16;
+function windTier(mph) {
+  if (mph === null) return null;
+  if (mph >= DATA.wind_nogo_mph) return 'red';
+  if (mph >= WIND_TIER_ORANGE_MIN_MPH) return 'orange';
+  if (mph >= WIND_TIER_YELLOW_MIN_MPH) return 'yellow';
+  return 'green';
 }
 
 // Shared by addCloudRow() and addRainCell() -- three states per model,
@@ -2010,6 +2035,100 @@ function addTempRow(grid) {
   });
 }
 
+// --- ground-level wind row -- see splash_zones.py's build_wind_data() and
+// windTier()'s own comment above. The one row here with a real go/no-go
+// line drawn in it (DATA.wind_nogo_mph, the red tier), so it leads the
+// panel (see renderWeatherPanel()) rather than sitting after clouds/rain/
+// temp by default inertia.
+//
+// Bar height is scaled against a fixed ceiling (WIND_BAR_MAX_MPH), not a
+// per-capture range like temperature's -- unlike temperature, wind speed
+// has a real, meaningful fixed reference point (DATA.wind_nogo_mph) that a
+// floating per-capture scale would obscure: a "high" bar should always
+// mean the same thing (visually approaching/at the code limit) across
+// every capture, not just "the windiest reading THIS capture happened to
+// have." 30mph gives DATA.wind_nogo_mph (20) headroom to still read as
+// distinctly-less-than-full, rather than every red cell topping out
+// identically regardless of how far past 20 it actually is.
+const WIND_BAR_MAX_MPH = 30;
+
+function addWindCell(grid, cellData, tooltipLabel) {
+  const cell = document.createElement('div');
+
+  const baseline = document.createElement('div');
+  baseline.className = 'baseline';
+  cell.appendChild(baseline);
+
+  const vals = CLOUD_MODELS.map(m => ({ m, ...(cellData[m] || { speed: null, gust: null, direction: null }) }));
+  const real = vals.filter(x => x.speed !== null);
+  // Tiered off the worst (max) reported sustained speed in this cell -- see
+  // windTier()'s own comment for why max, not mean.
+  const tier = real.length ? windTier(Math.max(...real.map(x => x.speed))) : null;
+  cell.className = 'cloud-cell wind-cell' + (tier === 'red' ? ' cell-hot' : tier ? ' tier-' + tier : '');
+
+  if (real.length) {
+    const nums = real.map(x => x.speed);
+    const lo = Math.min(...nums), hi = Math.max(...nums);
+    const gusts = real.map(x => x.gust).filter(g => g !== null);
+    const rangeNum = document.createElement('div');
+    rangeNum.className = 'range-num';
+    rangeNum.textContent = (lo === hi ? `${Math.round(lo)}` : `${Math.round(lo)}-${Math.round(hi)}`)
+      + (gusts.length ? ` · G${Math.round(Math.max(...gusts))}` : '');
+    cell.appendChild(rangeNum);
+  }
+
+  const bars = document.createElement('div');
+  bars.className = 'bars';
+  cell.appendChild(bars);
+  vals.forEach(({ m, speed }) => {
+    const bar = document.createElement('div');
+    if (speed === null) {
+      bar.className = 'cloud-bar bar-nodata';
+    } else {
+      bar.className = 'cloud-bar';
+      bar.style.height = Math.max(0, Math.min(100, (speed / WIND_BAR_MAX_MPH) * 100)) + '%';
+      bar.style.background = MODEL_COLORS_HEX[m];
+    }
+    bars.appendChild(bar);
+  });
+
+  if (!real.length) {
+    const nodata = document.createElement('div');
+    nodata.className = 'no-data';
+    cell.appendChild(nodata);
+  }
+
+  cell.addEventListener('mousemove', evt => {
+    const rows = vals.map(({ m, speed, gust, direction }) => {
+      const isHigh = speed !== null && speed >= DATA.wind_nogo_mph;
+      const text = speed === null ? 'no data'
+        : `${Math.round(speed)} mph${gust !== null ? ` (G${Math.round(gust)})` : ''}${direction !== null ? ` @ ${Math.round(direction)}°` : ''}`;
+      return `<div class="tt-model-name"><b>${MODEL_LABELS[m] || m.toUpperCase()}</b></div>` +
+        `<div class="tt-model-pct${isHigh ? ' pct-high' : ''}">${text}</div>`;
+    }).join('');
+    tooltip.innerHTML = `<div class="tt-cloud-grid">${rows}</div>` +
+      `<div class="tt-cloud-footer" style="color:var(--text-muted);">${tooltipLabel} ground-level wind (10m AGL)</div>`;
+    tooltip.style.display = 'block';
+    positionTooltip(evt);
+  });
+  cell.addEventListener('mouseleave', hideTooltip);
+
+  grid.appendChild(cell);
+}
+
+function addWindRow(grid) {
+  const lab = document.createElement('div');
+  lab.className = 'weather-row-label';
+  lab.innerHTML = '💨 Wind';
+  grid.appendChild(lab);
+
+  addWindCell(grid, DATA.wind.prior_day, 'Prior day');
+  addWindCell(grid, DATA.wind.morning, 'Morning');
+  DATA.hours.forEach(h => {
+    addWindCell(grid, DATA.wind.hourly[h], HOUR_LABELS[h]);
+  });
+}
+
 // Shared header row: blank corner, Prior day, Morning, then 4 hour buttons
 // -- the buttons ARE the hour selector now (formerly the standalone
 // #hour-toggle in .controls, see initFromData()/the real-flight-jump
@@ -2050,7 +2169,7 @@ function addWeatherHeaderRow(grid) {
 
 function renderWeatherPanel() {
   const container = document.getElementById('weather-panel');
-  if (!DATA.rain && !DATA.temperature && !DATA.clouds) { container.style.display = 'none'; return; } // pre-feature captures never regenerated
+  if (!DATA.rain && !DATA.temperature && !DATA.clouds && !DATA.wind) { container.style.display = 'none'; return; } // pre-feature captures never regenerated
   container.style.display = '';
   container.innerHTML = '';
 
@@ -2095,6 +2214,7 @@ function renderWeatherPanel() {
   container.appendChild(grid);
 
   addWeatherHeaderRow(grid);
+  if (DATA.wind) addWindRow(grid);
   if (DATA.clouds) {
     const shownLayers = cloudAltitudesExpanded ? CLOUD_LAYERS.map(l => l.key) : relevantLayers;
     const shownLabel = shownLayers.map(k => CLOUD_LAYERS.find(l => l.key === k).label).join(' + ');
@@ -2117,15 +2237,22 @@ function renderWeatherPanel() {
   // No per-model color key here -- the main "Model" legend in the side
   // column already maps every model to this same color (MODEL_COLORS_HEX),
   // so repeating it in this panel too would just be noise.
-  if (DATA.clouds) {
+  if (DATA.wind) {
     const legend = document.createElement('div');
-    legend.className = 'cloud-legend';
-    const hotKey = document.createElement('div');
-    hotKey.className = 'hot-key';
-    hotKey.innerHTML = `<span class="cloud-badge">&#9888;</span> majority ≥${DATA.cloud_nogo_pct}% covered`;
-    legend.appendChild(hotKey);
+    legend.className = 'cloud-legend wind-legend';
+    legend.innerHTML =
+      '<span class="wind-tier-key"><span class="wind-tier-dot tier-green"></span>&le;7 calm</span>' +
+      '<span class="wind-tier-key"><span class="wind-tier-dot tier-yellow"></span>8-15 breezy</span>' +
+      '<span class="wind-tier-key"><span class="wind-tier-dot tier-orange"></span>16-19 gusty</span>' +
+      `<span class="wind-tier-key"><span class="wind-tier-dot tier-red"></span>&ge;${DATA.wind_nogo_mph} no-go (Tripoli §9-3)</span>`;
     container.appendChild(legend);
   }
+  // No separate cloud legend row -- the ⚠ badge/bolded-value treatment is
+  // already explained in the cell's own tooltip (see addCloudRow()'s
+  // mousemove handler) every time it actually appears. A standalone
+  // "majority >=50% covered" line below the grid read as its own ambient
+  // warning rather than a legend, sitting there regardless of whether any
+  // cell was actually flagged that capture.
 }
 
 // --- burn-ban status (see pull_live_forecast.py's fetch_burn_ban()) --------
@@ -2498,6 +2625,69 @@ function simulateDrift(profile, apogeeFt, phases, siteElevFt, stepFt) {
   return [x, y];
 }
 
+// Same physics as simulateDrift() above -- literally the same phase-loop
+// integration -- but returns the FULL cumulative path (one entry per
+// integration breakpoint, apogee-first, x_ft/y_ft running totals not
+// per-step deltas), not just the final [x, y]. Feeds the 3D descent-path
+// view (descent3d.js), which wants to draw the actual shape of the fall,
+// not just where it lands.
+//
+// Breakpoints are the sorted-descending union of the regular stepFt grid
+// simulateDrift() already uses AND every altitude `profile` itself reports
+// within each phase's range -- so a real reported wind level gets its own
+// exact stop (isRealLevel: true) without changing the wind field being
+// integrated, just subdividing whichever stepFt-sized interval it falls
+// inside into two smaller ones. GFS reporting ~44 levels vs ICON's ~19
+// shows up directly as visibly denser isRealLevel stops along an otherwise
+// similar-length line -- an honest resolution difference, not styling.
+//
+// This changes exactly which altitudes get sampled for wind (extra
+// midpoints from the subdivided intervals), so its own final point isn't
+// bit-identical to simulateDrift()'s -- confirmed empirically it agrees to
+// well under 1ft for real inputs, consistent with subdividing an
+// already-fine 50ft grid rather than a different physics model.
+function simulateDriftPath(profile, apogeeFt, phases, siteElevFt, stepFt) {
+  const groundRhoRatio = airDensityRatio(siteElevFt / FT_PER_M);
+  const profileAlts = profile.map(p => p[0]);
+  let x = 0, y = 0, alt = apogeeFt;
+  const path = [{ alt_ft: apogeeFt, x_ft: 0, y_ft: 0, isRealLevel: false }];
+  for (const [rateFtps, segTop, segBottom] of phases) {
+    const top = Math.min(alt, segTop);
+    const bottom = segBottom;
+    if (top <= bottom) continue;
+    const n = Math.max(1, Math.floor((top - bottom) / stepFt));
+    const dz = (top - bottom) / n;
+    const gridBreaks = [];
+    for (let k = 1; k <= n; k++) gridBreaks.push(top - k * dz);
+    // Strictly inside this phase's open interval -- the phase's own top/
+    // bottom are already guaranteed breakpoints via gridBreaks (k=n lands
+    // exactly on bottom), so a real level that happens to equal a segment
+    // boundary shouldn't be inserted a second time.
+    const realBreaks = profileAlts.filter(a => a > bottom + 0.5 && a < top - 0.5);
+    const breaks = [...new Set([...gridBreaks, ...realBreaks].map(v => Math.round(v * 100) / 100))]
+      .sort((a, b) => b - a); // descending -- falling from top to bottom
+
+    let prev = top;
+    for (const z of breaks) {
+      if (prev - z < 0.01) { prev = z; continue; } // dedupe a near-duplicate breakpoint, not a real extra step
+      const dzStep = prev - z;
+      const mid = (prev + z) / 2;
+      const [spdMph, drc] = interpWind(profile, mid);
+      const spdFtps = spdMph * MPH_TO_FTPS;
+      const u = -spdFtps * Math.sin(drc * Math.PI / 180);
+      const v = -spdFtps * Math.cos(drc * Math.PI / 180);
+      const dt = dzStep / descentRateAt(mid, rateFtps, siteElevFt, groundRhoRatio);
+      x += u * dt;
+      y += v * dt;
+      const isRealLevel = realBreaks.some(a => Math.abs(a - z) < 0.5);
+      path.push({ alt_ft: z, x_ft: x, y_ft: y, isRealLevel });
+      prev = z;
+    }
+    alt = bottom;
+  }
+  return path;
+}
+
 // Zone cache: `${hour}_${deploy}_${altitude}` -> {altitude, points}. Cleared
 // on dataset load and on a rate edit -- and on nothing else, deliberately:
 // x_ft/y_ft don't depend on padOffsetFt (applied later, in ftToPx()) or on
@@ -2514,7 +2704,11 @@ let zoneCache = new Map();
 // historyPointsForAltitude() below. Cleared alongside zoneCache since both
 // depend on state.rateFps.
 let historyZoneCache = new Map();
-function invalidateZones() { zoneCache.clear(); historyZoneCache.clear(); }
+// Same idea again: descentPathsFor()'s own cache (see its own comment,
+// below zonesFor()), cleared here too since it depends on state.rateFps
+// exactly like the other two.
+let pathCache = new Map();
+function invalidateZones() { zoneCache.clear(); historyZoneCache.clear(); pathCache.clear(); }
 
 // One altitude's zone at the given hour/deploy, computed just-in-time from
 // DATA.wind_profiles at the current state.rateFps -- returns the same
@@ -2553,6 +2747,36 @@ function zoneFor(hour, deploy, altitudeFt) {
 
 function zonesFor(hour, deploy) {
   return DATA.altitudes.map(alt => zoneFor(hour, deploy, alt)).filter(z => z !== null);
+}
+
+// 3D descent-path view's data source (descent3d.js). Same phase
+// construction as zoneFor() above, but a single named rate -- not both
+// fast/slow -- and simulateDriftPath()'s full path per model instead of
+// zoneFor()'s final-point-only. Single rate because a persistent 3D canvas
+// needs one stable thing to render; showing both at once is 12 lines for 6
+// models, too busy (see descent3d.js's own rate-toggle comment).
+// Unfiltered by state.selectedModels here -- filtering happens at render
+// time, same separation zoneFor()/drawZone() already use. pathCache itself
+// is declared above, alongside zoneCache/historyZoneCache.
+function descentPathsFor(hour, deploy, altitudeFt, rateName) {
+  const cacheKey = `${hour}_${deploy}_${altitudeFt}_${rateName}`;
+  if (pathCache.has(cacheKey)) return pathCache.get(cacheKey);
+
+  const dp = DATA.descent_params;
+  const profiles = DATA.wind_profiles[hour];
+  const out = [];
+  if (profiles && !(deploy === 'single' && altitudeFt > dp.single_deploy_max_alt_ft)) {
+    const r = state.rateFps[rateName];
+    const phases = deploy === 'dual'
+      ? [[r.drogue, altitudeFt, dp.main_deploy_altitude_ft], [r.main, dp.main_deploy_altitude_ft, 0]]
+      : [[r.main, altitudeFt, 0]];
+    for (const [model, profile] of Object.entries(profiles)) {
+      const path = simulateDriftPath(profile, altitudeFt, phases, dp.site_elev_ft, dp.descent_step_ft);
+      out.push({ model, rate: rateName, path });
+    }
+  }
+  pathCache.set(cacheKey, out);
+  return out;
 }
 
 // History mode's equivalent of zoneFor(), for a "Specific altitude" override
@@ -3557,7 +3781,9 @@ function updatePadReadout() {
     const bearingDeg = (Math.atan2(padOffsetFt.x, padOffsetFt.y) * 180 / Math.PI + 360) % 360;
     padReadout.textContent = `Pad moved ${distFt.toFixed(0)} ft ${compassDir(bearingDeg)} of surveyed position`;
   } else {
-    padReadout.textContent = 'Pad at surveyed GPS position';
+    // Empty, not a restated "at default" sentence -- see index.html's own
+    // comment above .pad-move-control for why that line was dropped.
+    padReadout.textContent = '';
   }
 }
 
@@ -3601,7 +3827,6 @@ function initFromData() {
   boostAngleReadout.textContent = `${boostAngleDeg}°`;
   // Every load, not just first -- see MAX_PAD_MOVE_FT's own declaration.
   MAX_PAD_MOVE_FT = DATA.max_pad_move_ft ?? 2000;
-  padHint.textContent = `Drag the crosshair on the map to try a nearby setup spot (capped at ${MAX_PAD_MOVE_FT.toLocaleString()} ft from the surveyed point -- everything shifts with it).`;
   if (!padUrlApplied) {
     padUrlApplied = true;
     const urlPad = URL_PARAMS.get('pad');

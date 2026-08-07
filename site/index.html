@@ -43,11 +43,16 @@
         <input type="range" id="boost-angle-slider" min="0" max="25" step="1" value="10">
         <span class="boost-angle-readout" id="boost-angle-readout">10&deg;</span>
       </div>
+      <div class="toggle-group buffer-note">
+        <div class="buffer-swatch" id="buffer-swatch"></div>
+        <span>Rail-buffer band <button class="info-btn" type="button" data-hint="buffer-hint" title="Show details">i</button></span>
+      </div>
       <div class="toggle-group">
         <button id="copy-link-btn" type="button" class="copy-link-btn" title="Copy a link to exactly this site/date/view">Copy link</button>
       </div>
     </div>
   </div>
+  <div class="alt-hint" id="buffer-hint" style="margin: -10px 0 var(--sp-6);">Faint outer band = a launch-rail/weathercock buffer added to the wind-only zone (grows with altitude), angle adjustable via "Rail angle" just to its left. Starts zoomed to Chandler Road (south) / TX 29 East (north); zoom out for real satellite imagery of the wider area &mdash; some slower/higher scenarios drift well past the close view.</div>
 
   <div class="site-empty-state" id="site-empty-state" style="display:none;"></div>
 
@@ -150,17 +155,67 @@
     </div>
 
     <div class="map-col-notes">
-      <div class="buffer-note">
-        <div class="buffer-swatch" id="buffer-swatch"></div>
-        <span>Rail-buffer band <button class="info-btn" type="button" data-hint="buffer-hint" title="Show details">i</button></span>
-      </div>
-      <div class="alt-hint" id="buffer-hint">Faint outer band = a launch-rail/weathercock buffer added to the wind-only zone (grows with altitude), angle adjustable via "Rail angle" in the controls bar above the map. Starts zoomed to Chandler Road (south) / TX 29 East (north); zoom out for real satellite imagery of the wider area &mdash; some slower/higher scenarios drift well past the close view.</div>
+      <!-- No idle-state sentence here any more ("Pad at surveyed GPS
+           position") -- it was a lone line of text with no icon/swatch to
+           read as a legend, describing the default/nothing-happened case.
+           pad-readout now starts empty and only ever gets real content
+           (exact offset + bearing) once the pad has actually been dragged
+           -- see updatePadReadout(). No info button/hint either (removed
+           per direction -- dragging the map's own crosshair is the
+           discovery mechanism itself, not something that needs a separate
+           explainer button sitting here). -->
       <div class="pad-move-control">
-        <span id="pad-readout">Pad at surveyed GPS position</span>
+        <span id="pad-readout"></span>
         <button id="pad-reset-btn" type="button" style="display:none;">Reset pad position</button>
-        <button class="info-btn" type="button" data-hint="pad-hint" title="Show details">i</button>
       </div>
-      <div class="alt-hint" id="pad-hint">Drag the crosshair on the map to try a nearby setup spot (capped at 2,000 ft from the surveyed point -- everything shifts with it).</div>
+    </div>
+
+    <!-- Each model's actual predicted drift path from a chosen apogee down
+         to the ground -- not a raw wind-vs-altitude profile, the real
+         descent trajectory simulateDriftPath() computes (descent3d.js).
+         Its own full-width row (not nested in .map-col-map, which is too
+         column-constrained for a legible canvas), collapsed by default
+         since this is heavier/more novel than the rest of the page and
+         shouldn't dominate the default view. See descent3d.js's own
+         top-of-file comment for the altitude-selection/rendering design. -->
+    <div class="weather-panel descent3d-section" id="descent3d-section">
+      <div class="weather-head">
+        <div class="weather-title-toggle" id="descent3d-title-toggle" tabindex="0" role="button" aria-expanded="false">
+          🌀 3D Descent Path <span class="weather-chevron collapsed" id="descent3d-chevron">&#9660;</span>
+        </div>
+        <div class="descent3d-header-controls">
+          <div class="descent3d-view-toggle toggle-btns" id="descent3d-view-toggle">
+            <button type="button" data-view="3d" class="active" title="Default oblique view">3D</button>
+            <button type="button" data-view="top" title="Straight down -- same north-up/east-right orientation as the map above">Top</button>
+            <button type="button" data-view="east" title="East vs. altitude, looking along the north-south axis">E</button>
+            <button type="button" data-view="north" title="North vs. altitude, looking along the east-west axis">N</button>
+          </div>
+          <div class="descent3d-rate-toggle toggle-btns" id="descent3d-rate-toggle">
+            <button type="button" data-rate="fast" class="active">Fast</button>
+            <button type="button" data-rate="slow">Slow</button>
+          </div>
+        </div>
+      </div>
+      <div class="descent3d-body" id="descent3d-body" style="display:none;">
+        <div class="descent3d-empty-hint" id="descent3d-empty-hint"></div>
+        <div class="descent3d-main" id="descent3d-main" style="display:none;">
+          <div class="descent3d-canvas-wrap">
+            <canvas id="descent3d-canvas"></canvas>
+          </div>
+          <div class="descent3d-alt-col">
+            <div class="descent3d-alt-label">Apogee<br><span id="descent3d-alt-readout">&mdash;</span></div>
+            <div class="descent3d-alt-slider" id="descent3d-alt-slider" tabindex="0" role="slider" aria-label="Apogee altitude for descent path">
+              <div class="descent3d-alt-track"></div>
+              <div class="descent3d-alt-fill" id="descent3d-alt-fill"></div>
+              <div class="descent3d-alt-thumb" id="descent3d-alt-thumb"></div>
+            </div>
+          </div>
+        </div>
+        <div class="alt-list-title" style="margin-top:12px;">
+          3D Descent Path <button class="info-btn" type="button" data-hint="descent3d-hint" title="Show details">i</button>
+        </div>
+        <div class="alt-hint" id="descent3d-hint">X/Y are relative feet east/north from the pad (not tied to true map coordinates) &mdash; Z is altitude AGL in feet. Dots mark each model's own real reported wind levels (GFS reports far more than ICON, for example); the rest of each line is a smooth interpolation between them. Altitude bands are placed via a standard-atmosphere pressure-to-height conversion, not this forecast's own real temperature profile &mdash; on a hot day, real bands can sit a few hundred feet higher than shown here (same math used everywhere else in this app). Gust is only ever real data at the ground end of each path &mdash; Open-Meteo has no gust field at any other altitude. Drag the vertical slider to explore a different apogee; drag the canvas to orbit, scroll/pinch to zoom.</div>
+      </div>
     </div>
 
     <div class="accuracy-section" id="accuracy-section" style="display:none;">
@@ -184,5 +239,6 @@
 </div>
 
 <script src="assets/js/app.js"></script>
+<script src="assets/js/descent3d.js"></script>
 </body>
 </html>

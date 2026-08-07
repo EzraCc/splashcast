@@ -293,6 +293,19 @@ WIND_SPEED_AGREEMENT_MPH = 6
 # GFS/HRRR/NAM all support the by-layer fields.
 CLOUD_COVER_NOGO_PCT = 50
 
+# From Tripoli Unified Safety Code 9-3: "No rockets shall launch when the
+# sustained surface winds exceed 20 MPH (32 KPH)." Verified directly against
+# the primary-source USC PDF, not taken from a paraphrase. NAR's Model Rocket
+# Safety Code (item 9) carries the same 20mph figure. Ground-level (10m AGL)
+# SUSTAINED wind specifically -- not gust (Open-Meteo has no gust field at
+# any level other than 10m, confirmed live, so there's no equivalent aloft
+# number to cite here) and not winds-aloft (no codified limit exists for
+# that; the drift-zone hull itself is the viewer's answer there). Like
+# CLOUD_COVER_NOGO_PCT above, this is the one real cited number -- any
+# additional display-only color breakpoints belong in the frontend, not
+# here, so this file never implies a citation that doesn't exist.
+WIND_SPEED_NOGO_MPH = 20
+
 # Which of Open-Meteo's low/mid/high cloud bands (surface-9,800ft /
 # 9,800-26,200ft / 26,200ft+) are actually relevant to display by default for
 # each site's waiver -- shown collapsed to just these in the viewer, with the
