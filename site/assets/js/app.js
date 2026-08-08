@@ -229,6 +229,15 @@ const MODEL_COLORS_HEX = {
   gfs: '#2a78d6', ecmwf: '#4a3aa7', gem: '#e34948',
   icon: '#eda100', arpege: '#1baf7a', hrrr: '#008300',
 };
+// A tooltip's model name, colored to match that same model's own bar/point
+// color everywhere else on the page -- per direction, every tooltip used to
+// bold the name in the shared --accent blue regardless of which model it
+// was (.tooltip b's own default), disconnected from the actual colored bar
+// sitting right next to it in the same tooltip. Inline style, not a class,
+// since the color is per-model data, not a themeable design token.
+function modelNameHTML(m) {
+  return `<b style="color:${MODEL_COLORS_HEX[m] || 'var(--accent)'}">${MODEL_LABELS[m] || m.toUpperCase()}</b>`;
+}
 // Longest published forecast horizon first, shortest last (GFS 16 days,
 // ECMWF 15, GEM 10, ICON 7.5, ARPEGE 4, HRRR ~2) -- matches the dropout
 // order actually observed across T-1/T-3/T-5/T-7 captures (HRRR first, then
@@ -1641,7 +1650,7 @@ function showTooltip(evt, hoveredPt) {
     // from state.rateFps directly.
     const r = state.rateFps;
     const rateLabel = state.deploy === 'single' ? `${r.main} fps` : `${r.drogue}/${r.main} fps`;
-    return `<div class="tt-row"><b>${MODEL_LABELS[rp.model] || rp.model.toUpperCase()}</b> &middot; ${rateLabel}${whenPart}<br>` +
+    return `<div class="tt-row">${modelNameHTML(rp.model)} &middot; ${rateLabel}${whenPart}<br>` +
       `apogee ${rp.altitude.toLocaleString()} ft<br>` +
       `offset: ${rp.x_ft >= 0 ? '+' : ''}${rp.x_ft.toFixed(0)} ft E, ${rp.y_ft >= 0 ? '+' : ''}${rp.y_ft.toFixed(0)} ft N<br>` +
       `distance from pad: ${dist.toFixed(0)} ft</div>`;
@@ -1851,7 +1860,7 @@ function addCloudRow(grid, layerKey, label, sub, beyondWaiver) {
       // re-listed by name in the footer -- same information, once.
       const rows = vals.map(({ m, v }) => {
         const isHigh = v !== null && v >= DATA.cloud_nogo_pct;
-        return `<div class="tt-model-name"><b>${MODEL_LABELS[m] || m.toUpperCase()}</b></div>` +
+        return `<div class="tt-model-name">${modelNameHTML(m)}</div>` +
           `<div class="tt-model-pct${isHigh ? ' pct-high' : ''}">${v === null ? 'no data' : v + '%'}</div>`;
       }).join('');
       // `hot` is the same isCloudHot() flag the cell's own warning badge
@@ -1979,7 +1988,7 @@ function addRainCell(grid, cellData, tooltipLabel, tooltipWindow) {
   // data (genuinely missing, beyond that model's horizon).
   cell.addEventListener('mousemove', evt => {
     const rows = vals.map(({ m, amount, chance }) =>
-      `<div class="tt-model-name"><b>${MODEL_LABELS[m] || m.toUpperCase()}</b></div>` +
+      `<div class="tt-model-name">${modelNameHTML(m)}</div>` +
       `<div class="tt-model-pct">${chance === null ? 'n/a' : chance + '%'}</div>` +
       `<div class="tt-model-pct">${amount === null ? 'no data' : amount.toFixed(2) + ' in'}</div>`
     ).join('');
@@ -2092,7 +2101,7 @@ function addTempCell(grid, cellData, scaleMin, scaleMax, tooltipLabel) {
 
   cell.addEventListener('mousemove', evt => {
     const rows = vals.map(({ m, v }) =>
-      `<div class="tt-model-name"><b>${MODEL_LABELS[m] || m.toUpperCase()}</b></div>` +
+      `<div class="tt-model-name">${modelNameHTML(m)}</div>` +
       `<div class="tt-model-pct">${v === null ? 'no data' : Math.round(v) + '°F'}</div>`
     ).join('');
     const modeLabel = tempShowApparent ? 'feels like' : 'actual';
@@ -2272,7 +2281,7 @@ function addWindCell(grid, cellData, tooltipLabel) {
       const isHigh = speed !== null && speed >= DATA.wind_nogo_mph;
       const text = speed === null ? 'no data'
         : `${Math.round(speed)} mph${gust !== null ? ` (G${Math.round(gust)})` : ''}${direction !== null ? ` ${windVaneHTML(direction)}` : ''}`;
-      return `<div class="tt-model-name"><b>${MODEL_LABELS[m] || m.toUpperCase()}</b></div>` +
+      return `<div class="tt-model-name">${modelNameHTML(m)}</div>` +
         `<div class="tt-model-pct${isHigh ? ' pct-high' : ''}">${text}</div>`;
     }).join('');
     tooltip.innerHTML = `<div class="tt-cloud-grid">${rows}</div>` +

@@ -497,7 +497,9 @@ function path3dHandleHover(evt) {
   if (!best || bestDist > PROXIMITY_PX) { hideTooltip(); return; }
 
   const profile = DATA.wind_profiles[state.hour] && DATA.wind_profiles[state.hour][best.model];
-  const rows = [`<div class="tt-row"><b>${MODEL_LABELS[best.model] || best.model.toUpperCase()}</b></div>`,
+  // modelNameHTML() (app.js) -- same per-model-colored name every other
+  // tooltip on the page uses now, not a plain bolded --accent-blue name.
+  const rows = [`<div class="tt-row">${modelNameHTML(best.model)}</div>`,
     `<div class="tt-row">${Math.round(best.alt_ft).toLocaleString()} ft AGL</div>`];
   if (profile) {
     const [spdMph, drc] = interpWind(profile, best.alt_ft);
