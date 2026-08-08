@@ -429,7 +429,7 @@
   /* Sits 8px up from the cell's own bottom edge -- .bars-below (confirmed-
      zero marks) live in that reserved 8px strip underneath it. */
   .cloud-cell .baseline { position: absolute; left: 2px; right: 2px; bottom: 8px; height: 1px; background: var(--border); }
-  .cloud-cell .bars { position: absolute; left: 0; right: 0; top: 0; bottom: 8px; display: flex; align-items: flex-end; justify-content: center; gap: 2.5px; }
+  .cloud-cell .bars { position: absolute; left: 0; right: 0; top: 0; bottom: 8px; display: flex; align-items: flex-end; justify-content: center; gap: 2.5px; overflow: visible; }
   .cloud-cell .bars-below { position: absolute; left: 0; right: 0; bottom: 0; height: 8px;
     display: flex; align-items: flex-start; justify-content: center; gap: 2.5px; }
   /* Real, nonzero data only -- bottom corners square (not rounded), flush
@@ -454,6 +454,46 @@
   .cloud-bar.bar-zero { width: 7px; height: 6px; border-radius: 0 0 2px 2px; align-self: flex-start; }
   .cloud-cell .no-data { position: absolute; inset: 0 0 8px 0; display: flex; align-items: center; justify-content: center;
     font-size: var(--fs-2xs); color: var(--text-muted); }
+
+  /* Wind row only: each model's column is a small positioned box (not a
+     bare .cloud-bar flex item like every other row) so it can hold two
+     stacked pieces -- the solid sustained bar, and above it, a hollow
+     gust cap (addWindCell()'s own comment) -- at explicit heights instead
+     of relying on flex auto-sizing. height:100% (not auto) is what lets
+     both children's percentage heights below actually resolve against
+     the real 44px .bars zone -- an auto-height wrapper here would give
+     percentage heights nothing real to resolve against, silently
+     collapsing them to 0. overflow:visible (here and on .bars/.baseline's
+     shared parent) is deliberate, not a default left alone -- a gust past
+     WIND_BAR_MAX_MPH is meant to visibly poke out the top of the graph
+     rather than being invisibly clipped at the cell's own edge. */
+  .wind-bar-col { position: relative; width: 7px; height: 100%; overflow: visible; }
+  .wind-bar-col .cloud-bar { position: absolute; left: 0; bottom: 0; }
+  /* No fill (background:none), a real border instead -- reads as "this
+     part is the extra reach past the solid bar," not a second solid
+     block stacked on the first. border-bottom:none + matching
+     border-radius keeps its own bottom edge flush against the solid
+     bar's top edge with no visible seam between them. */
+  .wind-gust-cap {
+    position: absolute; left: 0; width: 7px; box-sizing: border-box;
+    border: 1.5px solid; border-bottom: none; border-radius: 2px 2px 0 0; background: none;
+  }
+  /* 10/20mph dashed reference lines -- WIND_BAR_MAX_MPH's own scale has no
+     axis labeled anywhere else, and these are the same two numbers the
+     tier scale's own breakpoints land on (WIND_TIER_YELLOW_MIN_MPH=10,
+     DATA.wind_nogo_mph=20), per direction -- one set of numbers doing
+     double duty as gridline and tier boundary instead of two unrelated
+     scales sharing one chart. --text-primary, not --border -- these sit on
+     top of 4 different tier-tinted cell backgrounds (color-mix()'d from
+     --wind-green/yellow/orange/red into --surface-1, see the tier rules
+     above), and --border's own gray was confirmed too low-contrast against
+     more than one of them. --text-primary already flips near-black/
+     near-white per theme (unlike a fixed hex), which a literal black
+     wouldn't -- dark theme's own cell backgrounds stay dark (tinted from a
+     near-black --surface-1, not a pale one), so a hardcoded black line
+     would just disappear there the same way the gray one did elsewhere.
+     opacity keeps it reading as a reference line, not another data mark. */
+  .wind-ref-line { position: absolute; left: 0; right: 0; height: 0; border-top: 1px dashed var(--text-primary); opacity: 0.3; pointer-events: none; }
   /* "Pop" state: a majority of reporting models agree this layer/hour is
      >=50% covered (config.CLOUD_COVER_NOGO_PCT, Tripoli Unified Safety Code
      9-5/9-6) -- the safety-relevant threshold clubs actually watch for, not
@@ -509,6 +549,11 @@
   .wind-tier-dot.tier-yellow { background: var(--wind-yellow); }
   .wind-tier-dot.tier-orange { background: var(--wind-orange); }
   .wind-tier-dot.tier-red    { background: var(--wind-red); }
+  /* Decodes the bars' own gust cap (addWindCell()'s own comment) -- a plain
+     text note, not a swatch, since it's not a 5th tier alongside the 4
+     dots above it, just explaining a separate visual channel on the same
+     chart. */
+  .wind-gust-note { font-style: italic; }
 
   /* Temp's actual/feels-like toggle -- lives in Temp's own full-width
      .weather-section-heading now (addTempSectionHeading()), same as
@@ -1009,6 +1054,12 @@
   .tooltip .tt-rain-grid { display: grid; grid-template-columns: auto auto auto; column-gap: 12px; row-gap: 3px; }
   .tooltip .tt-rain-head { font-size: var(--fs-xs); color: var(--text-muted); font-weight: 600; text-align: right; }
   .tooltip .tt-rain-head:first-child { text-align: left; }
+  /* Wind-cell hover: model|sustained|gust|direction, same headed-grid
+     pattern .tt-rain-grid uses (one more column -- wind has a 3rd real
+     number, direction, that rain doesn't). */
+  .tooltip .tt-wind-grid { display: grid; grid-template-columns: auto auto auto auto; column-gap: 12px; row-gap: 3px; }
+  .tooltip .tt-wind-head { font-size: var(--fs-xs); color: var(--text-muted); font-weight: 600; text-align: right; }
+  .tooltip .tt-wind-head:first-child { text-align: left; }
 
   /* Real-flight info box: same fixed/positioned-at-cursor mechanism as
      .tooltip, but stays open once pinned (see realFlightPinned in app.js) --

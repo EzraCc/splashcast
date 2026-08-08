@@ -1717,12 +1717,17 @@ function isCloudHot(vals) {
 // DATA.cloud_nogo_pct above. The two breakpoints below it are NOT codified
 // -- just a graduated "getting worse" read (calm/breezy/strong) chosen for
 // display, kept out of config.py specifically so nothing there implies a
-// citation that doesn't exist. "Strong," not "gusty" -- this scale grades
-// SUSTAINED speed, a real separate field from gust (shown alongside it,
-// the "G##" in each cell); "gusty" would misstate which number the color
-// is actually about.
-const WIND_TIER_YELLOW_MIN_MPH = 8;
-const WIND_TIER_ORANGE_MIN_MPH = 16;
+// citation that doesn't exist. Landed on clean 5mph steps (0-9/10-14/
+// 15-19/20+) rather than the original 0-7/8-15/16-19 split, per direction
+// -- lines up with the bars' own 10/20mph dashed reference lines
+// (addWindCell()'s own comment) so the same two numbers double as both a
+// visual gridline and a tier boundary, instead of two unrelated scales
+// sharing one chart. "Strong," not "gusty" -- this scale grades SUSTAINED
+// speed, a real separate field from gust (shown per-model as each bar's
+// own hollow-outline cap now, not a text suffix); "gusty" would misstate
+// which number the color is actually about.
+const WIND_TIER_YELLOW_MIN_MPH = 10;
+const WIND_TIER_ORANGE_MIN_MPH = 15;
 // Same majority-vote principle isCloudHot() already uses for clouds,
 // generalized across all three breakpoints instead of one -- per direction,
 // with a real example (hearne 08/08 15:00: GFS alone at 10mph, every other
@@ -2190,10 +2195,17 @@ function addTempRow(grid) {
 // floating per-capture scale would obscure: a "high" bar should always
 // mean the same thing (visually approaching/at the code limit) across
 // every capture, not just "the windiest reading THIS capture happened to
-// have." 30mph gives DATA.wind_nogo_mph (20) headroom to still read as
-// distinctly-less-than-full, rather than every red cell topping out
-// identically regardless of how far past 20 it actually is.
-const WIND_BAR_MAX_MPH = 30;
+// have." 25mph gives DATA.wind_nogo_mph (20) real headroom to still read
+// as distinctly-less-than-full, without stretching the everyday 0-20mph
+// range down into a cramped bottom sliver of the cell the way a taller
+// ceiling would. A speed number itself is still clamped to this ceiling
+// (a sustained reading past it would be an extraordinary outlier), but a
+// GUST cap is deliberately NOT clamped -- per direction, if gust pushes
+// past the scale, the cap should visibly extend off the top of the graph
+// rather than being invisibly capped at 100%, since "this model's gust
+// blew straight through the reference scale" is itself real information
+// worth seeing, not something to quietly hide.
+const WIND_BAR_MAX_MPH = 25;
 
 // Small rotated arrow glyph pointing DOWNWIND -- the direction the wind
 // (and therefore the rocket) is actually traveling TOWARD -- replacing a
@@ -2247,27 +2259,72 @@ function addWindCell(grid, cellData, tooltipLabel) {
   if (real.length) {
     const nums = real.map(x => x.speed);
     const lo = Math.min(...nums), hi = Math.max(...nums);
-    const gusts = real.map(x => x.gust).filter(g => g !== null);
+    // No more " · G16" suffix here -- that was a single maxed gust across
+    // every model with no way to say which one it came from, and is now
+    // genuinely redundant with the per-model gust cap each bar shows
+    // directly (see the vals.forEach() below).
+    // Unit suffix -- clouds/rain/temp's own range-num text already reads
+    // "0-43%"/"0.00 in"/"82-92°"; wind's own was the one left bare with no
+    // unit at all, per direction.
     const rangeNum = document.createElement('div');
     rangeNum.className = 'range-num';
-    rangeNum.textContent = (lo === hi ? `${Math.round(lo)}` : `${Math.round(lo)}-${Math.round(hi)}`)
-      + (gusts.length ? ` · G${Math.round(Math.max(...gusts))}` : '');
+    rangeNum.textContent = (lo === hi ? `${Math.round(lo)}` : `${Math.round(lo)}-${Math.round(hi)}`) + ' mph';
     cell.appendChild(rangeNum);
   }
 
   const bars = document.createElement('div');
   bars.className = 'bars';
   cell.appendChild(bars);
-  vals.forEach(({ m, speed }) => {
+  // 10/20mph dashed reference lines -- WIND_BAR_MAX_MPH's own scale (see
+  // its own comment) has no axis labeled anywhere else; appended before
+  // the model columns below so they paint behind the bars, not on top.
+  [10, 20].forEach(mph => {
+    const line = document.createElement('div');
+    line.className = 'wind-ref-line';
+    line.style.bottom = Math.min(100, (mph / WIND_BAR_MAX_MPH) * 100) + '%';
+    bars.appendChild(line);
+  });
+  vals.forEach(({ m, speed, gust }) => {
+    // Wrapper per model, not a bare .cloud-bar -- holds the solid
+    // sustained bar plus (when there's real gust data above it) a hollow
+    // outline "cap" continuing upward to the gust height, both absolutely
+    // positioned within it (see .wind-bar-col's own CSS comment for why
+    // not a reversed flex column). Explicit height:100% on the wrapper
+    // (CSS) is what lets both children's percentage heights below
+    // actually resolve against the real 44px .bars zone.
+    const col = document.createElement('div');
+    col.className = 'wind-bar-col';
+    const speedPct = speed === null ? 0 : Math.max(0, Math.min(100, (speed / WIND_BAR_MAX_MPH) * 100));
     const bar = document.createElement('div');
     if (speed === null) {
       bar.className = 'cloud-bar bar-nodata';
     } else {
       bar.className = 'cloud-bar';
-      bar.style.height = Math.max(0, Math.min(100, (speed / WIND_BAR_MAX_MPH) * 100)) + '%';
+      bar.style.height = speedPct + '%';
       bar.style.background = MODEL_COLORS_HEX[m];
     }
-    bars.appendChild(bar);
+    col.appendChild(bar);
+    // Gust cap: hollow outline from `speed` up to `gust`, this model's own
+    // color, only when gust is real data ABOVE its own sustained figure.
+    // Real per-model data can report gust BELOW sustained at low wind
+    // speeds (a genuine model quirk, kept as the model's own number rather
+    // than "corrected" -- see build_wind_data()'s own comment) -- skipped
+    // entirely rather than clamped, since a zero/negative-height cap would
+    // just be visually broken. Deliberately NOT clamped to the .bars zone's
+    // own height at the top -- see WIND_BAR_MAX_MPH's own comment for why
+    // a gust past the scale extends off the graph instead of being
+    // invisibly capped at 100%; .wind-bar-col/.bars both allow overflow
+    // for exactly this (see their own CSS comments).
+    if (speed !== null && gust !== null && gust > speed) {
+      const capPct = Math.max(0, ((gust - speed) / WIND_BAR_MAX_MPH) * 100);
+      const cap = document.createElement('div');
+      cap.className = 'wind-gust-cap';
+      cap.style.bottom = speedPct + '%';
+      cap.style.height = capPct + '%';
+      cap.style.borderColor = MODEL_COLORS_HEX[m];
+      col.appendChild(cap);
+    }
+    bars.appendChild(col);
   });
 
   if (!real.length) {
@@ -2277,14 +2334,21 @@ function addWindCell(grid, cellData, tooltipLabel) {
   }
 
   cell.addEventListener('mousemove', evt => {
+    // Own 4-column grid (Model | Sustained | Gust | Direction), same
+    // headed-grid convention the rain cell's own .tt-rain-grid already
+    // uses (see addRainCell()) -- per direction, easier to scan down one
+    // column at a time than parsing "10 mph (G8) <arrow>" as one run-on
+    // string per model.
     const rows = vals.map(({ m, speed, gust, direction }) => {
       const isHigh = speed !== null && speed >= DATA.wind_nogo_mph;
-      const text = speed === null ? 'no data'
-        : `${Math.round(speed)} mph${gust !== null ? ` (G${Math.round(gust)})` : ''}${direction !== null ? ` ${windVaneHTML(direction)}` : ''}`;
       return `<div class="tt-model-name">${modelNameHTML(m)}</div>` +
-        `<div class="tt-model-pct${isHigh ? ' pct-high' : ''}">${text}</div>`;
+        `<div class="tt-model-pct${isHigh ? ' pct-high' : ''}">${speed === null ? 'no data' : Math.round(speed) + ' mph'}</div>` +
+        `<div class="tt-model-pct">${gust === null ? '—' : Math.round(gust) + ' mph'}</div>` +
+        `<div class="tt-model-pct">${direction === null ? '—' : windVaneHTML(direction)}</div>`;
     }).join('');
-    tooltip.innerHTML = `<div class="tt-cloud-grid">${rows}</div>` +
+    tooltip.innerHTML =
+      '<div class="tt-wind-grid"><div class="tt-wind-head">Model</div><div class="tt-wind-head">Sustained</div>' +
+      `<div class="tt-wind-head">Gust</div><div class="tt-wind-head">Direction</div>${rows}</div>` +
       `<div class="tt-cloud-footer" style="color:var(--text-muted);">${tooltipLabel} ground-level wind (10m AGL)</div>`;
     tooltip.style.display = 'block';
     positionTooltip(evt);
@@ -2434,14 +2498,20 @@ function renderWeatherPanel() {
     // Labeled now (previously just 4 bare dots with no heading at all) --
     // and "gusty" renamed to "strong": this scale grades SUSTAINED speed
     // (the wind row's own numbers), not gust, which is a real separate
-    // field shown alongside it (the "G##" in each cell) -- "gusty" here
-    // was actively misleading about which number the color refers to.
+    // field shown per-model now as each bar's own hollow-outline cap (see
+    // addWindCell()'s own comment) -- "gusty" here was actively misleading
+    // about which number the color refers to. Clean 5mph steps (0-9/
+    // 10-14/15-19/20+), matching WIND_TIER_YELLOW_MIN_MPH/
+    // WIND_TIER_ORANGE_MIN_MPH -- lines up with the bars' own 10/20mph
+    // dashed reference lines, per direction, rather than an unrelated
+    // 8/16 split.
     legend.innerHTML =
       '<span class="wind-legend-label">Sustained wind:</span>' +
-      '<span class="wind-tier-key"><span class="wind-tier-dot tier-green"></span>&le;7 calm</span>' +
-      '<span class="wind-tier-key"><span class="wind-tier-dot tier-yellow"></span>8-15 breezy</span>' +
-      '<span class="wind-tier-key"><span class="wind-tier-dot tier-orange"></span>16-19 strong</span>' +
-      `<span class="wind-tier-key"><span class="wind-tier-dot tier-red"></span>&ge;${DATA.wind_nogo_mph} no-go (Tripoli §9-3)</span>`;
+      '<span class="wind-tier-key"><span class="wind-tier-dot tier-green"></span>&le;9 calm</span>' +
+      '<span class="wind-tier-key"><span class="wind-tier-dot tier-yellow"></span>10-14 breezy</span>' +
+      '<span class="wind-tier-key"><span class="wind-tier-dot tier-orange"></span>15-19 strong</span>' +
+      `<span class="wind-tier-key"><span class="wind-tier-dot tier-red"></span>&ge;${DATA.wind_nogo_mph} no-go (Tripoli §9-3)</span>` +
+      '<span class="wind-tier-key wind-gust-note">hollow outline on a bar = gust</span>';
     container.appendChild(legend);
   }
   // No separate cloud legend row -- the ⚠ badge/bolded-value treatment is
