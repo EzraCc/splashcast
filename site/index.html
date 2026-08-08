@@ -58,7 +58,31 @@
 
   <div class="layout" id="main-layout">
     <div class="map-col-map">
-      <div class="map-frame">
+      <!-- Site name + waiver -- a site-level fact, always visible above the
+           map regardless of whether the (collapsible) weather panel below
+           happens to be open. Populated by renderSiteHeading() (app.js),
+           called from selectSite() -- empty text (renders nothing visible)
+           until the site metadata fetch resolves. -->
+      <h2 class="site-heading" id="site-heading"></h2>
+      <!-- 2D (satellite/road hull view) and 3D (descent-path view) now
+           share this one slot instead of living in two disconnected
+           places on the page (2D always at the top, 3D a separate
+           collapsed section far below) -- per direction, unified first so
+           the rail-angle rework can affect both consistently through one
+           control instead of two things to keep in sync by hand. Plain
+           display:none on whichever isn't active (mapViewMode in app.js),
+           same mechanism weatherPanelCollapsed etc. already use.
+           .map-view-wrap (position:relative) wraps both frames so the 2D/3D
+           toggle can sit as one absolutely-positioned overlay in the
+           upper-right regardless of which frame is currently showing --
+           same corner-overlay convention .layer-toggle already uses on the
+           opposite (upper-left) corner of the 2D map itself. -->
+      <div class="map-view-wrap">
+        <div class="map-view-toggle toggle-btns" id="map-view-toggle">
+          <button type="button" data-mode="2d" class="active">2D</button>
+          <button type="button" data-mode="3d" title="Each model's actual predicted descent path, in 3D">3D</button>
+        </div>
+      <div class="map-frame" id="map-frame-2d">
         <div class="map-wrap" id="map-wrap">
           <svg id="overlay"></svg>
           <div class="zoom-btns">
@@ -80,6 +104,50 @@
           </div>
         </div>
       </div>
+
+      <!-- Each model's actual predicted drift path from a chosen apogee
+           down to the ground -- not a raw wind-vs-altitude profile, the
+           real descent trajectory simulateDriftPath() computes
+           (descent3d.js). See that file's own top-of-file comment for the
+           altitude-selection/rendering design; mapViewMode (app.js) is
+           now the single source of truth for whether this renders, not
+           its own collapse state. -->
+      <div class="descent3d-frame" id="map-frame-3d" style="display:none;">
+        <div class="descent3d-header-controls">
+          <div class="descent3d-view-toggle toggle-btns" id="descent3d-view-toggle">
+            <button type="button" data-view="3d" class="active" title="Default oblique view">3D</button>
+            <button type="button" data-view="top" title="Straight down -- same north-up/east-right orientation as the 2D map">Top</button>
+            <button type="button" data-view="east" title="East vs. altitude, looking along the north-south axis">W-E</button>
+            <button type="button" data-view="north" title="North vs. altitude, looking along the east-west axis">N-S</button>
+          </div>
+          <!-- No rate toggle here any more -- reads the sidebar's single
+               shared Rate (fps) control now (see buildRateEditor()'s own
+               comment), same setting byAltitude/byTime already use. -->
+          <div class="descent3d-ground-toggle toggle-btns" id="descent3d-ground-toggle">
+            <button type="button" class="active" title="Toggle the site imagery ground plane">Map</button>
+          </div>
+        </div>
+        <div class="descent3d-empty-hint" id="descent3d-empty-hint"></div>
+        <div class="descent3d-main" id="descent3d-main" style="display:none;">
+          <div class="descent3d-canvas-wrap">
+            <canvas id="descent3d-canvas"></canvas>
+          </div>
+          <div class="descent3d-alt-col">
+            <div class="descent3d-alt-label">Apogee<br><span id="descent3d-alt-readout">&mdash;</span></div>
+            <div class="descent3d-alt-slider" id="descent3d-alt-slider" tabindex="0" role="slider" aria-label="Apogee altitude for descent path">
+              <div class="descent3d-alt-track"></div>
+              <div class="descent3d-alt-ticks" id="descent3d-alt-ticks"></div>
+              <div class="descent3d-alt-thumb" id="descent3d-alt-thumb"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      </div>
+      <div class="alt-list-title descent3d-hint-title" id="descent3d-hint-title" style="display:none; margin-top:12px;">
+        3D Descent Path <button class="info-btn" type="button" data-hint="descent3d-hint" title="Show details">i</button>
+      </div>
+      <div class="alt-hint" id="descent3d-hint" style="display:none;">X/Y are relative feet east/north from the pad (not tied to true map coordinates) &mdash; Z is altitude AGL in feet. Dots mark each model's own real reported wind levels (GFS reports far more than ICON, for example); the rest of each line is a smooth interpolation between them. Altitude bands are placed via a standard-atmosphere pressure-to-height conversion, not this forecast's own real temperature profile &mdash; on a hot day, real bands can sit a few hundred feet higher than shown here (same math used everywhere else in this app). Gust is only ever real data at the ground end of each path &mdash; Open-Meteo has no gust field at any other altitude. Drag the vertical slider to explore a different apogee; drag the canvas to orbit, scroll/pinch to zoom.</div>
+
       <!-- Rain/temperature/clouds combined into one panel, below the map so
            the map itself is what you see first -- clouds used to be a
            map-corner overlay (position:absolute inside .map-frame, with its
@@ -96,15 +164,27 @@
     <div class="side-col">
       <div class="alt-list-title">
         Rate (fps) <button class="info-btn" type="button" data-hint="rate-hint" title="Show interaction hint">i</button>
-        <button id="rate-reset" class="zone-color-reset-btn" type="button" title="Reset to this site's default rates">&#8635;</button>
       </div>
-      <div class="toggle-group">
+      <div class="toggle-group rate-toggle-row">
         <span class="group-label">Deploy</span>
         <div class="toggle-btns" id="deploy-toggle"></div>
       </div>
+      <!-- One active drogue+main pair now, not two computed simultaneously --
+           Fast/Slow are quick-fill presets for the single row below, same
+           idea descent3d.js's own rate toggle already used (2026-08
+           simplification, see buildRateEditor()'s own comment). No separate
+           reset button any more -- clicking either preset already resets to
+           its exact defaults. -->
+      <div class="toggle-group rate-toggle-row">
+        <span class="group-label">Preset</span>
+        <div class="toggle-btns" id="rate-preset-toggle">
+          <button type="button" data-rate="fast">Fast</button>
+          <button type="button" data-rate="slow">Slow</button>
+        </div>
+      </div>
       <div class="rate-edit" id="rate-edit"></div>
       <div class="rate-warning" id="rate-warning" style="display:none;">Main capped at 35 fps &mdash; Tripoli Unified Safety Code &sect;11-1's max landing speed.</div>
-      <div class="alt-hint" id="rate-hint">Hover a rate to isolate it; click to pin, click again to release.</div>
+      <div class="alt-hint" id="rate-hint">Editable drogue/main fps.</div>
 
       <div class="alt-list-title" style="margin-top:28px;">
         Apogee altitude <button class="info-btn" type="button" data-hint="alt-hint" title="Show interaction hint">i</button>
@@ -151,7 +231,7 @@
         <button id="model-reset" class="zone-color-reset-btn" type="button" title="Select all available models">&#8635;</button>
       </div>
       <div id="model-legend"></div>
-      <div class="alt-hint" id="model-hint">Click a model to toggle it on/off, like a checkbox -- all start selected. Double-click to solo just that one (zones collapse to a line when only one model is selected, since a single model's fast/slow points fall on the same bearing from the pad); double-click it again to bring back whatever was selected before. &#8635; above reselects every available model.</div>
+      <div class="alt-hint" id="model-hint">Click a model to toggle it on/off, like a checkbox -- all start selected. Double-click to solo just that one (zones collapse to a pad-to-point bearing line when only one model is selected, since a single point isn't a meaningful area); double-click it again to bring back whatever was selected before. &#8635; above reselects every available model.</div>
     </div>
 
     <div class="map-col-notes">
@@ -170,56 +250,6 @@
       </div>
     </div>
 
-    <!-- Each model's actual predicted drift path from a chosen apogee down
-         to the ground -- not a raw wind-vs-altitude profile, the real
-         descent trajectory simulateDriftPath() computes (descent3d.js).
-         Its own full-width row (not nested in .map-col-map, which is too
-         column-constrained for a legible canvas), collapsed by default
-         since this is heavier/more novel than the rest of the page and
-         shouldn't dominate the default view. See descent3d.js's own
-         top-of-file comment for the altitude-selection/rendering design. -->
-    <div class="weather-panel descent3d-section" id="descent3d-section">
-      <div class="weather-head">
-        <div class="weather-title-toggle" id="descent3d-title-toggle" tabindex="0" role="button" aria-expanded="false">
-          🌀 3D Descent Path <span class="weather-chevron collapsed" id="descent3d-chevron">&#9660;</span>
-        </div>
-        <div class="descent3d-header-controls">
-          <div class="descent3d-view-toggle toggle-btns" id="descent3d-view-toggle">
-            <button type="button" data-view="3d" class="active" title="Default oblique view">3D</button>
-            <button type="button" data-view="top" title="Straight down -- same north-up/east-right orientation as the map above">Top</button>
-            <button type="button" data-view="east" title="East vs. altitude, looking along the north-south axis">E</button>
-            <button type="button" data-view="north" title="North vs. altitude, looking along the east-west axis">N</button>
-          </div>
-          <div class="descent3d-rate-toggle toggle-btns" id="descent3d-rate-toggle">
-            <button type="button" data-rate="fast" class="active">Fast</button>
-            <button type="button" data-rate="slow">Slow</button>
-          </div>
-          <div class="descent3d-ground-toggle toggle-btns" id="descent3d-ground-toggle">
-            <button type="button" class="active" title="Toggle the site imagery ground plane">Map</button>
-          </div>
-        </div>
-      </div>
-      <div class="descent3d-body" id="descent3d-body" style="display:none;">
-        <div class="descent3d-empty-hint" id="descent3d-empty-hint"></div>
-        <div class="descent3d-main" id="descent3d-main" style="display:none;">
-          <div class="descent3d-canvas-wrap">
-            <canvas id="descent3d-canvas"></canvas>
-          </div>
-          <div class="descent3d-alt-col">
-            <div class="descent3d-alt-label">Apogee<br><span id="descent3d-alt-readout">&mdash;</span></div>
-            <div class="descent3d-alt-slider" id="descent3d-alt-slider" tabindex="0" role="slider" aria-label="Apogee altitude for descent path">
-              <div class="descent3d-alt-track"></div>
-              <div class="descent3d-alt-fill" id="descent3d-alt-fill"></div>
-              <div class="descent3d-alt-thumb" id="descent3d-alt-thumb"></div>
-            </div>
-          </div>
-        </div>
-        <div class="alt-list-title" style="margin-top:12px;">
-          3D Descent Path <button class="info-btn" type="button" data-hint="descent3d-hint" title="Show details">i</button>
-        </div>
-        <div class="alt-hint" id="descent3d-hint">X/Y are relative feet east/north from the pad (not tied to true map coordinates) &mdash; Z is altitude AGL in feet. Dots mark each model's own real reported wind levels (GFS reports far more than ICON, for example); the rest of each line is a smooth interpolation between them. Altitude bands are placed via a standard-atmosphere pressure-to-height conversion, not this forecast's own real temperature profile &mdash; on a hot day, real bands can sit a few hundred feet higher than shown here (same math used everywhere else in this app). Gust is only ever real data at the ground end of each path &mdash; Open-Meteo has no gust field at any other altitude. Drag the vertical slider to explore a different apogee; drag the canvas to orbit, scroll/pinch to zoom.</div>
-      </div>
-    </div>
 
     <div class="accuracy-section" id="accuracy-section" style="display:none;">
       <div class="alt-list-title">
@@ -234,7 +264,7 @@
   </div>
 
   <p class="footnote">
-    Descent-only drift per model (GFS/HRRR/ECMWF/ICON/ARPEGE/GEM &mdash; only models with real pressure-level wind), integrated from apogee to ground in your browser, wind sampled every 50 ft of descent. Zone = convex hull of all models' points at that altitude, for both Fast/Slow rate variants shown &mdash; editable drogue/main ground-level fps below the Rate legend, scaled up per descent step for the thinner air at altitude (see the Rate legend's info button for how much). Point color = model, point shape = rate (circle = faster, square = slower) &mdash; hover any point for exact numbers. Not a go/no-go call &mdash; for a launch director to read against the actual approved landing zone once available.
+    Descent-only drift per model (GFS/HRRR/ECMWF/ICON/ARPEGE/GEM &mdash; only models with real pressure-level wind), integrated from apogee to ground in your browser, wind sampled every 50 ft of descent. Zone = convex hull of all models' points at that altitude, at the one active rate shown below the Rate legend (editable drogue/main ground-level fps, or click Fast/Slow to fill in that preset's numbers) &mdash; scaled up per descent step for the thinner air at altitude (see the Rate legend's info button for how much). Point color = model &mdash; hover any point for exact numbers. Not a go/no-go call &mdash; for a launch director to read against the actual approved landing zone once available.
   </p>
 
   <div class="tooltip" id="tooltip"></div>

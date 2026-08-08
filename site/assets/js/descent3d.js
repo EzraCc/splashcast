@@ -16,13 +16,17 @@
 // actively fights the "axes labeled so magnitude is clear" requirement
 // rather than serving it.
 //
-// Axes are independently normalized per-axis, not held to one shared
-// ft-per-pixel scale -- altitude commonly spans thousands of feet while
-// horizontal drift is typically tens to a few thousand, so a single
-// true-to-scale axis would flatten the horizontal spread (the actually
-// interesting part of "how does this model's path curve") into a barely-
-// visible sliver. Real tick labels at each gridline keep magnitude
-// honestly readable despite the normalization.
+// X/Y/Z all share ONE true-to-scale ft-per-pixel factor (path3dDrawScene()'s
+// scaleFt) -- 2026-08, per direction: an earlier version normalized
+// altitude independently from horizontal drift (each stretched to fill the
+// same visual radius), which read as far more dramatic sideways drift than
+// actually happened relative to how far the rocket fell. Altitude
+// routinely dwarfs horizontal drift in real numbers, and this view now
+// shows that honestly rather than fighting it -- a real trade-off is a
+// small, often thin-looking horizontal spread near the vertical axis
+// rather than a bold one filling the frame; real tick labels at each
+// gridline are what keep magnitude readable at that scale, not an
+// artificially inflated horizontal extent.
 //
 // Altitude selection is a priority chain (see resolveAltFt()) topped by
 // this panel's own vertical slider, so a user can explore any apogee
@@ -44,8 +48,6 @@
 let path3dYaw = 0;
 let path3dPitch = 22 * Math.PI / 180;
 let path3dZoom = 1;
-let path3dRate = 'fast';
-let path3dCollapsed = true;
 // Default ON -- unlike most of this app's toggles (default-minimal, opt
 // in), this is a brand-new visualization being evaluated for the first
 // time; showing it immediately makes that evaluation possible without an
@@ -70,16 +72,12 @@ let path3dLastResolvedAltFt = null;
 
 const path3dCanvas = document.getElementById('descent3d-canvas');
 const path3dCtx = path3dCanvas.getContext('2d');
-const path3dBody = document.getElementById('descent3d-body');
 const path3dMain = document.getElementById('descent3d-main');
 const path3dEmptyHint = document.getElementById('descent3d-empty-hint');
-const path3dTitleToggle = document.getElementById('descent3d-title-toggle');
-const path3dChevron = document.getElementById('descent3d-chevron');
-const path3dRateToggle = document.getElementById('descent3d-rate-toggle');
 const path3dViewToggle = document.getElementById('descent3d-view-toggle');
 const path3dGroundToggle = document.getElementById('descent3d-ground-toggle');
 const path3dAltSlider = document.getElementById('descent3d-alt-slider');
-const path3dAltFill = document.getElementById('descent3d-alt-fill');
+const path3dAltTicks = document.getElementById('descent3d-alt-ticks');
 const path3dAltThumb = document.getElementById('descent3d-alt-thumb');
 const path3dAltReadout = document.getElementById('descent3d-alt-readout');
 const path3dCanvasWrap = document.querySelector('.descent3d-canvas-wrap');
@@ -118,23 +116,92 @@ function path3dResolveAltFt() {
 function path3dUpdateAltSliderUI(altFt) {
   const max = path3dAltSliderMaxFt();
   const frac = max > 0 ? Math.max(0, Math.min(1, altFt / max)) : 0;
-  // Two different quantities, not one shared formula -- .descent3d-alt-fill
-  // has no transform (its "height" IS the bar's own top-edge distance from
-  // the bottom), while .descent3d-alt-thumb is translateX-only (see its
-  // CSS comment) so its "bottom" IS its own bottom EDGE, not its center.
-  // Both are inset by the thumb's 9px radius so its circle never spills
-  // past the track's ends into whatever sits beside it (confirmed
-  // directly: at frac=1 the thumb's circle overlapped the "Apogee"
-  // readout label sitting just above the track). Deriving both from the
-  // SAME centerFromBottom keeps the fill's top edge and the thumb's own
-  // center exactly aligned with each other, per direction.
+  // `bottom` on .descent3d-alt-thumb IS its own bottom EDGE, not its
+  // center (translateX-only, see its own CSS comment) -- inset by the
+  // thumb's 9px radius so its circle never spills past the track's ends
+  // into whatever sits beside it (confirmed directly: at frac=1 the thumb's
+  // circle overlapped the "Apogee" readout label sitting just above the
+  // track).
   const centerFromBottom = `calc(9px + (100% - 18px) * ${frac})`;
-  path3dAltFill.style.height = centerFromBottom;
   path3dAltThumb.style.bottom = `calc(${centerFromBottom} - 9px)`;
   path3dAltReadout.textContent = Math.round(altFt).toLocaleString() + ' ft';
   path3dAltSlider.setAttribute('aria-valuenow', String(Math.round(altFt)));
   path3dAltSlider.setAttribute('aria-valuemin', '0');
   path3dAltSlider.setAttribute('aria-valuemax', String(Math.round(max)));
+  path3dRenderAltTicks();
+}
+
+// Dash-mark ticks at each of this site's real apogee-altitude options
+// (DATA.altitudes, the same list the sidebar's own ladder shows) -- lets a
+// tap land exactly on a "real" altitude instead of eyeballing a freeform
+// drag. Rebuilt on every call (cheap: DATA.altitudes is a handful of
+// values) since the slider's own live pixel height -- which
+// path3dTicksToShow() decimates against -- can change from a window
+// resize/orientation change independently of anything else that would
+// otherwise trigger a rebuild.
+function path3dRenderAltTicks() {
+  const rect = path3dAltSlider.getBoundingClientRect();
+  // Matches the 9px-inset-each-end usable range centerFromBottom above
+  // already uses, so a tick and the thumb land in the identical spot when
+  // the current altitude is exactly one of the ladder's own values.
+  const trackPx = Math.max(0, rect.height - 18);
+  const max = path3dAltSliderMaxFt();
+  path3dAltTicks.innerHTML = '';
+  path3dTicksToShow(trackPx).forEach(alt => {
+    const frac = max > 0 ? alt / max : 0;
+    const tick = document.createElement('button');
+    tick.type = 'button';
+    tick.className = 'descent3d-alt-tick';
+    tick.title = `${alt.toLocaleString()} ft`;
+    tick.style.bottom = `calc(9px + (100% - 18px) * ${frac} - 9px)`;
+    // pointerdown + stopPropagation, not a plain 'click' -- a tick sits
+    // inside #descent3d-alt-slider, so an unstopped pointerdown would bubble
+    // up into the slider's OWN pointerdown handler first (that one fires
+    // before this element's later 'click' does) and jump the thumb to
+    // whatever approximate Y-coordinate value that click landed on, then
+    // this handler would correct it to the exact tick altitude a moment
+    // later -- a real, confirmed visible "jump then snap back" rather than
+    // landing precisely in one motion (the entire point of a tick target).
+    tick.addEventListener('pointerdown', evt => {
+      evt.stopPropagation();
+      path3dSetAlt(alt, true);
+    });
+    // Also a plain 'click' -- keyboard activation (Enter/Space on a focused
+    // button) fires that without a preceding pointerdown at all. Redundant
+    // with the pointerdown handler above for a real mouse/touch click (both
+    // fire, both set the identical value), which is harmless, not worth
+    // guarding against.
+    tick.addEventListener('click', () => path3dSetAlt(alt, true));
+    path3dAltTicks.appendChild(tick);
+  });
+}
+
+// Thins DATA.altitudes down to whatever actually fits `trackPx` without
+// crowding -- ticks closer together than MIN_SPACING_PX get dropped, walking
+// bottom-up so the kept set stays evenly spread rather than clustering near
+// one end. Always keeps the top of the ladder (the last entry) even if that
+// means dropping its nearest-below neighbor instead, so the highest real
+// altitude option is never the one that silently disappears. A short
+// mobile slider naturally lands on a coarser real spacing this way (e.g.
+// every 3,000ft instead of every 1,000ft) without a hardcoded breakpoint --
+// it falls out of the same real pixel-spacing math at any slider height.
+function path3dTicksToShow(trackPx) {
+  const all = DATA.altitudes;
+  const max = path3dAltSliderMaxFt();
+  if (!all.length || max <= 0 || trackPx <= 0) return [];
+  const MIN_SPACING_PX = 22;
+  const kept = [];
+  let lastPx = -Infinity;
+  all.forEach((alt, i) => {
+    const px = (alt / max) * trackPx;
+    const isLast = i === all.length - 1;
+    if (isLast && kept.length && px - lastPx < MIN_SPACING_PX) kept.pop();
+    if (px - lastPx >= MIN_SPACING_PX || isLast) {
+      kept.push(alt);
+      lastPx = px;
+    }
+  });
+  return kept;
 }
 
 // Round to a clean interval from the data's own real extent -- same
@@ -167,27 +234,6 @@ function path3dRotate(nx, ny, nz) {
   return { sx: rx, sy, depth };
 }
 
-function path3dToggleCollapsed() {
-  path3dCollapsed = !path3dCollapsed;
-  path3dTitleToggle.setAttribute('aria-expanded', String(!path3dCollapsed));
-  path3dChevron.classList.toggle('collapsed', path3dCollapsed);
-  path3dBody.style.display = path3dCollapsed ? 'none' : '';
-  if (!path3dCollapsed) renderDescent3D();
-}
-path3dTitleToggle.addEventListener('click', path3dToggleCollapsed);
-path3dTitleToggle.addEventListener('keydown', evt => {
-  if (evt.key === 'Enter' || evt.key === ' ') { evt.preventDefault(); path3dToggleCollapsed(); }
-});
-
-path3dRateToggle.querySelectorAll('button').forEach(btn => {
-  btn.addEventListener('click', () => {
-    if (btn.dataset.rate === path3dRate) return;
-    path3dRate = btn.dataset.rate;
-    path3dRateToggle.querySelectorAll('button').forEach(b => b.classList.toggle('active', b === btn));
-    renderDescent3D();
-  });
-});
-
 // Standard-view shortcuts, same idea as any 3D modeler's view cube --
 // yaw/pitch pairs chosen so each preset's horizontal/vertical axes are
 // exactly one of the three orthogonal planes, not an arbitrary angle:
@@ -206,10 +252,20 @@ const PATH3D_VIEW_PRESETS = {
   east: [0, 0],
   north: [90 * Math.PI / 180, 0],
 };
+// Set the moment the user actually touches the camera themselves (a preset
+// button or an orbit-drag) -- see path3dApplyDefaultViewIfUnset()'s own
+// comment for what this gates. Same xExplicitlyChosen pattern this app
+// already uses for hour/deploy/boost.
+let path3dViewExplicitlyChosen = false;
 path3dViewToggle.querySelectorAll('button').forEach(btn => {
   btn.addEventListener('click', () => {
     const [yaw, pitch] = PATH3D_VIEW_PRESETS[btn.dataset.view];
     path3dYaw = yaw; path3dPitch = pitch;
+    // A preset promises a known, standard framing (e.g. Top matching the 2D
+    // map exactly) -- a leftover pan offset from an earlier gesture would
+    // quietly break that promise, so presets also re-center.
+    path3dPanPxX = 0; path3dPanPxY = 0;
+    path3dViewExplicitlyChosen = true;
     path3dViewToggle.querySelectorAll('button').forEach(b => b.classList.toggle('active', b === btn));
     renderDescent3D();
   });
@@ -218,7 +274,26 @@ path3dViewToggle.querySelectorAll('button').forEach(btn => {
 // deselect all of them rather than leaving a stale one highlighted (see
 // the pointerup handler below, path3dEndDrag()).
 function path3dClearViewPreset() {
+  path3dViewExplicitlyChosen = true;
   path3dViewToggle.querySelectorAll('button').forEach(b => b.classList.remove('active'));
+}
+
+// Called by app.js's #map-view-toggle click handler right before switching
+// INTO 3D mode -- the very first time a user sees this view in a session,
+// it opens already lined up with the 2D map they were just looking at
+// (Top is pixel-for-pixel the same north-up/east-right orientation, see
+// PATH3D_VIEW_PRESETS's own comment) instead of the oblique "3D" default,
+// so the points don't appear to jump/reorient on the switch -- less
+// disorienting, per direction. Stops applying as soon as
+// path3dViewExplicitlyChosen is set (a preset click or a real orbit-drag),
+// so it only ever overrides the untouched starting state, never a real
+// choice the user already made.
+function path3dApplyDefaultViewIfUnset() {
+  if (path3dViewExplicitlyChosen) return;
+  const [yaw, pitch] = PATH3D_VIEW_PRESETS.top;
+  path3dYaw = yaw; path3dPitch = pitch;
+  path3dPanPxX = 0; path3dPanPxY = 0;
+  path3dViewToggle.querySelectorAll('button').forEach(b => b.classList.toggle('active', b.dataset.view === 'top'));
 }
 
 path3dGroundToggle.querySelector('button').addEventListener('click', evt => {
@@ -232,17 +307,49 @@ function path3dAltFromClientY(clientY) {
   const frac = 1 - Math.max(0, Math.min(1, (clientY - rect.top) / rect.height));
   return Math.round(frac * path3dAltSliderMaxFt());
 }
+// Pushes a new apogee into both this panel's own override (immediate) and
+// the sidebar's "Specific altitude" field (app.js's syncAltCustomUI()) --
+// previously one-way (sidebar -> this panel only; dragging here never told
+// the sidebar anything). `commit` is false for the many intermediate
+// pointermove updates during a drag (cheap: this panel's own canvas redraw
+// plus syncAltCustomUI(), which just reflects a number into an input/status
+// line -- no re-simulation), true for the drag's actual endpoint (a tick
+// click, an arrow-key step, or pointerup) -- that's the one point a full
+// render() runs, which also redraws the (hidden, while in 3D mode) 2D SVG
+// map and the sidebar's altitude-ladder highlighting, real cost not worth
+// paying on every pixel of a still-moving drag.
+function path3dSetAlt(altFt, commit) {
+  // Rounded to the nearest 100ft, not 1ft -- a freeform drag/keyboard step
+  // implies false precision at 1ft resolution (neither the model nor a
+  // mouse gesture is that exact, and dragging to land on an exact foot
+  // isn't a reasonable ask of anyone). A no-op for tick clicks -- every
+  // DATA.altitudes value is already a clean multiple of 1,000. Someone who
+  // genuinely wants an exact number still has the sidebar's "Specific
+  // altitude" field for that, untouched by this rounding.
+  const rounded = Math.round(altFt / 100) * 100;
+  const clamped = Math.max(1, Math.min(path3dAltSliderMaxFt(), rounded));
+  path3dAltOverrideFt = clamped;
+  path3dSliderJustMoved = true;
+  state.customAlt = clamped;
+  // Same clearing activateAltCustom() (app.js) does when the sidebar's own
+  // input turns "Specific altitude" on -- isolate/pin among the ladder rows
+  // stops meaning anything once one specific-altitude zone is the whole
+  // view, regardless of which control (sidebar or this slider) set it.
+  state.pinnedAlt = null;
+  state.isolatedAlt = null;
+  syncAltCustomUI();
+  if (commit) render(); else renderDescent3D();
+}
 path3dAltSlider.addEventListener('pointerdown', evt => {
   evt.preventDefault();
   path3dAltSlider.setPointerCapture(evt.pointerId);
-  const move = e => {
-    path3dAltOverrideFt = path3dAltFromClientY(e.clientY);
-    path3dSliderJustMoved = true;
-    renderDescent3D();
-  };
+  const move = e => path3dSetAlt(path3dAltFromClientY(e.clientY), false);
   const stop = () => {
     document.removeEventListener('pointermove', move);
     document.removeEventListener('pointerup', stop);
+    // Final commit -- see path3dSetAlt()'s own comment on why the drag
+    // itself doesn't pay for a full render() on every intermediate step.
+    if (path3dAltOverrideFt !== null) path3dSetAlt(path3dAltOverrideFt, true);
   };
   document.addEventListener('pointermove', move);
   document.addEventListener('pointerup', stop);
@@ -257,64 +364,116 @@ path3dAltSlider.addEventListener('keydown', evt => {
   else if (evt.key === 'ArrowDown' || evt.key === 'ArrowLeft') next = Math.max(0, path3dLastResolvedAltFt - step);
   if (next !== null) {
     evt.preventDefault();
-    path3dAltOverrideFt = next;
-    path3dSliderJustMoved = true;
-    renderDescent3D();
+    path3dSetAlt(next, true);
   }
 });
 
-// Orbit-drag + zoom -- same pointer-capture idiom the map's own pan/zoom
-// (#map-wrap) already uses, for consistency rather than a new paradigm.
-// When NOT dragging, pointermove instead does proximity hit-testing
-// against path3dHitPoints (populated fresh each render by path3dDrawPath())
-// and shows the shared #tooltip -- model, altitude, and the wind speed/
-// direction actually driving that point (re-interpolated live from
-// DATA.wind_profiles via interpWind(), not stored on the point itself).
+// Orbit-drag + pan + zoom -- same pointer-capture idiom the map's own pan/
+// zoom (#map-wrap) already uses, for consistency rather than a new
+// paradigm. When NOT dragging, pointermove instead does proximity hit-
+// testing against path3dHitPoints (populated fresh each render by
+// path3dDrawPath()) and shows the shared #tooltip -- model, altitude, and
+// the wind speed/direction actually driving that point (re-interpolated
+// live from DATA.wind_profiles via interpWind(), not stored on the point
+// itself).
+//
+// Pan is a separate gesture from orbit, not an overload of the same drag --
+// path3dRotate(0,0,0) is a deliberate invariant (always exactly canvas
+// center, see its own comment), so orbit always pivots around the pad by
+// design; shifting the camera's actual focus point away from the pad needs
+// its own trigger. Right-click-drag on desktop (evt.button === 2, with the
+// browser's own context menu suppressed below), or a second simultaneous
+// touch point on mobile (path3dActiveTouches, tracked because pointer
+// events don't otherwise expose "how many fingers are down right now" --
+// there's no pinch-to-zoom on this canvas yet to conflict with).
 let path3dDragging = false, path3dLastX = 0, path3dLastY = 0, path3dDragDistPx = 0;
+let path3dPanMode = false;
+let path3dPanPxX = 0, path3dPanPxY = 0;
+const path3dActiveTouches = new Map(); // pointerId -> {x, y}, touch pointers only
+
+function path3dTouchMidpoint() {
+  const pts = [...path3dActiveTouches.values()];
+  if (pts.length < 2) return null;
+  return [(pts[0].x + pts[1].x) / 2, (pts[0].y + pts[1].y) / 2];
+}
+
+path3dCanvas.addEventListener('contextmenu', evt => evt.preventDefault()); // right-click is "pan" here, not a menu
+
 path3dCanvas.addEventListener('pointerdown', evt => {
+  if (evt.pointerType === 'touch') path3dActiveTouches.set(evt.pointerId, { x: evt.clientX, y: evt.clientY });
+  const twoFingerPan = path3dActiveTouches.size >= 2;
+  path3dPanMode = evt.button === 2 || twoFingerPan;
   path3dDragging = true;
   path3dDragDistPx = 0;
   path3dCanvas.classList.add('dragging');
   path3dCanvas.setPointerCapture(evt.pointerId);
-  path3dLastX = evt.clientX; path3dLastY = evt.clientY;
+  const mid = twoFingerPan ? path3dTouchMidpoint() : [evt.clientX, evt.clientY];
+  path3dLastX = mid[0]; path3dLastY = mid[1];
 });
 path3dCanvas.addEventListener('pointermove', evt => {
+  if (evt.pointerType === 'touch' && path3dActiveTouches.has(evt.pointerId)) {
+    path3dActiveTouches.set(evt.pointerId, { x: evt.clientX, y: evt.clientY });
+  }
   if (!path3dDragging) {
     path3dHandleHover(evt);
     return;
   }
-  const dx = evt.clientX - path3dLastX, dy = evt.clientY - path3dLastY;
-  path3dLastX = evt.clientX; path3dLastY = evt.clientY;
+  // Tracks the touch pair's own midpoint while panning with two fingers,
+  // not each finger's individual movement separately -- averaging two
+  // independently-updating pointers through one shared lastX/lastY would
+  // otherwise mix their deltas together into an erratic combined motion.
+  const mid = (path3dPanMode && path3dActiveTouches.size >= 2) ? path3dTouchMidpoint() : [evt.clientX, evt.clientY];
+  const dx = mid[0] - path3dLastX, dy = mid[1] - path3dLastY;
+  path3dLastX = mid[0]; path3dLastY = mid[1];
   path3dDragDistPx += Math.abs(dx) + Math.abs(dy);
-  // A real orbit no longer matches any single preset button -- deselect
-  // once the drag has moved enough to be a real orbit, not a stray
-  // sub-pixel jitter on what was meant as a click.
+  // A real orbit/pan no longer matches any single preset button -- deselect
+  // once the drag has moved enough to be real, not a stray sub-pixel jitter
+  // on what was meant as a click.
   if (path3dDragDistPx > 4) path3dClearViewPreset();
-  path3dYaw += dx * 0.008;
-  // Pitch clamped to [0, 90deg] -- NOT allowed to go negative. A negative
-  // pitch means the camera has orbited past looking level and is now
-  // looking up from BELOW the horizon, which flips the sign of sin(pitch)
-  // in path3dRotate()'s sy term -- north (and everything else with a
-  // north component) then renders on the opposite side of the screen
-  // from where it did a moment before, which reads as "the chart broke"
-  // rather than "the camera went upside down" (confirmed directly: a
-  // large enough downward drag from the Top preset, pitch=90deg, swung
-  // pitch past 0 into negative territory and put S where N had been).
-  // Yaw is deliberately left unclamped -- spinning 360 degrees around the
-  // vertical axis is normal orbit-camera behavior and self-consistent
-  // (E/W swap screen sides together with the data, an expected result of
-  // walking around to the other side of the scene, not a broken one).
-  path3dPitch = Math.max(0, Math.min(Math.PI / 2, path3dPitch - dy * 0.008));
+  if (path3dPanMode) {
+    path3dPanPxX += dx; path3dPanPxY += dy;
+  } else {
+    path3dYaw += dx * 0.008;
+    // Pitch clamped to [0, 90deg] -- NOT allowed to go negative. A negative
+    // pitch means the camera has orbited past looking level and is now
+    // looking up from BELOW the horizon, which flips the sign of sin(pitch)
+    // in path3dRotate()'s sy term -- north (and everything else with a
+    // north component) then renders on the opposite side of the screen
+    // from where it did a moment before, which reads as "the chart broke"
+    // rather than "the camera went upside down" (confirmed directly: a
+    // large enough downward drag from the Top preset, pitch=90deg, swung
+    // pitch past 0 into negative territory and put S where N had been).
+    // Yaw is deliberately left unclamped -- spinning 360 degrees around the
+    // vertical axis is normal orbit-camera behavior and self-consistent
+    // (E/W swap screen sides together with the data, an expected result of
+    // walking around to the other side of the scene, not a broken one).
+    path3dPitch = Math.max(0, Math.min(Math.PI / 2, path3dPitch - dy * 0.008));
+  }
   hideTooltip();
   renderDescent3D();
 });
-function path3dEndDrag() { path3dDragging = false; path3dCanvas.classList.remove('dragging'); }
+function path3dEndDrag(evt) {
+  if (evt && evt.pointerType === 'touch') path3dActiveTouches.delete(evt.pointerId);
+  path3dDragging = false;
+  path3dPanMode = false;
+  path3dCanvas.classList.remove('dragging');
+}
 path3dCanvas.addEventListener('pointerup', path3dEndDrag);
 path3dCanvas.addEventListener('pointercancel', path3dEndDrag);
 path3dCanvas.addEventListener('mouseleave', hideTooltip);
 path3dCanvas.addEventListener('wheel', evt => {
   evt.preventDefault();
-  path3dZoom = Math.max(0.4, Math.min(3, path3dZoom * (evt.deltaY < 0 ? 1.08 : 0.92)));
+  // Max raised from 3x to 20x -- 3x was tuned back when X/Y/Z were each
+  // independently normalized to fill the same radius, so the landing
+  // cluster already used a good portion of the frame at low zoom. Now that
+  // Z is true-to-scale (usually dominated by altitude, see toScreen()'s
+  // own comment) that same cluster can render tiny even at 3x, with no way
+  // to actually inspect it -- per direction, seeing landing detail matters
+  // more than keeping apogee in frame; zooming in far enough to do that
+  // means apogee legitimately scrolls off-canvas, which is expected, not
+  // a bug (pan -- right-click/two-finger drag -- reaches it again if
+  // needed).
+  path3dZoom = Math.max(0.4, Math.min(20, path3dZoom * (evt.deltaY < 0 ? 1.08 : 0.92)));
   renderDescent3D();
 }, { passive: false });
 
@@ -351,9 +510,9 @@ function path3dHandleHover(evt) {
 }
 
 if (window.ResizeObserver) {
-  new ResizeObserver(() => { if (!path3dCollapsed) renderDescent3D(); }).observe(path3dCanvasWrap);
+  new ResizeObserver(() => { if (mapViewMode === '3d') renderDescent3D(); }).observe(path3dCanvasWrap);
 } else {
-  window.addEventListener('resize', () => { if (!path3dCollapsed) renderDescent3D(); });
+  window.addEventListener('resize', () => { if (mapViewMode === '3d') renderDescent3D(); });
 }
 
 // --- ground-plane imagery (satellite/road texture on the z=0 plane) -------
@@ -370,7 +529,7 @@ function path3dGetGroundImage(kind) {
   let img = path3dGroundImages.get(key);
   if (!img) {
     img = new Image();
-    img.onload = () => { if (path3dShowGround && !path3dCollapsed) renderDescent3D(); };
+    img.onload = () => { if (path3dShowGround && mapViewMode === '3d') renderDescent3D(); };
     img.src = `maps/${currentSiteId}/${kind}_${mapLayer}_web.jpg`;
     path3dGroundImages.set(key, img);
   }
@@ -460,7 +619,7 @@ function path3dShowCanvas() {
 }
 
 function renderDescent3D() {
-  if (path3dCollapsed) return;
+  if (mapViewMode !== '3d') return;
   if (!DATA || !state) return;
 
   const altFt = path3dResolveAltFt();
@@ -472,7 +631,7 @@ function renderDescent3D() {
     return;
   }
 
-  const pathsRaw = descentPathsFor(state.hour, state.deploy, altFt, path3dRate);
+  const pathsRaw = descentPathsFor(state.hour, state.deploy, altFt);
   const paths = pathsRaw.filter(p => state.selectedModels === null || state.selectedModels.has(p.model));
 
   if (!paths.length) {
@@ -500,11 +659,7 @@ function path3dDrawScene(paths, altFt) {
   // further in one direction than the other (the common case), which
   // silently lies about real compass bearing: an actual 45-degree drift
   // could render at some other angle entirely, or a due-east drift could
-  // visually tilt off axis. Only Z (altitude) gets its own independent
-  // scale (see file-top comment) -- that's a deliberate, different kind of
-  // axis (the entire point of a 3D view here is showing vertical descent,
-  // and altitude range routinely dwarfs horizontal drift), not an
-  // oversight; X vs Y have no equivalent justification for differing.
+  // visually tilt off axis.
   // padOffsetFt (app.js) is the 2D map's "try a nearby setup spot"
   // exploration -- a pure display-time shift of the whole rigid scene, not
   // a re-simulation (same wind applies close by), exactly mirroring how
@@ -523,11 +678,57 @@ function path3dDrawScene(paths, altFt) {
   }));
   const maxX = maxXY, maxY = maxXY;
 
-  const cx = rect.width / 2, cy = rect.height / 2 + 8;
+  // How much Z actually contributes to the CURRENT view's vertical screen
+  // position -- path3dRotate()'s sy term is `rd*sinP + nz*cosP`, so at
+  // pitch=90deg (Top) cosP=0 and Z contributes NOTHING to sy at all (it
+  // becomes pure depth instead -- see path3dRotate()'s own comment); at
+  // pitch=0deg (W-E/N-S) cosP=1 and Z is the entire vertical axis. Reused
+  // below for both the projection scale and the origin's vertical position
+  // -- same underlying fact driving two different pieces of the layout,
+  // not two independent tunings that happen to agree.
+  const verticalWeight = Math.cos(path3dPitch); // 1 at pitch=0 (W-E/N-S), 0 at pitch=90deg (Top)
+
+  // True-to-scale, per direction -- X/Y/Z all divide by the SAME scaleFt,
+  // not independently normalized (independent normalization used to make
+  // horizontal drift read as far more dramatic than it actually was
+  // relative to how far the rocket fell). But blended by verticalWeight,
+  // not a flat max(maxXY, maxZ) -- at Top, Z isn't rendered at all (see
+  // verticalWeight's own comment), so scaling by it there was needlessly
+  // shrinking the one thing Top actually shows (X/Y) for no honesty
+  // benefit; confirmed as a real, reported problem ("even on top view you
+  // can't get in far enough to see clearly"). At pitch=0 this is exactly
+  // max(maxXY, maxZ) (the original true-to-scale intent, unchanged); at
+  // Top it's exactly maxXY (full frame usage, since X:Y's own ratio is
+  // still preserved regardless of the absolute divisor -- dividing X, Y,
+  // AND Z by the same number never distorts their relative proportions,
+  // only how much of the frame the whole scene fills). maxX/maxY/maxZ
+  // (above) still carry each axis's own real data extent for axis-length/
+  // tick-spacing purposes (path3dDrawAxes() below) -- only the shared
+  // projection divisor changed, not what range each axis actually reports.
+  // The ground-plane image is unaffected code-wise (path3dDrawGroundLayer()
+  // already goes through this same toScreen()) -- like everything else, it
+  // renders larger now at pitches closer to Top, smaller closer to W-E/N-S.
+  const scaleFt = maxXY + (Math.max(maxXY, maxZ) - maxXY) * verticalWeight;
+
+  // Origin sits near the bottom of the frame, not dead center, whenever
+  // altitude (Z) is contributing real vertical screen space -- Z only ever
+  // spans 0..maxZ (apogee down to the ground, never negative, unlike X/Y
+  // which drift either direction), so centering it wastes the bottom half
+  // of the canvas on nothing while cramping the actual path into the top
+  // half -- exactly the "have to pan every time" friction per direction.
+  // At pitch=90deg (Top) the origin stays centered instead, matching Y/X's
+  // own +/- symmetric range in that view (verticalWeight=0 there); at
+  // pitch=0deg (W-E/N-S) it shifts all the way down (verticalWeight=1);
+  // the oblique "3D" default (pitch=22deg) and any manual orbit land
+  // smoothly in between, not as separate cases to enumerate.
+  const centeredCy = rect.height / 2 + 8;
+  const bottomCy = rect.height * 0.82;
+  const cx = rect.width / 2 + path3dPanPxX;
+  const cy = centeredCy + (bottomCy - centeredCy) * verticalWeight + path3dPanPxY;
   const radius = Math.min(rect.width, rect.height) * 0.34 * path3dZoom;
 
   function toScreen(xFt, yFt, zFt) {
-    const r = path3dRotate((xFt + padOffsetFt.x) / maxX, (yFt + padOffsetFt.y) / maxY, zFt / maxZ);
+    const r = path3dRotate((xFt + padOffsetFt.x) / scaleFt, (yFt + padOffsetFt.y) / scaleFt, zFt / scaleFt);
     return [cx + r.sx * radius, cy - r.sy * radius, r.depth];
   }
 
@@ -650,6 +851,9 @@ function path3dDrawPath(p, toScreen, altFt) {
     ctx.beginPath(); ctx.arc(sx, sy, 2.4, 0, Math.PI * 2); ctx.fill();
   });
 
+  const last = p.path[p.path.length - 1];
+  const [lx, ly] = toScreen(last.x_ft, last.y_ft, last.alt_ft);
+
   // Ground-end gust halo -- the ONE altitude gust data actually exists for
   // (Open-Meteo has no gust field at any other height/pressure level,
   // confirmed live -- see splash_zones.py's build_wind_data() comment).
@@ -657,13 +861,24 @@ function path3dDrawPath(p, toScreen, altFt) {
   const groundCell = DATA.wind && DATA.wind.hourly[state.hour] ? DATA.wind.hourly[state.hour][p.model] : null;
   const gust = groundCell ? groundCell.gust : null;
   if (gust !== null && gust !== undefined) {
-    const last = p.path[p.path.length - 1];
-    const [sx, sy] = toScreen(last.x_ft, last.y_ft, last.alt_ft);
     const r = 3 + Math.min(10, gust / 3);
-    ctx.beginPath(); ctx.arc(sx, sy, r, 0, Math.PI * 2);
+    ctx.beginPath(); ctx.arc(lx, ly, r, 0, Math.PI * 2);
     ctx.globalAlpha = 0.5; ctx.lineWidth = 1.5; ctx.strokeStyle = color; ctx.stroke();
     ctx.globalAlpha = 1;
   }
+
+  // Landing marker -- color AND shape both mean model here too now (same
+  // MODEL_SHAPES signal app.js's drawPoint()/History already use, see that
+  // constant's own comment), not just color -- the colorblind-safe backup
+  // shouldn't stop existing just because this view renders to a <canvas>
+  // instead of SVG. path3dShapePath() (below) shares the actual point
+  // geometry with app.js's shapePolygonPoints() directly, only the last
+  // "draw these points" step differs by API.
+  ctx.beginPath();
+  path3dShapePath(ctx, MODEL_SHAPES[p.model] || 'circle', lx, ly, 7);
+  ctx.fillStyle = color;
+  ctx.fill();
+  ctx.lineWidth = 2; ctx.strokeStyle = path3dCssVar('--point-stroke'); ctx.stroke();
 
   // Apogee marker -- small hollow circle at the top of the path,
   // distinguishes "start" from "landing" at a glance without a legend.
@@ -673,4 +888,33 @@ function path3dDrawPath(p, toScreen, altFt) {
   ctx.lineWidth = 1.5; ctx.strokeStyle = color; ctx.stroke();
 
   ctx.restore();
+}
+
+// Canvas equivalent of app.js's drawMarker() shape branch -- appends to
+// whatever path ctx.beginPath() already started, doesn't stroke/fill itself
+// (caller decides that, same division of labor path3dDrawPath()'s other
+// shapes already use). Circle/square are their own canvas primitives, but
+// everything else (triangle-up/triangle-down/diamond/plus/x/star) reuses
+// app.js's shapePolygonPoints() directly for the actual point geometry --
+// that math is pure coordinate generation with no SVG-specific step in it,
+// so duplicating it here (an earlier version of this function did exactly
+// that) was real, avoidable drift risk, not a necessary SVG-vs-canvas
+// difference. SHAPE_SIZE_MULT (app.js) applied here too, same as
+// drawMarker()/shapeSwatchSVG() -- otherwise the 3D view's landing markers
+// would show the same "different shapes, different visual weight"
+// mismatch this whole change exists to fix.
+function path3dShapePath(ctx, shape, cx, cy, size) {
+  if (shape === 'circle') {
+    ctx.arc(cx, cy, size, 0, Math.PI * 2);
+    return;
+  }
+  const scaled = size * (SHAPE_SIZE_MULT[shape] || 1);
+  if (shape === 'square') {
+    ctx.rect(cx - scaled, cy - scaled, scaled * 2, scaled * 2);
+    return;
+  }
+  shapePolygonPoints(shape, cx, cy, scaled).forEach(([x, y], i) => {
+    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+  });
+  ctx.closePath();
 }

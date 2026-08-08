@@ -166,6 +166,18 @@
   .toggle-btns button.active { background: var(--accent); color: #fff; font-weight: 600; }
   .toggle-btns button:hover:not(.active) { background: var(--surface-2); }
   .toggle-group.disabled { opacity: 0.4; pointer-events: none; }
+  /* Deploy + Preset rows in the sidebar rate section: label left, toggle
+     pushed to the row's right edge (rather than sitting right after the
+     label), both toggles the same width regardless of their own label text
+     ("Single" vs "Slow") so the two rows visually line up, with a real gap
+     between each pair's two buttons instead of the segmented single-border
+     look most .toggle-btns groups elsewhere use. */
+  .rate-toggle-row { justify-content: space-between; }
+  .rate-toggle-row .toggle-btns { width: 140px; gap: 6px; border: none; overflow: visible; }
+  .rate-toggle-row .toggle-btns button {
+    flex: 1 1 0; border: 1px solid var(--border); border-radius: 6px; text-align: center; padding: 7px 0;
+  }
+  .rate-toggle-row .toggle-btns button:last-child { border-right: 1px solid var(--border); }
   /* Rail angle moved up into the controls bar from its old home below the
      map (.map-col-notes). A fixed 100px here (rather than the flex:1 1 auto
      it used when it had a wide standalone row to itself) turned out too
@@ -193,14 +205,21 @@
   .layout {
     display: grid;
     grid-template-columns: 1fr 190px;
-    grid-template-areas: "map side" "notes side" "descent3d descent3d" "accuracy accuracy";
+    grid-template-areas: "map side" "notes side" "accuracy accuracy";
     gap: var(--sp-6);
     align-items: start;
   }
   .map-col-map { grid-area: map; min-width: 0; }
+  /* Site name + waiver, promoted out of the (collapsible, easy to miss)
+     weather panel into its own always-visible header right above the map
+     -- a real <h2> now, sized to read as a page-level heading rather than
+     small print. Empty text collapses to zero height via the :empty rule
+     (renderSiteHeading() hasn't populated it yet on first paint, before
+     the site-metadata fetch resolves) so there's no empty gap flash. */
+  .site-heading { font-size: var(--fs-lg); font-weight: 700; color: var(--text-primary); margin: 0 0 var(--sp-3); }
+  .site-heading:empty { display: none; }
   .side-col { grid-area: side; }
   .map-col-notes { grid-area: notes; }
-  .descent3d-section { grid-area: descent3d; min-width: 0; }
   .accuracy-section { grid-area: accuracy; min-width: 0; }
 
   /* The sidebar has grown a lot denser than when 190px was first chosen --
@@ -239,7 +258,15 @@
     box-shadow: 0 1px 4px rgba(0,0,0,0.15);
   }
   .zoom-btns button:hover { background: var(--surface-2); }
-  .zoom-hint { position: absolute; left: 10px; bottom: 10px; font-size: var(--fs-xs); color: var(--text-muted); background: var(--surface-1); padding: 3px 8px; border-radius: 6px; border: 1px solid var(--border); opacity: 0.85; }
+  /* Touch-only -- "pinch" means nothing with a mouse, and dragging to pan
+     is discoverable enough on desktop without a persistent hint (the zoom
+     +/-/Reset buttons are already visible there). Hidden by default,
+     shown only under (pointer: coarse) -- same touch-target convention
+     .descent3d-alt-thumb's own coarse-pointer rule already uses. */
+  .zoom-hint { display: none; }
+  @media (pointer: coarse) {
+    .zoom-hint { display: block; position: absolute; left: 10px; bottom: 10px; font-size: var(--fs-xs); color: var(--text-muted); background: var(--surface-1); padding: 3px 8px; border-radius: 6px; border: 1px solid var(--border); opacity: 0.85; }
+  }
 
   .layer-toggle {
     position: absolute; left: 10px; top: 10px; z-index: 5;
@@ -280,8 +307,6 @@
   .weather-title-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .weather-chevron { font-size: var(--fs-2xs); transition: transform 0.15s ease; display: inline-block; }
   .weather-chevron.collapsed { transform: rotate(-90deg); }
-  .waiver-note { font-size: var(--fs-xs); color: var(--text-muted); margin-bottom: var(--sp-3); }
-  .waiver-note b { color: var(--text-secondary); font-weight: 600; }
   .cloud-expand-btn {
     border: none; background: none; color: var(--accent); font-size: var(--fs-xs);
     font-weight: 600; cursor: pointer; padding: 2px 0; white-space: nowrap;
@@ -320,13 +345,15 @@
     overflow-x: auto;
   }
   .weather-corner { grid-column: span 1; }
-  /* Full-width sub-heading for the cloud rows only -- clouds is the one
-     metric here that's more than a single row (Low/Mid/High, +Total when
-     expanded), so unlike Rain/Temp's one-cell .weather-row-label it gets a
-     real heading spanning every column, same grid-column:1/-1 span
-     .cloud-layer-divider already uses. "Show all altitudes" lives here,
-     not in the panel's own .weather-head -- it's a clouds-specific
-     control, not a whole-panel one. */
+  /* Full-width sub-heading, one per metric (Wind excepted -- its row label
+     doubles as its only heading, see .weather-row-label below) -- Clouds,
+     Rain, and Temp each get one (addCloudSectionHeading()/
+     addRainSectionHeading()/addTempSectionHeading()), spanning every
+     column via the same grid-column:1/-1 span .cloud-layer-divider also
+     uses. A metric's own panel-specific control lives here too (Clouds'
+     "Show all altitudes", Temp's Feels like/Actual toggle) rather than the
+     whole panel's shared .weather-head -- these aren't whole-panel
+     controls. */
   .weather-section-heading {
     grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between; gap: 8px;
     font-size: var(--fs-sm); color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.03em;
@@ -350,9 +377,15 @@
      children for column alignment (see .weather-grid's own comment) and
      can't be wrapped in an extra container without breaking that. */
   #weather-panel.hours-disabled .weather-hour-btn { opacity: 0.4; pointer-events: none; }
-  /* Per-metric row label ("🌧️ Rain", "🌡️ Temp" + its toggle) -- stacks its
-     children (text, then temp's toggle if present) rather than forcing them
-     onto one line, since the label column is sized for the text alone. */
+  /* First-column cell for a data row -- empty for Rain/Temp (their own
+     label lives in the metric's .weather-section-heading directly above
+     now, see addRainRow()'s own comment), just keeping this row's first
+     grid column occupied like every other row's does. Wind is the one
+     exception still using this cell for its actual label ("💨 Wind") --
+     it's the panel's lead row with no heading of its own above it. Its own
+     Prior day/Morning cells are real empty divs (addWindRow()), not a
+     wider span, so the row keeps the same 7-column rhythm every other row
+     has. */
   .weather-row-label {
     display: flex; flex-direction: column; align-items: flex-start; gap: 4px;
     font-size: var(--fs-xs); color: var(--text-secondary); line-height: 1.2; align-self: end; padding-bottom: 4px;
@@ -460,23 +493,23 @@
   .wind-tier-dot.tier-orange { background: var(--wind-orange); }
   .wind-tier-dot.tier-red    { background: var(--hot-border); }
 
-  /* Temp's actual/feels-like toggle -- lives inline in its row label now
-     (addTempRow()), not a full header row of its own. Stacked vertically,
-     not side by side like the other .toggle-btns groups in this app (TIME/
-     View/Deploy in the controls bar) -- side by side measured 136px wide
-     ("Feels like"/"Actual", nowrap), well past the label column's own
-     width (78-90px), and CSS grid doesn't clip a track's overflowing
-     content by default -- it just visually spills into the next column's
-     cells instead of wrapping the track wider, confirmed directly (a real
-     click on "Actual" landed on a rain bar in the next column over at
-     375px). Stacked, the toggle only ever needs the width of its single
-     widest button (~60px), comfortably inside the column at any width. */
-  .temp-mode-toggle { display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; flex-shrink: 0; }
+  /* Temp's actual/feels-like toggle -- lives in Temp's own full-width
+     .weather-section-heading now (addTempSectionHeading()), same as
+     Clouds' "Show all altitudes" button, not squeezed into the narrow
+     78-90px label column any more. Side by side like every other
+     .toggle-btns group in this app (TIME/View/Deploy in the controls bar)
+     -- the vertical stack this used to need was a workaround for that
+     column's width specifically (measured 136px side-by-side, well past
+     78-90px, and CSS grid doesn't clip a track's overflowing content by
+     default -- confirmed directly, a real click on "Actual" landed on a
+     rain bar in the next column over at 375px); the full-width heading row
+     has no such constraint. */
+  .temp-mode-toggle { display: flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; flex-shrink: 0; }
   .temp-mode-toggle button {
-    border: none; border-bottom: 1px solid var(--border); background: var(--surface-1); color: var(--text-secondary);
-    padding: 3px 8px; font-size: var(--fs-xs); cursor: pointer; white-space: nowrap; text-align: left;
+    border: none; border-right: 1px solid var(--border); background: var(--surface-1); color: var(--text-secondary);
+    padding: 3px 8px; font-size: var(--fs-xs); cursor: pointer; white-space: nowrap; text-align: center;
   }
-  .temp-mode-toggle button:last-child { border-bottom: none; }
+  .temp-mode-toggle button:last-child { border-right: none; }
   .temp-mode-toggle button.active { background: var(--accent); color: #fff; font-weight: 600; }
   .temp-mode-toggle button:hover:not(.active) { background: var(--surface-2); }
   /* Rain/temp data cells reuse .cloud-cell (.baseline/.bars/.range-num/
@@ -485,15 +518,43 @@
      no longer exists (the shared header row above carries it once now). */
 
   /* ==================== 3D descent-path view (descent3d.js) =================== */
-  /* .descent3d-section reuses .weather-panel's own background/border/padding
-     verbatim (see its class list in index.html) -- .weather-head/
-     .weather-title-toggle/.weather-chevron are reused too, for the same
-     generic collapse-header styling every other panel-with-a-title here
-     already uses. Only what's genuinely new to this section gets new rules
-     below. */
-  .descent3d-header-controls { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-  .descent3d-rate-toggle, .descent3d-view-toggle { flex-shrink: 0; }
-  .descent3d-body { margin-top: var(--sp-4); }
+  /* .descent3d-frame now lives inside .map-col-map as the alternate mode
+     of the shared 2D/3D toggle (#map-view-toggle, mapViewMode in app.js)
+     -- not its own collapsible section any more, so it's a plain
+     position:relative box like .map-frame, not a .weather-panel-styled
+     card. Its own visibility is a single display:none on the frame
+     itself (toggled by app.js), not a nested collapse mechanic. */
+  .descent3d-frame { position: relative; }
+  /* .map-view-wrap is the shared position:relative box both .map-frame and
+     .descent3d-frame sit inside -- lets the 2D/3D toggle float as ONE
+     absolutely-positioned overlay regardless of which frame is showing,
+     instead of needing to be duplicated/repositioned per-mode. Mirrors
+     .layer-toggle's own corner-overlay treatment, upper-right instead of
+     .layer-toggle's upper-left so the two never collide when both are
+     visible (2D mode shows both at once). z-index above .descent3d-header-
+     controls' own row (which isn't positioned, so it'd otherwise sit at
+     the same visual layer) since 3D mode's Map-toggle button can reach far
+     enough right on narrow widths to tuck under this corner. */
+  .map-view-wrap { position: relative; }
+  .map-view-toggle {
+    position: absolute; right: 10px; top: 10px; z-index: 6;
+    display: flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.15);
+  }
+  .map-view-toggle button {
+    border: none; background: var(--surface-1); color: var(--text-secondary);
+    padding: 5px 10px; font-size: var(--fs-sm); cursor: pointer; border-right: 1px solid var(--border);
+  }
+  .map-view-toggle button:last-child { border-right: none; }
+  .map-view-toggle button.active { background: var(--accent); color: #fff; font-weight: 600; }
+  .map-view-toggle button:hover:not(.active) { background: var(--surface-2); }
+  /* Room reserved on the right so the 3D header row's own buttons (Fast/
+     Slow, view presets, Map toggle) never run underneath the overlay
+     above -- confirmed needed at desktop widths where all three toggle
+     groups fit on one line and would otherwise reach past 10px of the
+     right edge. */
+  .descent3d-header-controls { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: var(--sp-4); padding-right: 70px; }
+  .descent3d-view-toggle { flex-shrink: 0; }
   .descent3d-empty-hint { font-size: var(--fs-sm); color: var(--text-muted); padding: 20px 0; text-align: center; }
   /* Canvas on the left, altitude control on the right -- matches the main
      page's own map (left) + altitude ladder/slider (.side-col, right)
@@ -520,13 +581,36 @@
     position: absolute; left: 50%; top: 0; bottom: 0; width: 4px;
     transform: translateX(-50%); background: var(--border); border-radius: 2px;
   }
-  /* Bottom-anchored, not top -- grows upward from the pad (0ft) toward
-     whatever apogee is currently selected, same "stack rising off the
-     ground" reading the thumb's own position already implies. */
-  .descent3d-alt-fill {
-    position: absolute; left: 50%; bottom: 0; width: 4px; transform: translateX(-50%);
-    background: var(--accent); border-radius: 2px; opacity: 0.55;
+  /* No fill bar from 0 to the current altitude -- apogee is a single point
+     (the highest reached), not a span/range, so coloring "ground up to
+     here" like a progress bar misrepresented it as one. Just the track,
+     tick marks, and the thumb itself say where that one point is. */
+  /* One tick per altitude in DATA.altitudes (the same list the sidebar's
+     own apogee ladder shows), positioned with the identical bottom-from-
+     fraction math path3dUpdateAltSliderUI() uses for the thumb -- so a tick
+     and the thumb land in the exact same spot when the current altitude is
+     one of the ladder's own values. Visually a short dash (the ::before),
+     but each tick's own hit target is deliberately bigger and lightly
+     visible (a translucent rounded rect, not fully invisible) so it reads
+     as tappable on a touchscreen without needing to be that big visually.
+     path3dTicksToShow() (descent3d.js) decimates this list -- adjacent
+     ticks closer than a real minimum pixel spacing get dropped -- based on
+     the slider's own live pixel height, so a short mobile slider
+     automatically thins to fewer, evenly-spaced ticks instead of a crowded
+     unreadable/untappable cluster. */
+  .descent3d-alt-ticks { position: absolute; inset: 0; }
+  .descent3d-alt-tick {
+    position: absolute; left: 50%; width: 26px; height: 18px;
+    transform: translateX(-50%); /* see .descent3d-alt-thumb's own comment on why not translateY too */
+    padding: 0; border: none; border-radius: 5px; cursor: pointer;
+    background: var(--text-secondary); opacity: 0.12;
   }
+  .descent3d-alt-tick::before {
+    content: ''; position: absolute; left: 50%; top: 50%; width: 12px; height: 2px;
+    transform: translate(-50%, -50%); background: var(--text-secondary); border-radius: 1px;
+  }
+  .descent3d-alt-tick:hover, .descent3d-alt-tick:focus-visible { opacity: 0.3; }
+  .descent3d-alt-tick:hover::before, .descent3d-alt-tick:focus-visible::before { background: var(--accent); }
   /* translateX only, deliberately -- `bottom` already anchors this box's
      BOTTOM edge (not its center), so a translateY(-50%) here would shift
      the already-bottom-anchored box up by another half its own height on
@@ -806,24 +890,13 @@
   .alt-hint { font-size: var(--fs-sm); color: var(--text-muted); margin-top: var(--sp-2); line-height: 1.5; display: none; }
   .alt-hint.open { display: block; }
 
-  /* Fast/Slow drogue+main fps, editable. Grid: blank header cell, Drogue,
-     Main; one row per preset -- the label cell (.rate-edit-label below)
-     carries hover-isolate/click-pin, the two <input> cells are separately
-     interactive as plain number fields; being sibling grid cells rather
-     than nested elements keeps the two kinds of interaction from
-     conflicting (a standalone #rate-legend used to own the isolate/pin
-     half separately -- folded in here 2026-08-05, see buildRateEditor()'s
-     own comment, since Fast/Slow didn't need to appear twice). */
-  .rate-edit { display: grid; grid-template-columns: auto 1fr 1fr; gap: 4px 8px; align-items: center; margin-top: var(--sp-2); font-size: var(--fs-sm); color: var(--text-secondary); }
+  /* One active drogue+main fps pair, editable -- Fast/Slow (#rate-preset-
+     toggle, same .toggle-btns styling Deploy above it already uses) are
+     quick-fill presets, not two simultaneously-computed rows any more
+     (2026-08 simplification, see buildRateEditor()'s own comment). Grid:
+     Drogue, Main header cells over their one input each. */
+  .rate-edit { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 8px; align-items: center; margin-top: var(--sp-2); font-size: var(--fs-sm); color: var(--text-secondary); }
   .rate-edit-head { color: var(--text-muted); font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: 0.03em; }
-  /* Hover-isolate/click-pin, same affordance .alt-row rows use -- this cell
-     absorbed that behavior from the old standalone #rate-legend (removed
-     2026-08-05, see buildRateEditor()'s own comment). */
-  .rate-edit-label {
-    display: flex; align-items: center; gap: 6px; cursor: pointer;
-    padding: 2px 4px; margin: -2px -4px; border-radius: 5px;
-  }
-  .rate-edit-label:hover, .rate-edit-label.pinned { background: var(--surface-2); color: var(--text-primary); }
   .rate-edit input[type="number"] {
     width: 100%; box-sizing: border-box; padding: 2px 4px;
     border: 1px solid var(--border); border-radius: 4px;
@@ -936,7 +1009,7 @@
   @media (max-width: 760px) {
     .layout {
       grid-template-columns: 1fr;
-      grid-template-areas: "map" "side" "notes" "descent3d" "accuracy";
+      grid-template-areas: "map" "side" "notes" "accuracy";
     }
   }
 
