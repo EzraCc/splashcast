@@ -23,6 +23,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/configure-pages@v5
+      - name: Minify app.js for the deployed copy
+        # app.js itself stays the full, heavily-commented source -- that's
+        # what's actually edited -- app.min.js is a build artifact of this
+        # step alone, never committed, so it can't go stale relative to
+        # app.js the way a hand-maintained/pre-committed copy could.
+        # scripts/minify_js.py (rjsmin: comment/whitespace stripping only,
+        # no renaming) measured ~57% smaller raw / ~65% smaller gzipped on
+        # this file, verified 2026-08-08.
+        run: |
+          pip install rjsmin
+          python3 scripts/minify_js.py
       - name: Version app.js/app.css for reliable cache-busting
         # GitHub Pages sends the same Cache-Control: max-age=600 on every
         # file regardless of type (no per-path header control here, unlike
@@ -41,7 +52,7 @@ jobs:
         # actually live and reload itself.
         run: |
           V="${GITHUB_SHA:0:12}"
-          sed -i "s|assets/js/app.js|assets/js/app.js?v=$V|; s|assets/css/app.css|assets/css/app.css?v=$V|" site/index.html
+          sed -i "s|assets/js/app.js|assets/js/app.min.js?v=$V|; s|assets/css/app.css|assets/css/app.css?v=$V|" site/index.html
           echo "{\"version\": \"$V\"}" > site/version.json
       - uses: actions/upload-pages-artifact@v3
         with:

@@ -41,7 +41,7 @@ It is **not** a go/no-go safety tool — it surfaces model spread and forecast-d
 Two halves:
 
 - **`pipeline/`** (Python, never deployed) pulls wind data and writes it as a compact per-model wind profile (speed/direction by altitude) into `site/data/`, along with the descent-sim constants needed to reproduce the simulation exactly.
-- **`site/`** (static HTML/CSS/JS, deployed via GitHub Pages) runs the descent-drift simulation itself, client-side, for whatever altitude/deploy/rate/time-of-day is currently selected — no backend, no build step, no framework.
+- **`site/`** (static HTML/CSS/JS, deployed via GitHub Pages) runs the descent-drift simulation itself, client-side, for whatever altitude/deploy/rate/time-of-day is currently selected — no backend, no framework, no local build step (the deploy workflow minifies `app.js` on its way out, but the checked-in source is always the plain file).
 
 For the current altitude/time-of-day/deploy/rate combination, the viewer integrates wind vectors from apogee down to the ground in small steps (descent rate itself scales with air density at altitude, not held constant), giving one landing point per model — the same integration the pipeline used to run server-side, ported to JS so it can respond live to the altitude slider, deploy toggle, and the editable drogue/main rate inputs (one active pair; Fast/Slow are quick-fill presets for it, not two rates computed at once). The **zone** shown on the map is the convex hull of those points, plus an outer buffer band representing boost-phase/weathercocking uncertainty (`apogee_ft * tan(boost_angle)`, adjustable live via a slider in the viewer). Point color AND shape both mean model (six distinct shapes, sized to read as roughly the same visual weight) — color alone used to be the only channel outside History mode, back when shape was spent on Fast/Slow instead.
 
@@ -82,16 +82,18 @@ pipeline/                Python: pulls data, runs the simulation, publishes JSON
   fetch_site_maps.py         Satellite/road map imagery fetch, per site.
   analyze_real_flight.py     Real GPS-tracked flight vs. this pipeline's own forecasts/actuals (see below).
   data/                      Working data (gitignored raw pulls; live captures ARE tracked, see .gitignore).
-site/                     The deployable static app -- no backend, no build step.
-  index.html, assets/        Markup, CSS, and the viewer's JS (rendering, interaction, permalinks).
+site/                     The deployable static app -- no backend, no local build step.
+  index.html, assets/        Markup, CSS, and the viewer's JS (rendering, interaction, permalinks). index.html/app.js reference the plain, unminified app.js -- pages.yml minifies it at deploy time only (see below), so local dev is just opening the files, nothing to build first.
   maps/<site_id>/            Per-site satellite + road imagery.
   data/<site_id>/            Published zone JSON + points_history.json, one tree per site.
 docs/
   spec.md                    Full design doc: problem statement, architecture, dated decision log.
   adding-a-site.md           Step-by-step guide for pointing this at a new club/site.
+scripts/
+  minify_js.py                Regenerates site/assets/js/app.min.js from app.js (rjsmin) -- run by pages.yml at deploy time; the output is gitignored, never a checked-in second copy.
 .github/workflows/
   cron-pulls.yml             The two scheduled data-pull jobs (see above).
-  pages.yml                  Deploys site/ to GitHub Pages on every push to main.
+  pages.yml                  Deploys site/ to GitHub Pages on every push to main -- minifies app.js and cache-busts the JS/CSS URLs with the commit SHA first.
 CHANGELOG.md               Short, dated summary of notable changes.
 ```
 
