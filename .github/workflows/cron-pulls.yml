@@ -47,6 +47,14 @@ on:
         type: choice
         options: [both, live, actuals]
         default: both
+      site:
+        description: "Manual live pull only: site_id to force-pull outside the normal T-0..T-7 window (leave blank for the normal launch_schedule.py-gated behavior)"
+        type: string
+        default: ""
+      date:
+        description: "Manual live pull only: target launch date (YYYY-MM-DD) -- required if site is set"
+        type: string
+        default: ""
 
 permissions:
   contents: write
@@ -69,7 +77,18 @@ jobs:
       - run: pip install -r pipeline/requirements-live.txt
       - name: Pull upcoming-launch forecasts (Open-Meteo)
         working-directory: pipeline
-        run: python launch_schedule.py --run-live
+        # A manual dispatch with `site` set bypasses launch_schedule.py's own
+        # T-0..T-7 gate entirely (run_live_pulls()) and pulls that exact
+        # site/date directly via pull_live_forecast.py -- for showing a club
+        # real forecast data before their own launch is within the normal
+        # window. The scheduled cron trigger never sets these inputs, so it
+        # always takes the normal gated path.
+        run: |
+          if [ -n "${{ github.event.inputs.site }}" ]; then
+            python pull_live_forecast.py "${{ github.event.inputs.date }}" --site "${{ github.event.inputs.site }}"
+          else
+            python launch_schedule.py --run-live
+          fi
       - name: Commit and push updated data
         id: commit
         run: |
