@@ -185,7 +185,13 @@ let ALT_COLORS_HEX = computeSequentialRamp(zoneBaseColor, [1000, 3000, 5000, 700
 const DEFAULT_TIME_BASE_COLOR = '#eb6834';
 const TIME_COLOR_STORAGE_KEY = 'splashcast_time_base_color';
 let timeBaseColor = localStorage.getItem(TIME_COLOR_STORAGE_KEY) || DEFAULT_TIME_BASE_COLOR;
-let TIME_COLORS_HEX = computeSequentialRamp(timeBaseColor, [9, 11, 13, 15]);
+// Placeholder only -- DATA isn't loaded yet at module-eval time (see DATA's
+// own declaration below), so this can't read the real DATA.hours checkpoint
+// list. initFromData() rebuilds this against that capture's own real hours
+// on every load (same ALT_COLORS_HEX/DATA.altitudes pattern), which is the
+// only version that actually matters -- this literal only exists so nothing
+// reads `undefined` in the brief window before the first dataset loads.
+let TIME_COLORS_HEX = computeSequentialRamp(timeBaseColor, [8, 10, 12, 14, 16]);
 
 // Satellite vs. road/street map layer -- some sites (e.g. Hutto) have no real
 // terrain features to avoid, where satellite imagery is closer to visual
@@ -204,7 +210,6 @@ function initialMapLayer() {
   return localStorage.getItem(MAP_LAYER_STORAGE_KEY) === 'road' ? 'road' : 'sat';
 }
 let mapLayer = initialMapLayer();
-const HOUR_LABELS = { 9: '9am', 11: '11am', 13: '1pm', 15: '3pm' };
 const DEPLOY_LABELS = { single: 'Single', dual: 'Dual' };
 // Key order matches MODEL_LEGEND_ORDER below (published forecast horizon,
 // longest first) -- one canonical model order shared by every model-keyed
@@ -340,7 +345,7 @@ let dateExplicitlyChosen = URL_PARAMS.has('date');
 // date, Copy Link does NOT force these in -- their default reproduces
 // identically on any later visit, so there's nothing for it to protect
 // against by forcing them.
-let hourExplicitlyChosen = URL_PARAMS.has('hour');
+let hourExplicitlyChosen = URL_PARAMS.has('t') || URL_PARAMS.has('hour');
 let deployExplicitlyChosen = URL_PARAMS.has('deploy');
 // Same treatment as hour/deploy above -- boostAngleDeg's default (10°,
 // below) reproduces identically on any later visit, so it only goes in the
@@ -357,7 +362,11 @@ let padUrlApplied = false;
 function freshState() {
   const base = {
     mode: 'byAltitude',
-    hour: DATA.hours[0], deploy: DATA.deploys[0],
+    // Minutes since midnight, not an hour int -- the time slider (see
+    // addWeatherHeaderRow()) can land anywhere in 15-min steps, not just on
+    // DATA.hours' own checkpoints. Defaults to the first (earliest) hour the
+    // weather panel shows.
+    timeMinutes: DATA.hours[0] * 60, deploy: DATA.deploys[0],
     isolatedAlt: null, pinnedAlt: null,
     isolatedHour: null, pinnedHour: null,
     // Multi-select checkboxes, not hover-isolate/click-pin like every other
@@ -407,8 +416,17 @@ function freshState() {
     urlStateApplied = true;
     const mode = URL_PARAMS.get('mode');
     if (['byAltitude', 'byTime', 'byHistory'].includes(mode)) base.mode = mode;
-    const hour = Number(URL_PARAMS.get('hour'));
-    if (DATA.hours.includes(hour)) base.hour = hour;
+    // ?t=HH:MM (new) preferred over the legacy ?hour=N int -- a link built
+    // before the time slider shipped still loads at the right hour (as
+    // N*60), just without the fractional precision a newer link can carry.
+    const profileHours = sliderRealHours();
+    const tMinutes = parseTimeParam(URL_PARAMS.get('t'));
+    if (tMinutes !== null && tMinutes >= profileHours[0] * 60 && tMinutes <= profileHours[profileHours.length - 1] * 60) {
+      base.timeMinutes = tMinutes;
+    } else {
+      const hour = Number(URL_PARAMS.get('hour'));
+      if (DATA.hours.includes(hour)) base.timeMinutes = hour * 60;
+    }
     const deploy = URL_PARAMS.get('deploy');
     if (DATA.deploys.includes(deploy)) base.deploy = deploy;
     const rate = URL_PARAMS.get('rate');
@@ -485,11 +503,12 @@ function freshState() {
 // to on first load too -- without also running setMode()'s pin-clearing
 // (which would stomp the pinnedAlt a permalink just supplied).
 function applyModeUI(mode) {
-  // The hour buttons live inside #weather-panel now (see
+  // The time slider lives inside #weather-panel now (see
   // addWeatherHeaderRow()), not a standalone #hour-toggle -- same disabled-
-  // in-byTime-mode treatment (byTime shows all 4 hours at once and ignores
-  // state.hour for its own zone selection), just scoped to the panel via a
-  // descendant selector (app.css) instead of a dedicated toggle-group div.
+  // in-byTime-mode treatment (byTime shows every DATA.hours zone at once and
+  // ignores state.timeMinutes for its own zone selection), just scoped to
+  // the panel via a descendant selector (app.css) instead of a dedicated
+  // toggle-group div.
   document.getElementById('weather-panel').classList.toggle('hours-disabled', mode === 'byTime');
   document.getElementById('time-legend-block').style.display = (mode === 'byTime' || mode === 'byHistory') ? '' : 'none';
   document.getElementById('time-legend-title').textContent = mode === 'byHistory' ? 'Forecast age' : 'Time of day';
@@ -582,7 +601,7 @@ function altitudesInRange() { return altitudesDescending().filter(altInRange); }
 // pipeline-side, so a high-waiver site on Single has real zones for only
 // part of DATA.altitudes.
 function altitudesWithZones() {
-  return new Set(zonesFor(state.hour, state.deploy).map(z => z.altitude));
+  return new Set(zonesFor(state.timeMinutes, state.deploy).map(z => z.altitude));
 }
 
 // Row centers, in px from the top of #alt-list's content, for whichever rows
@@ -697,7 +716,7 @@ function syncAltCustomUI() {
   // published profile at all); this surfaces *why* rather than leaving the
   // map silently blank, which the row-list's .unavailable graying already
   // does for the ladder-based selector but a bare number input can't.
-  const zone = zoneFor(state.hour, state.deploy, state.customAlt);
+  const zone = zoneFor(state.timeMinutes, state.deploy, state.customAlt);
   statusEl.textContent = zone ? '' :
     (state.deploy === 'single'
       ? `No single-deploy zone above ${DATA.descent_params.single_deploy_max_alt_ft.toLocaleString()} ft`
@@ -899,13 +918,17 @@ function modelsWithData() {
 function historyModelsAvailable() {
   if (!HISTORY) return new Set();
   if (state.customAlt !== null) {
-    return new Set(historyPointsForAltitude(state.hour, state.deploy, state.customAlt).map(p => p.model));
+    return new Set(historyPointsForAltitude(state.timeMinutes, state.deploy, state.customAlt).map(p => p.model));
   }
-  // Ladder altitude: reads the server's precomputed bucket, which only ever
-  // exists at the two named presets -- see historyPointsForAltitude()'s own
-  // comment for why this falls back to 'fast' rather than state.rateFps
-  // directly.
-  const key = `${state.hour}_${state.deploy}_${state.rateName || 'fast'}_${state.compareAlt}`;
+  // Ladder altitude: reads the server's precomputed bucket, keyed by exact
+  // integer hour (build_points_history()'s own points_by_key -- a real grid
+  // across every capture date, not something the client can resimulate on
+  // the fly the way zoneFor()/profilesForTime() do for byAltitude/byTime),
+  // so this snaps to the nearest real published hour rather than blending
+  // -- see nearestPublishedHour()'s own comment. Also falls back to 'fast'
+  // rather than state.rateFps directly -- see historyPointsForAltitude()'s
+  // own comment for why.
+  const key = `${nearestPublishedHour(state.timeMinutes)}_${state.deploy}_${state.rateName || 'fast'}_${state.compareAlt}`;
   return new Set((HISTORY.points_by_key[key] || []).map(p => p.model));
 }
 
@@ -1162,7 +1185,7 @@ function buildTimeLegend() {
   DATA.hours.forEach(h => {
     const row = document.createElement('div');
     row.className = 'alt-row';
-    row.innerHTML = `<div class="alt-swatch" style="background:${TIME_COLORS_HEX[h]}"></div><span>${HOUR_LABELS[h]}</span>`;
+    row.innerHTML = `<div class="alt-swatch" style="background:${TIME_COLORS_HEX[h]}"></div><span>${hourAmPm(h)}</span>`;
     row.addEventListener('mouseenter', () => { state.isolatedHour = h; applyIsolation(); });
     row.addEventListener('mouseleave', () => { state.isolatedHour = null; applyIsolation(); });
     row.addEventListener('click', () => {
@@ -1556,7 +1579,10 @@ bufferSwatch.style.borderColor = zoneBaseColor;
 
 function applyTimeBaseColor(hex) {
   timeBaseColor = hex;
-  TIME_COLORS_HEX = computeSequentialRamp(timeBaseColor, [9, 11, 13, 15]);
+  // DATA.hours, not a hardcoded literal -- see initFromData()'s own comment
+  // on why (this capture's real checkpoints, which can differ from
+  // whatever this file's own SPLASH_HOURS_LOCAL-matching assumption is).
+  TIME_COLORS_HEX = computeSequentialRamp(timeBaseColor, DATA.hours);
   timeColorPicker.value = timeBaseColor;
   buildTimeLegend();
   render();
@@ -1642,7 +1668,7 @@ function showTooltip(evt, hoveredPt) {
   tooltip.style.display = 'block';
   tooltip.innerHTML = nearby.map(rp => {
     const dist = Math.sqrt(rp.x_ft * rp.x_ft + rp.y_ft * rp.y_ft);
-    const whenPart = state.mode === 'byTime' ? ` &middot; ${HOUR_LABELS[rp.hour]}`
+    const whenPart = state.mode === 'byTime' ? ` &middot; ${hourAmPm(rp.hour)}`
       : state.mode === 'byHistory' ? ` &middot; ${leadDaysLabel(rp.capture_date, HISTORY.target_date)} (captured ${rp.capture_date})`
       : '';
     // One active rate for every point now, not a per-point fast/slow label
@@ -1663,12 +1689,14 @@ function hideTooltip() { tooltip.style.display = 'none'; }
 // (see splash_zones.py's build_rain_data()/build_temperature_data()/
 // build_cloud_data()). One shared grid instead of three separate widgets --
 // clouds used to be a map-corner overlay, rain/temp were full-width rows
-// ABOVE the map pushing it down the page. The header row's 4 hour columns
-// (9/11/1/3) double as the hour selector -- clouds only ever published
-// exactly those 4 hours (config.SPLASH_HOURS_LOCAL/DATA.hours), so there was
-// never a second real hour set to reconcile, just one duplicated across two
-// widgets (this panel + the old standalone #hour-toggle in .controls, now
-// removed -- see initFromData()/applyModeUI()).
+// ABOVE the map pushing it down the page. The header row's 5 hourly columns
+// (config.SPLASH_HOURS_LOCAL/DATA.hours -- 8/10/12/2/4) line up under one
+// continuous time slider that doubles as the map's own hour selector (see
+// addWeatherTimeSlider()) -- clouds only ever published exactly those 5
+// hours, so there was never a second real hour set to reconcile, just one
+// duplicated across two widgets (this panel + the old standalone
+// #hour-toggle in .controls, long since removed -- see initFromData()/
+// applyModeUI()).
 // Waiver-aware, same as before: clouds collapse to just the altitude bands a
 // site's own waiver actually reaches (DATA.cloud_relevant_layers), with
 // "Show all altitudes" revealing the rest (dimmed) plus the independently-
@@ -1873,7 +1901,7 @@ function addCloudRow(grid, layerKey, label, sub, beyondWaiver) {
       // so the hover state and the at-rest cell always agree.
       const badge = hot ? '<span class="cloud-badge" style="margin-right:5px;">&#9888;</span>' : '';
       tooltip.innerHTML = `<div class="tt-cloud-grid">${rows}</div>` +
-        `<div class="tt-cloud-footer" style="color:var(--text-muted);">${badge}${label} · ${HOUR_LABELS[h]}</div>`;
+        `<div class="tt-cloud-footer" style="color:var(--text-muted);">${badge}${label} · ${hourAmPm(h)}</div>`;
       tooltip.style.display = 'block';
       positionTooltip(evt);
     });
@@ -1896,14 +1924,39 @@ const RAIN_BAR_MAX_IN = 0.3;
 // param) -- a bar fades toward this as probability drops, but never past
 // it, so even a 9%-chance reading stays visibly present as real data.
 const RAIN_MIN_OPACITY = 0.4;
-// Rain drops from 9 published hourly columns (8am-4pm) to the 4 shared with
-// clouds/the hour selector (9/11/1/3) -- see renderWeatherPanel()'s own
-// comment for why those 4. A shower can land entirely inside a dropped hour
-// (10am/12pm/2pm), so a plain "keep 4, drop 5" sample would silently lose
-// it. Instead each kept column buckets the hours trailing up to it
-// (non-overlapping, same "sum of what led up to this checkpoint" convention
-// Prior day/Morning already use) -- see bucketRainCell().
-const RAIN_HOUR_BUCKETS = { 9: [8, 9], 11: [10, 11], 13: [12, 13], 15: [14, 15, 16] };
+// Rain drops from every real published hourly column (config.py's
+// RAIN_WINDOW_START/END_HOUR_LOCAL, currently 8am-4pm) to the handful
+// shared with clouds/the time selector (DATA.hours) -- see
+// renderWeatherPanel()'s own comment for why. A shower can land entirely
+// inside a dropped hour, so a plain "keep the checkpoints, drop the rest"
+// sample would silently lose it. Instead each kept column buckets the real
+// hours trailing up to it (non-overlapping, same "sum of what led up to
+// this checkpoint" convention Prior day/Morning already use) -- see
+// bucketRainCell().
+//
+// Computed live off DATA.hours + DATA.rain.hourly's own real keys, NOT a
+// hardcoded per-checkpoint literal -- that was the original design and it
+// broke in production: config.py's SPLASH_HOURS_LOCAL changed mid-session
+// (9/11/13/15/17 -> 8/10/12/14/16) and every already-published capture's
+// DATA.hours still had the OLD checkpoint values, so the new hardcoded
+// object had no entry for them at all -- RAIN_HOUR_BUCKETS[9] was
+// `undefined`, and `.forEach` on that threw immediately on page load for
+// every real capture published before the change. Deriving the buckets
+// from whatever DATA.hours/DATA.rain.hourly actually contain makes this
+// self-adapting to any checkpoint set, old or new, with no lookup table to
+// keep in sync by hand.
+function rainHourBucket(h) {
+  const checkpoints = [...DATA.hours].sort((a, b) => a - b);
+  const idx = checkpoints.indexOf(h);
+  const prevCheckpoint = idx > 0 ? checkpoints[idx - 1] : -Infinity;
+  const isLast = idx === checkpoints.length - 1;
+  const realHours = Object.keys(DATA.rain.hourly).map(Number).sort((a, b) => a - b);
+  // Every other checkpoint's bucket is bounded above by its own value; the
+  // LAST checkpoint's bucket absorbs everything remaining through the end
+  // of the published window (matches the original hand-written buckets'
+  // own trailing-catch-all behavior for whichever checkpoint was last).
+  return realHours.filter(rh => rh > prevCheckpoint && (isLast || rh <= h));
+}
 
 // Sums `amount` across a bucket's hours (rain is additive) and takes the
 // MAX `chance` (probabilities don't sum -- max surfaces the bucket's real
@@ -1916,7 +1969,7 @@ function bucketRainCell(h) {
   const out = {};
   CLOUD_MODELS.forEach(m => {
     let amountSum = null, chanceMax = null;
-    RAIN_HOUR_BUCKETS[h].forEach(hh => {
+    rainHourBucket(h).forEach(hh => {
       const c = DATA.rain.hourly[hh]?.[m];
       if (!c) return;
       if (c.amount !== null) amountSum = (amountSum ?? 0) + c.amount;
@@ -1931,7 +1984,7 @@ function bucketRainCell(h) {
 // shown only in the tooltip footer -- not worth a second label line on the
 // cell itself now that the column header above it already says "9am".
 function rainBucketWindowLabel(h) {
-  const hours = RAIN_HOUR_BUCKETS[h];
+  const hours = rainHourBucket(h);
   return hours.length > 1 ? `${hourAmPm(hours[0])}–${hourAmPm(hours[hours.length - 1])}` : '';
 }
 
@@ -2034,7 +2087,7 @@ function addRainRow(grid) {
   addRainCell(grid, DATA.rain.morning, 'Morning', `12am–${hourAmPm(hourKeys[0])}`);
 
   DATA.hours.forEach(h => {
-    addRainCell(grid, bucketRainCell(h), HOUR_LABELS[h], rainBucketWindowLabel(h));
+    addRainCell(grid, bucketRainCell(h), hourAmPm(h), rainBucketWindowLabel(h));
   });
 }
 
@@ -2181,7 +2234,7 @@ function addTempRow(grid) {
   addTempCell(grid, DATA.temperature.prior_day, scaleMin, scaleMax, 'Prior day');
   addTempCell(grid, DATA.temperature.morning, scaleMin, scaleMax, 'Morning');
   DATA.hours.forEach(h => {
-    addTempCell(grid, DATA.temperature.hourly[h], scaleMin, scaleMax, HOUR_LABELS[h]);
+    addTempCell(grid, DATA.temperature.hourly[h], scaleMin, scaleMax, hourAmPm(h));
   });
 }
 
@@ -2387,19 +2440,253 @@ function addWindRow(grid) {
   grid.appendChild(document.createElement('div'));
 
   DATA.hours.forEach(h => {
-    addWindCell(grid, DATA.wind.hourly[h], HOUR_LABELS[h]);
+    addWindCell(grid, DATA.wind.hourly[h], hourAmPm(h));
   });
 }
 
-// Shared header row: blank corner, Prior day, Morning, then 4 hour buttons
-// -- the buttons ARE the hour selector now (formerly the standalone
-// #hour-toggle in .controls, see initFromData()/the real-flight-jump
-// branch), since these are the same 4 hours (DATA.hours ==
-// config.SPLASH_HOURS_LOCAL) clouds always published anyway. Same
-// active-class-toggle-without-rebuild pattern buildToggle() uses elsewhere
-// -- clicking one doesn't need to re-render the rest of this panel, every
-// row already shows all 4 hours' data side by side regardless of which one
-// is "selected" for the map.
+// --- time-of-day slider (replaces the old row of weather-hour-btn buttons) -
+// Continuous horizontal drag at 15-min resolution, landing exactly (no
+// blend) on any real published hour via a tick -- modeled directly on
+// descent3d.js's own altitude slider (continuous drag + fixed tick landing
+// points, already solved in this exact codebase), axis flipped: `left` +
+// translateX(-50%)-equivalent math here, never paired with a `top`-relative
+// translateY (see that slider's own CSS comment for the bug class that
+// combination causes). Unlike that slider, no cross-control sync is needed
+// -- this is the ONLY thing that ever sets state.timeMinutes, so a drag or
+// tick click just sets it directly, no priority-chain/override to maintain.
+// Ticks come from sliderRealHours() (every real hour ANY weather field has
+// data for -- often wider than just the wind-profile hours, see its own
+// comment), not the panel's own sparse DATA.hours -- major ticks (labeled,
+// = DATA.hours) double as this row's column headers, matching the buttons
+// they replace; minor ticks (unlabeled dashes, the rest of
+// sliderRealHours() when a capture has them) are still real, exact,
+// blend-free landing points, just not a labeled panel column.
+// The track's own 0%/100% edges -- NOT DATA.hours[0]/[last] directly.
+// The slider spans exactly N real grid columns (grid-column: span N,
+// N=DATA.hours.length, set per-dataset in addWeatherTimeSlider() -- see
+// its own CSS comment), each an equal-width box, and a column's CENTER
+// sits at (i+0.5)/N of the box, not i/(N-1) -- so anchoring the
+// track's own edges exactly at the first/last major hour would leave every
+// tick sitting off-center from its own column (confirmed by direct
+// measurement: major ticks landed 34px off their real column's center on a
+// 458px-wide slider). Expanding the range by half a column-width (half the
+// gap between adjacent major hours) on each side is what makes tick i's
+// time-proportional fraction equal (i+0.5)/5 exactly, landing it on its
+// column's true center -- verified after this fix: tick/column centers
+// matched to the pixel (previously off by up to 34px).
+function timeSliderMinMax() {
+  const majorHours = DATA.hours;
+  const columnSpanMin = majorHours.length > 1
+    ? (majorHours[majorHours.length - 1] - majorHours[0]) / (majorHours.length - 1) * 60
+    : 120;
+  const margin = columnSpanMin / 2;
+  const marginMin = majorHours[0] * 60 - margin;
+  const marginMax = majorHours[majorHours.length - 1] * 60 + margin;
+  // Widened further, if needed, to guarantee every real hour in
+  // sliderRealHours() (rain/temperature can extend past wind_profiles'
+  // own range -- see its own comment) still lands at a valid, on-track
+  // fraction -- the margin above is sized for column-centering the major
+  // ticks specifically, not guaranteed to already cover a wider real range.
+  const realHours = sliderRealHours();
+  return [
+    Math.min(marginMin, realHours[0] * 60),
+    Math.max(marginMax, realHours[realHours.length - 1] * 60),
+  ];
+}
+
+function timeFromClientX(slider, clientX) {
+  const rect = slider.getBoundingClientRect();
+  const [min, max] = timeSliderMinMax();
+  const frac = rect.width > 0 ? Math.max(0, Math.min(1, (clientX - rect.left) / rect.width)) : 0;
+  return Math.round((min + frac * (max - min)) / 15) * 15;
+}
+
+// Per direction, the zone re-renders live on every intermediate drag step
+// now, not just on commit -- same "watch it update in real time" appeal
+// the 3D altitude slider already has. Cheap enough to do unthrottled here:
+// zoneFor()'s own simulation is memoized per timeMinutes (a re-visited
+// 15-min step during a drag hits that cache), and render() itself is
+// already called on plenty of other frequent interactions in this app
+// (every altitude-range-slider pixel, for one) without a perf complaint.
+// `commit` still exists to distinguish the drag's actual endpoint
+// (pointerup, a tick click, an arrow-key step) from an intermediate step --
+// syncAltCustomUI() (reflects the value into the sidebar's "Specific
+// altitude" status line) stays commit-only since it's a cheap DOM text
+// update with no reason to run 60x/sec, but render() runs either way.
+function setSliderTime(sliderEls, timeMinutes, commit) {
+  // Rounded to the nearest 15 minutes, not raw pixel/1-minute precision --
+  // a freeform drag implies false precision at 1-minute resolution, per
+  // direction (mirrors path3dSetAlt()'s own "round to nearest 100ft, not
+  // 1ft" reasoning). A no-op for a tick's own exact value.
+  //
+  // Clamped to sliderRealHours()' own real range, NOT timeSliderMinMax()'s
+  // margin-expanded one -- that wider range exists purely to make
+  // column-center tick math work (see its own comment), not to make more
+  // of the clock actually reachable. Clamping the thumb itself to that
+  // wider range would let it sit somewhere past the real data where
+  // profilesForTime() has already silently clamped back to the nearest
+  // real wind-profile hour -- a real, confirmed UX mismatch (readout says
+  // a time with no real data behind it at all, map stays flat at the
+  // nearest real hour) that not allowing the drag there in the first place
+  // avoids outright. sliderRealHours(), not windProfileHours() specifically
+  // -- see its own comment: rain/temperature have real hours wind_profiles
+  // doesn't, and a user should still be able to reach those on the slider.
+  const hours = sliderRealHours();
+  const [min, max] = [hours[0] * 60, hours[hours.length - 1] * 60];
+  const rounded = Math.round(timeMinutes / 15) * 15;
+  state.timeMinutes = Math.max(min, Math.min(max, rounded));
+  hourExplicitlyChosen = true;
+  updateTimeSliderUI(sliderEls, state.timeMinutes);
+  if (commit) syncAltCustomUI();
+  render();
+}
+
+function updateTimeSliderUI(sliderEls, timeMinutes) {
+  const { slider, thumb, readout } = sliderEls;
+  // Position math uses the margin-expanded range (column-center alignment,
+  // see timeSliderMinMax()'s own comment) -- ARIA min/max use the real
+  // reachable range instead (windProfileHours()), so a screen reader never
+  // reports bounds the control can't actually be dragged/stepped to (see
+  // setSliderTime()'s own comment on why the thumb itself is clamped
+  // tighter than the visual track).
+  const [posMin, posMax] = timeSliderMinMax();
+  const frac = posMax > posMin ? (timeMinutes - posMin) / (posMax - posMin) : 0;
+  // `left` on .weather-time-thumb IS its own left EDGE, not its center --
+  // offset by the thumb's own 9px radius to convert a center position into
+  // a left-edge one. NOT inset by a further 9px margin on each end the way
+  // descent3d.js's alt slider is (see its own comment) -- that inset exists
+  // there because ITS ticks really can sit at the raw 0%/100% edges
+  // (altitude 0 or max). This slider's major ticks never reach past
+  // 10%/90% by construction (timeSliderMinMax()'s own margin keeps them
+  // there for column-center alignment), so adding a further edge inset
+  // just shrinks the effective mapped range for no reason -- confirmed
+  // directly: it was producing a consistent few-px drift between tick
+  // centers and their real grid column centers (93px real column spacing
+  // vs 88px inset-shrunk tick spacing) that the margin fix alone hadn't
+  // caught.
+  const centerFromLeft = `calc(100% * ${frac})`;
+  thumb.style.left = `calc(${centerFromLeft} - 9px)`;
+  readout.style.left = centerFromLeft;
+  readout.textContent = formatTimeLabel(timeMinutes);
+  const hours = sliderRealHours();
+  slider.setAttribute('aria-valuenow', String(Math.round(timeMinutes)));
+  slider.setAttribute('aria-valuemin', String(hours[0] * 60));
+  slider.setAttribute('aria-valuemax', String(hours[hours.length - 1] * 60));
+  slider.setAttribute('aria-valuetext', formatTimeLabel(timeMinutes));
+}
+
+function renderTimeTicks(sliderEls) {
+  const { ticksEl } = sliderEls;
+  const [min, max] = timeSliderMinMax();
+  const majorHours = new Set(DATA.hours);
+  ticksEl.innerHTML = '';
+  sliderRealHours().forEach(h => {
+    const t = h * 60;
+    const frac = max > min ? (t - min) / (max - min) : 0;
+    const isMajor = majorHours.has(h);
+    const tick = document.createElement('button');
+    tick.type = 'button';
+    tick.className = 'weather-time-tick' + (isMajor ? ' major' : '');
+    tick.style.left = `calc(100% * ${frac} - 9px)`; // same full-width mapping as updateTimeSliderUI()'s thumb -- see its own comment
+    tick.title = formatTimeLabel(t);
+    if (isMajor) {
+      const label = document.createElement('span');
+      label.className = 'weather-time-tick-label';
+      label.textContent = formatTimeLabel(t); // same value as tick.title above, already computed
+      tick.appendChild(label);
+    }
+    // pointerdown + stopPropagation, not just 'click' -- same reason
+    // descent3d.js's own alt-slider ticks do this (see its own comment): an
+    // unstopped pointerdown bubbles into the slider's own pointerdown
+    // handler first and jumps the thumb to an approximate position before
+    // snapping back to the exact tick a moment later.
+    tick.addEventListener('pointerdown', evt => {
+      evt.stopPropagation();
+      setSliderTime(sliderEls, t, true);
+    });
+    // Also a plain 'click' -- keyboard activation (Enter/Space on a
+    // focused button) fires that without a preceding pointerdown at all.
+    tick.addEventListener('click', () => setSliderTime(sliderEls, t, true));
+    ticksEl.appendChild(tick);
+  });
+}
+
+function addWeatherTimeSlider(grid) {
+  const slider = document.createElement('div');
+  slider.className = 'weather-time-slider';
+  slider.id = 'weather-time-slider';
+  slider.tabIndex = 0;
+  slider.setAttribute('role', 'slider');
+  slider.setAttribute('aria-label', 'Time of day');
+  // Matches the grid's own per-dataset column count (see renderWeatherPanel()'s
+  // own comment) -- the static CSS default (app.css) assumes 5; overridden
+  // here for whatever DATA.hours.length this capture actually has. This is
+  // what was actually broken in the reported screenshot: an old 4-checkpoint
+  // capture's slider still spanned 5 declared column tracks, so its own
+  // tick fractions (correct relative to ITS OWN box) landed against a box
+  // that didn't match the real 4-column data grid beneath it at all.
+  slider.style.gridColumn = `span ${DATA.hours.length}`;
+
+  const track = document.createElement('div');
+  track.className = 'weather-time-track';
+  const ticksEl = document.createElement('div');
+  ticksEl.className = 'weather-time-ticks';
+  const thumb = document.createElement('div');
+  thumb.className = 'weather-time-thumb';
+  const readout = document.createElement('div');
+  readout.className = 'weather-time-readout';
+  slider.appendChild(track);
+  slider.appendChild(ticksEl);
+  slider.appendChild(thumb);
+  slider.appendChild(readout);
+  grid.appendChild(slider);
+
+  const sliderEls = { slider, thumb, readout, ticksEl };
+  renderTimeTicks(sliderEls);
+  updateTimeSliderUI(sliderEls, state.timeMinutes);
+
+  // No target check here -- a tick's own pointerdown handler (below, in
+  // renderTimeTicks()) calls stopPropagation() to keep this listener from
+  // ALSO firing for a tick click, same as descent3d.js's own alt slider
+  // (see its own comment). An evt.target allow-list was tried and rejected
+  // here: .weather-time-ticks (the ticks' own container div) covers the
+  // whole track via position:absolute;inset:0, so almost every click that
+  // ISN'T on a tick itself lands on THAT div, not `slider`/`track`/`thumb`
+  // directly -- an allow-list would have silently ignored most of the
+  // track's own surface instead of jumping the thumb there.
+  slider.addEventListener('pointerdown', evt => {
+    evt.preventDefault();
+    slider.classList.add('dragging');
+    slider.setPointerCapture(evt.pointerId);
+    const move = e => setSliderTime(sliderEls, timeFromClientX(slider, e.clientX), false);
+    const stop = () => {
+      slider.classList.remove('dragging');
+      document.removeEventListener('pointermove', move);
+      document.removeEventListener('pointerup', stop);
+      // Final commit -- see setSliderTime()'s own comment on why the drag
+      // itself doesn't pay for a full render() on every intermediate step.
+      setSliderTime(sliderEls, state.timeMinutes, true);
+    };
+    document.addEventListener('pointermove', move);
+    document.addEventListener('pointerup', stop);
+    move(evt);
+  });
+  slider.addEventListener('keydown', evt => {
+    let next = null;
+    if (evt.key === 'ArrowRight' || evt.key === 'ArrowUp') next = state.timeMinutes + 15;
+    else if (evt.key === 'ArrowLeft' || evt.key === 'ArrowDown') next = state.timeMinutes - 15;
+    if (next !== null) {
+      evt.preventDefault();
+      setSliderTime(sliderEls, next, true);
+    }
+  });
+}
+
+// Shared header row: blank corner, Prior day, Morning, then the time
+// slider spanning the hourly columns (see addWeatherTimeSlider() above) --
+// it IS the hour selector now (formerly a row of buttons, and before that
+// the standalone #hour-toggle in .controls, see initFromData()/the
+// real-flight-jump branch).
 function addWeatherHeaderRow(grid) {
   const corner = document.createElement('div');
   corner.className = 'weather-corner';
@@ -2412,21 +2699,7 @@ function addWeatherHeaderRow(grid) {
     grid.appendChild(d);
   });
 
-  DATA.hours.forEach(h => {
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'weather-hour-btn' + (h === state.hour ? ' active' : '');
-    btn.textContent = HOUR_LABELS[h];
-    btn.addEventListener('click', () => {
-      state.hour = h;
-      [...grid.querySelectorAll('.weather-hour-btn')].forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-      hourExplicitlyChosen = true;
-      syncAltCustomUI();
-      render();
-    });
-    grid.appendChild(btn);
-  });
+  addWeatherTimeSlider(grid);
 }
 
 function renderWeatherPanel() {
@@ -2463,6 +2736,15 @@ function renderWeatherPanel() {
 
   const grid = document.createElement('div');
   grid.className = 'weather-grid';
+  // Column count is DATA.hours.length, not a hardcoded 5 -- an older
+  // capture (pulled before this session's checkpoint set existed) can have
+  // fewer real hourly columns (confirmed directly: every currently-
+  // published capture in this repo still has only 4). The static CSS rule
+  // (app.css) assumes 5 and leaves a 5th, empty column track distorting
+  // every row's rhythm when a capture has fewer -- overridden here per
+  // dataset, same reasoning as .weather-time-slider's own grid-column
+  // override just below (addWeatherTimeSlider()).
+  grid.style.gridTemplateColumns = `minmax(78px, auto) repeat(2, minmax(56px, 1fr)) repeat(${DATA.hours.length}, minmax(52px, 1fr))`;
   container.appendChild(grid);
 
   addWeatherHeaderRow(grid);
@@ -2876,6 +3158,149 @@ function groundEquivalentRateFps(rateFps, siteElevFt) {
   };
 }
 
+// Every real hour this capture has a wind profile for, ascending -- dense
+// (up to 9, one per config.WIND_PROFILE_HOURS_LOCAL entry) on a fresh live
+// pull, sparse (falls back to DATA.hours, the weather panel's own
+// checkpoints) on an older capture pulled before wind_hours existed.
+// profilesForTime()'s blend-bracketing and History's nearestPublishedHour()
+// read this specifically -- for the slider's OWN tick marks/draggable
+// range, see sliderRealHours() below instead, which is deliberately wider.
+function windProfileHours() {
+  return DATA.wind_hours || DATA.hours;
+}
+
+// Every real hour this capture has ANY weather data for -- the union of
+// wind_profiles, rain, temperature, and wind's own real hourly keys,
+// whichever is densest. Reported directly against an older capture: rain/
+// temperature have always been published across a wider window than
+// wind_profiles (build_rain_data()/build_temperature_data() loop
+// config.RAIN_WINDOW_START/END_HOUR_LOCAL, a always-separate, always-wider
+// figure than wind_profiles' own checkpoint/WIND_PROFILE_HOURS_LOCAL range
+// -- confirmed directly on hutto/2026-08-01: wind_profiles only at
+// 9/11/13/15, rain/temperature already dense at 8-16), so a user dragging
+// the slider before the first or after the last wind-profile hour had
+// nowhere to land at all, even though real rain/temp data existed right
+// there to look at. windProfileHours() alone (map-simulation blend source)
+// stays scoped tighter on purpose -- an hour with no nearby wind-profile
+// bracket still blends fine from whichever two DO exist; widening the
+// SLIDER's own reach doesn't require widening what profilesForTime()
+// brackets against.
+function sliderRealHours() {
+  const union = new Set(windProfileHours());
+  DATA.hours.forEach(h => union.add(h));
+  if (DATA.rain) Object.keys(DATA.rain.hourly).forEach(h => union.add(Number(h)));
+  if (DATA.temperature) Object.keys(DATA.temperature.hourly).forEach(h => union.add(Number(h)));
+  if (DATA.wind) Object.keys(DATA.wind.hourly).forEach(h => union.add(Number(h)));
+  return [...union].sort((a, b) => a - b);
+}
+
+// Nearest real published hour to a given time -- for the few places that
+// read a server-precomputed grid keyed by exact integer hour (History
+// mode's ladder-altitude view: points_by_key/actuals) rather than a raw
+// profile the client can blend continuously (profilesForTime() below
+// handles that path). Snapping instead of blending there is a real,
+// accepted simplification -- the precomputed grid has no per-model wind
+// field left to blend, only final x_ft/y_ft points, and this app has
+// consistently preferred blending the underlying wind field over
+// interpolating already-computed results (see profilesForTime()'s own
+// comment) wherever that's actually possible.
+function nearestPublishedHour(timeMinutes) {
+  const hours = windProfileHours();
+  return hours.reduce((best, h) =>
+    Math.abs(h * 60 - timeMinutes) < Math.abs(best * 60 - timeMinutes) ? h : best, hours[0]);
+}
+
+// "1:15pm" -- the time slider's own readout/tick labels, and every other
+// hour-to-text spot in this file (hourAmPm(), below, is the same format for
+// a plain hour int specifically -- both read live off the value given
+// rather than a hardcoded per-checkpoint lookup, which drifts out of sync
+// with config.py's actual SPLASH_HOURS_LOCAL the moment that list changes
+// -- a real, confirmed break this replaced, see RAIN_HOUR_BUCKETS'/
+// bucketRainCell()'s own comment for the incident).
+function formatTimeLabel(timeMinutes) {
+  const h24 = Math.floor(timeMinutes / 60);
+  const m = timeMinutes % 60;
+  const period = h24 < 12 ? 'am' : 'pm';
+  const h12 = h24 % 12 || 12;
+  return m === 0 ? `${h12}${period}` : `${h12}:${String(m).padStart(2, '0')}${period}`;
+}
+
+// "13:15" -- the permalink's own ?t= format (24-hour HH:MM, unambiguous and
+// directly sortable, unlike formatTimeLabel()'s "1:15pm" display form).
+function formatTimeParam(timeMinutes) {
+  const h = Math.floor(timeMinutes / 60), m = timeMinutes % 60;
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+}
+// Inverse of the above -- null (not NaN or some other garbage value) for a
+// missing or malformed param, so callers can treat "absent" and "invalid"
+// identically with one falsy-ish check rather than two.
+function parseTimeParam(param) {
+  if (!param) return null;
+  const match = /^(\d{1,2}):(\d{2})$/.exec(param);
+  if (!match) return null;
+  const h = Number(match[1]), m = Number(match[2]);
+  if (h < 0 || h > 23 || m < 0 || m > 59) return null;
+  return h * 60 + m;
+}
+
+// Bracket the two real published hours in `hours` straddling timeMinutes
+// and blend the matching entries of `profiles` -- the client-side port of
+// pipeline/analyze_real_flight.py's blend_wind_profiles()/circular_blend()
+// (which does exactly this for a real launch time between two published
+// hours, auto-detected here off `hours` rather than that function's own
+// caller-supplied wind_hour_a/wind_hour_b). Blends the underlying wind
+// field, then feeds the result into the existing descent sim
+// (simulateDrift() below) -- not interpolating already-computed zone
+// points, for the same reason interpWind() blends the wind field rather
+// than the drift result across altitude. Generic over `profiles`/`hours`
+// (not hardcoded to DATA.wind_profiles/windProfileHours()) so
+// historyPointsForAltitude() below can reuse it per-capture-date, since
+// each capture's own real hour set can differ from the live one.
+function blendProfilesForTime(profiles, hours, timeMinutes) {
+  const exactHour = timeMinutes / 60;
+  if (hours.includes(exactHour)) return profiles[exactHour]; // fast path, exact, no allocation
+  const clamped = Math.max(hours[0] * 60, Math.min(hours[hours.length - 1] * 60, timeMinutes));
+  // Bracketing pair: the largest published hour <= clamped and the
+  // smallest >= clamped -- hours is ascending, so one forward scan finds
+  // both ends at once.
+  let hourA = hours[0], hourB = hours[hours.length - 1];
+  for (let i = 0; i < hours.length - 1; i++) {
+    if (hours[i] * 60 <= clamped && clamped <= hours[i + 1] * 60) {
+      hourA = hours[i]; hourB = hours[i + 1];
+      break;
+    }
+  }
+  if (hourA === hourB) return profiles[hourA];
+  const profilesA = profiles[hourA], profilesB = profiles[hourB];
+  const weightB = (clamped - hourA * 60) / ((hourB - hourA) * 60);
+  const blended = {};
+  for (const model of Object.keys(profilesA)) {
+    if (!profilesB[model]) continue; // a model missing one side of the bracket has nothing real to blend against
+    const byAltB = new Map(profilesB[model].map(([alt, s, d]) => [alt, [s, d]]));
+    // Only levels BOTH hours report, same intersection blend_wind_profiles()
+    // uses -- in practice always the full set, same pipeline pull for every
+    // hour. .filter()+.map() over profilesA[model] (already altitude-sorted
+    // server-side) preserves that sort order, which interpWind() requires.
+    blended[model] = profilesA[model]
+      .filter(([alt]) => byAltB.has(alt))
+      .map(([alt, s0, d0]) => {
+        const [s1, d1] = byAltB.get(alt);
+        const speed = s0 + weightB * (s1 - s0);
+        // Same circular-shortest-path idiom interpWind() already uses below.
+        const diff = (((d1 - d0 + 180) % 360) + 360) % 360 - 180;
+        const direction = (((d0 + weightB * diff) % 360) + 360) % 360;
+        return [alt, speed, direction];
+      });
+  }
+  return blended;
+}
+
+// The live/current capture's own profilesForTime() -- thin wrapper around
+// blendProfilesForTime() bound to DATA.wind_profiles/windProfileHours().
+function profilesForTime(timeMinutes) {
+  return blendProfilesForTime(DATA.wind_profiles, windProfileHours(), timeMinutes);
+}
+
 // Wind [speedMph, dirDeg] at `alt`, linearly interpolated (circular for
 // direction) between the two profile points bracketing it -- mirrors
 // interp(). `profile` is one of DATA.wind_profiles[hour][model], already
@@ -3015,21 +3440,24 @@ let historyZoneCache = new Map();
 let pathCache = new Map();
 function invalidateZones() { zoneCache.clear(); historyZoneCache.clear(); pathCache.clear(); }
 
-// One altitude's zone at the given hour/deploy, computed just-in-time from
+// One altitude's zone at the given time/deploy, computed just-in-time from
 // DATA.wind_profiles at the current state.rateFps -- returns the same
 // {altitude, points: [{model, x_ft, y_ft}]} shape drawZone() already
 // consumes (it was already reading only these two fields; see drawZone()'s
 // own comment). One point per model now, not two (fast+slow) -- see
 // buildRateEditor()'s own comment for why. null above
 // single_deploy_max_alt_ft for single deploy (mirrors
-// compute_splash_points()'s own skip) or if the hour has no published
-// profiles at all.
-function zoneFor(hour, deploy, altitudeFt) {
-  const cacheKey = `${hour}_${deploy}_${altitudeFt}`;
+// compute_splash_points()'s own skip) or if `timeMinutes` falls outside
+// every published hour's range entirely. `timeMinutes` (not an hour int)
+// -- resolved via profilesForTime(), which returns an exact published
+// hour's own profile unblended, or a blend of the two bracketing hours
+// when it falls between them (see that function's own comment).
+function zoneFor(timeMinutes, deploy, altitudeFt) {
+  const cacheKey = `${timeMinutes}_${deploy}_${altitudeFt}`;
   if (zoneCache.has(cacheKey)) return zoneCache.get(cacheKey);
 
   const dp = DATA.descent_params;
-  const profiles = DATA.wind_profiles[hour];
+  const profiles = profilesForTime(timeMinutes);
   let zone = null;
   if (profiles && !(deploy === 'single' && altitudeFt > dp.single_deploy_max_alt_ft)) {
     const r = groundEquivalentRateFps(state.rateFps, dp.site_elev_ft);
@@ -3050,8 +3478,8 @@ function zoneFor(hour, deploy, altitudeFt) {
   return zone;
 }
 
-function zonesFor(hour, deploy) {
-  return DATA.altitudes.map(alt => zoneFor(hour, deploy, alt)).filter(z => z !== null);
+function zonesFor(timeMinutes, deploy) {
+  return DATA.altitudes.map(alt => zoneFor(timeMinutes, deploy, alt)).filter(z => z !== null);
 }
 
 // 3D descent-path view's data source (descent3d.js). Same phase
@@ -3064,12 +3492,12 @@ function zonesFor(hour, deploy) {
 // filtering happens at render time, same separation zoneFor()/drawZone()
 // already use. pathCache itself is declared above, alongside
 // zoneCache/historyZoneCache.
-function descentPathsFor(hour, deploy, altitudeFt) {
-  const cacheKey = `${hour}_${deploy}_${altitudeFt}`;
+function descentPathsFor(timeMinutes, deploy, altitudeFt) {
+  const cacheKey = `${timeMinutes}_${deploy}_${altitudeFt}`;
   if (pathCache.has(cacheKey)) return pathCache.get(cacheKey);
 
   const dp = DATA.descent_params;
-  const profiles = DATA.wind_profiles[hour];
+  const profiles = profilesForTime(timeMinutes);
   const out = [];
   if (profiles && !(deploy === 'single' && altitudeFt > dp.single_deploy_max_alt_ft)) {
     const r = groundEquivalentRateFps(state.rateFps, dp.site_elev_ft);
@@ -3103,8 +3531,8 @@ function descentPathsFor(hour, deploy, altitudeFt) {
 // [{capture_date, model, x_ft, y_ft}, ...] -- the same flat shape
 // HISTORY.points_by_key[key] already is, so callers don't need to branch on
 // where the points came from.
-function historyPointsForAltitude(hour, deploy, altitudeFt) {
-  const cacheKey = `${hour}_${deploy}_${altitudeFt}`;
+function historyPointsForAltitude(timeMinutes, deploy, altitudeFt) {
+  const cacheKey = `${timeMinutes}_${deploy}_${altitudeFt}`;
   if (historyZoneCache.has(cacheKey)) return historyZoneCache.get(cacheKey);
 
   const dp = DATA.descent_params;
@@ -3115,9 +3543,18 @@ function historyPointsForAltitude(hour, deploy, altitudeFt) {
       ? [[r.drogue, altitudeFt, dp.main_deploy_altitude_ft], [r.main, dp.main_deploy_altitude_ft, 0]]
       : [[r.main, altitudeFt, 0]];
     for (const captureDate of (HISTORY?.captures || [])) {
-      const hourProfiles = HISTORY.wind_profiles_by_capture?.[captureDate]?.[hour];
-      if (!hourProfiles) continue;
-      for (const [model, profile] of Object.entries(hourProfiles)) {
+      // Each capture date has its OWN real hour set (dense on a fresh
+      // capture, sparse on an old one pulled before WIND_PROFILE_HOURS_LOCAL
+      // existed) -- blendProfilesForTime() (not the DATA-bound
+      // profilesForTime() wrapper) brackets against THIS capture's own
+      // keys, not the live/current capture's.
+      const captureProfiles = HISTORY.wind_profiles_by_capture?.[captureDate];
+      if (!captureProfiles) continue;
+      const captureHours = Object.keys(captureProfiles).map(Number).sort((a, b) => a - b);
+      if (!captureHours.length) continue;
+      const timeProfiles = blendProfilesForTime(captureProfiles, captureHours, timeMinutes);
+      if (!timeProfiles) continue;
+      for (const [model, profile] of Object.entries(timeProfiles)) {
         const [x_ft, y_ft] = simulateDrift(profile, altitudeFt, phases, dp.site_elev_ft, dp.descent_step_ft);
         points.push({ capture_date: captureDate, model, x_ft, y_ft });
       }
@@ -3485,7 +3922,7 @@ function drawRealFlightMarker() {
         // for this flight. Not reverted on unpin (see restorePadFromRealFlightSnap()
         // below, which only ever reverts the pad snap) -- unlike that snap,
         // this is a normal user-facing selection worth leaving as-is.
-        state.hour = flight.closest_hour;
+        state.timeMinutes = flight.closest_hour * 60;
         hourExplicitlyChosen = true;
         // Nearest-match, not exact equality -- the published bucket may not
         // exist verbatim in DATA.altitudes if this date's zone JSON predates
@@ -3501,7 +3938,7 @@ function drawRealFlightMarker() {
         // before would show an unrelated zone instead, so clear it.
         state.customAlt = null;
         syncAltCustomUI();
-        // Resync which hour button shows .active against the state.hour
+        // Resync the slider's thumb position against the state.timeMinutes
         // reassignment above -- a full renderWeatherPanel() rebuild, same
         // way this used to re-run buildToggle('hour-toggle', ...) just to
         // refresh its active button.
@@ -3554,9 +3991,9 @@ function renderHistory() {
   // effective altitude means it naturally, silently doesn't show for a
   // custom altitude, same tri-state UX as a date with no actuals at all.
   const altitude = state.customAlt !== null ? state.customAlt : state.compareAlt;
-  const key = `${state.hour}_${state.deploy}_${rate}_${altitude}`;
+  const key = `${nearestPublishedHour(state.timeMinutes)}_${state.deploy}_${rate}_${altitude}`;
   const rawPoints = state.customAlt !== null
-    ? historyPointsForAltitude(state.hour, state.deploy, altitude)
+    ? historyPointsForAltitude(state.timeMinutes, state.deploy, altitude)
     : (HISTORY.points_by_key[key] || []);
   const seriesByModel = {};
   rawPoints.forEach(pt => {
@@ -3621,7 +4058,14 @@ function renderHistory() {
       const [px, py] = pxPts[i];
       const marker = drawMarker(svg, shape, px, py, 9, MODEL_COLORS_HEX[model] || 'var(--point-fill)');
       marker.classList.add('pt');
-      const rp = { model, x_ft: pt.x_ft, y_ft: pt.y_ft, px, py, capture_date: pt.capture_date, altitude, hour: state.hour };
+      // rp.hour stays a plain integer hour (not state.timeMinutes directly)
+      // -- isPointVisible()/applyIsolation() compare it against
+      // state.isolatedHour/pinnedHour, which are themselves plain hours
+      // shared with byTime mode's own rp construction elsewhere; History
+      // mode doesn't actually drive those two fields (it isolates by
+      // capture date instead, see activeCapture above), so this is inert
+      // today either way, just kept type-consistent.
+      const rp = { model, x_ft: pt.x_ft, y_ft: pt.y_ft, px, py, capture_date: pt.capture_date, altitude, hour: nearestPublishedHour(state.timeMinutes) };
       renderedPoints.push(rp);
       marker.addEventListener('mousemove', evt => showTooltip(evt, rp));
       marker.addEventListener('mouseleave', hideTooltip);
@@ -3712,7 +4156,7 @@ function renderAccuracyTable() {
   // `actual` below and the whole table stays hidden -- same as any other
   // date with no actuals published yet, not a special case to code around.
   const altitude = state.customAlt !== null ? state.customAlt : state.compareAlt;
-  const key = `${state.hour}_${state.deploy}_${rate}_${altitude}`;
+  const key = `${nearestPublishedHour(state.timeMinutes)}_${state.deploy}_${rate}_${altitude}`;
   const actual = HISTORY && HISTORY.actuals[key];
   if (!actual) return; // stays hidden -- render() already set display:none
   buildAccuracyLegend();
@@ -3877,7 +4321,7 @@ function drawZone(zone, color, hour) {
 // pickers (personal display preferences already persisted via localStorage,
 // not part of a shareable launch scenario). `layer` is the exception among
 // the localStorage-backed prefs -- see mapLayer's own comment for why it's
-// also shareable. `date`/`hour`/`deploy`/`boost` are further gated behind an
+// also shareable. `date`/`t`/`deploy`/`boost` are further gated behind an
 // explicit user action each -- see
 // dateExplicitlyChosen/hourExplicitlyChosen/deployExplicitlyChosen/
 // boostAngleExplicitlyChosen's declarations for why.
@@ -3887,7 +4331,10 @@ function buildPermalinkParams(includeDate) {
   if (includeDate && dateSelect.value) p.set('date', dateSelect.value);
   p.set('mode', state.mode);
   p.set('layer', mapLayer);
-  if (hourExplicitlyChosen) p.set('hour', state.hour);
+  // t=HH:MM, not the legacy hour=N int -- carries the slider's own 15-min
+  // precision. freshState() still reads a bare ?hour=N link too (as N*60),
+  // so an old shared permalink keeps working, just without that precision.
+  if (hourExplicitlyChosen) p.set('t', formatTimeParam(state.timeMinutes));
   if (deployExplicitlyChosen) p.set('deploy', state.deploy);
   if (boostAngleExplicitlyChosen) p.set('boost', boostAngleDeg);
   // Only emit when it's a real subset -- same "don't pin defaults into the
@@ -3992,13 +4439,17 @@ function render() {
   let altitudeZones = [], timeZones = [];
   if (state.mode === 'byAltitude') {
     altitudeZones = state.customAlt !== null
-      ? [zoneFor(state.hour, state.deploy, state.customAlt)].filter(Boolean)
-      : zonesFor(state.hour, state.deploy).filter(z => altInRange(z.altitude));
+      ? [zoneFor(state.timeMinutes, state.deploy, state.customAlt)].filter(Boolean)
+      : zonesFor(state.timeMinutes, state.deploy).filter(z => altInRange(z.altitude));
     growBaseViewBox(altitudeZones);
   } else if (state.mode === 'byTime') {
+    // Unaffected by the time slider -- this mode shows every DATA.hours
+    // zone at once (its own weather-panel-independent concept), each an
+    // exact published hour, never blended. zoneFor() itself now takes
+    // minutes, so `hour*60` here, not state.timeMinutes.
     const orderedHours = [...DATA.hours].sort((a, b) => b - a);
     const alt = state.customAlt !== null ? state.customAlt : state.compareAlt;
-    timeZones = orderedHours.map(hour => ({ hour, zone: zoneFor(hour, state.deploy, alt) })).filter(hz => hz.zone);
+    timeZones = orderedHours.map(hour => ({ hour, zone: zoneFor(hour * 60, state.deploy, alt) })).filter(hz => hz.zone);
     growBaseViewBox(timeZones.map(hz => hz.zone));
   }
 
@@ -4058,7 +4509,12 @@ function render() {
     // a custom altitude won't be a key in it, so falls back to the user's
     // own chosen base zone color directly rather than an undefined fill.
     const ordered = [...altitudeZones].sort((a, b) => b.altitude - a.altitude);
-    ordered.forEach(zone => drawZone(zone, ALT_COLORS_HEX[zone.altitude] || zoneBaseColor, state.hour));
+    // drawZone()'s own `hour` param stays a plain integer hour everywhere
+    // (g.dataset.hour/rp.hour are shared with byTime mode's own isolation/
+    // tooltip logic below, which assume exactly that) -- not the slider's
+    // full timeMinutes precision, which isn't displayed via this path
+    // anyway (showTooltip()'s whenPart is empty for byAltitude regardless).
+    ordered.forEach(zone => drawZone(zone, ALT_COLORS_HEX[zone.altitude] || zoneBaseColor, nearestPublishedHour(state.timeMinutes)));
   } else if (state.mode === 'byHistory') {
     renderHistory();
     renderAccuracyTable();
@@ -4151,6 +4607,16 @@ function initFromData() {
   // see config.altitudes_for_site()), so the ramp is rebuilt against this
   // dataset's real list every time, not just when the picker changes.
   ALT_COLORS_HEX = computeSequentialRamp(zoneBaseColor, DATA.altitudes);
+  // Same reasoning, same fix -- DATA.hours' own checkpoint values can
+  // differ from whatever this module's top-level TIME_COLORS_HEX literal
+  // assumed (a real, confirmed break: an already-published capture's
+  // DATA.hours still had the OLD checkpoint set the day SPLASH_HOURS_LOCAL
+  // changed, and every DATA.hours-keyed lookup against the NEW hardcoded
+  // literal came back undefined -- crashing bucketRainCell() outright via
+  // RAIN_HOUR_BUCKETS, see its own comment for that fix). Rebuilt against
+  // this capture's own real DATA.hours every load, not assumed to match
+  // config.py's current SPLASH_HOURS_LOCAL.
+  TIME_COLORS_HEX = computeSequentialRamp(timeBaseColor, DATA.hours);
   BASE_VB = DATA.base_view_box;
   IMG_VB = DATA.image_view_box;
   // Not set to BASE_VB here either -- BASE_VB can still grow once render()
@@ -4190,7 +4656,7 @@ function initFromData() {
 
   buildToggle('mode-toggle', ['byAltitude', 'byTime', 'byHistory'], MODE_LABELS, 'mode', () => setMode(state.mode));
   // Hour selection is built as part of renderWeatherPanel() below (its
-  // header row's 9/11/1/3 buttons) -- no standalone #hour-toggle any more.
+  // header row's own time slider) -- no standalone #hour-toggle any more.
   buildToggle('deploy-toggle', DATA.deploys, DEPLOY_LABELS, 'deploy', () => {
     deployExplicitlyChosen = true;
     // Which altitudes have a real zone changes with deploy (single-deploy

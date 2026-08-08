@@ -266,9 +266,10 @@ LAUNCH_WINDOW_END_HOUR_LOCAL = 17
 # above (which also drives wind/cloud/temp/CAPE stats and day-over-day drift
 # tracking in delta_report() -- not touched here, so changing this doesn't
 # ripple into those). Starts at setup (8am, same reasoning as the general
-# window) but ends at 4pm rather than 5pm: teardown matters for "is the
-# field/gear getting rained on," not the extra hour the general window
-# widens for weather-delay contingency.
+# window) but ends at 4pm rather than 5pm: matches SPLASH_HOURS_LOCAL's own
+# 8am-4pm checkpoint span below (briefly 8am-5pm mid-session while
+# SPLASH_HOURS_LOCAL had a 5pm checkpoint -- reverted alongside it, see that
+# constant's own comment).
 RAIN_WINDOW_START_HOUR_LOCAL = 8
 RAIN_WINDOW_END_HOUR_LOCAL = 16
 
@@ -372,9 +373,33 @@ def elev_ft_for_site(site_id: str) -> float:
     return SITES[site_id]["elev_m"] * 3.28084
 
 
-# Times of day the splash-zone viewer samples. Fixed across every capture/
-# target-date/site so the viewer's toggles don't need to vary per dataset.
-SPLASH_HOURS_LOCAL = [9, 11, 13, 15]
+# Times of day the weather panel (Clouds/Rain/Wind/Temp columns) samples,
+# and the map's time-slider's own labeled/major checkpoints -- fixed,
+# deliberately sparse/curated so the table stays a handful of columns
+# regardless of how much raw hourly data is actually available (see
+# WIND_PROFILE_HOURS_LOCAL below for the denser figure the slider's minor
+# ticks and blend-bracketing use instead). 8am-4pm at a clean 2-hour step,
+# not 9/11/13/15/17 (this constant's own value earlier the same session) --
+# per direction, so the slider's own major-tick columns land on round,
+# evenly-spaced clock times; the old 9/11/13/15 set becomes the slider's
+# minor ticks instead (each sitting exactly at the boundary between two
+# major-tick columns, i.e. still real, still exact, just not a labeled
+# weather-panel column of its own).
+SPLASH_HOURS_LOCAL = [8, 10, 12, 14, 16]
+
+# Every hour the map's time-of-day slider can land on exactly (no blend
+# needed) -- distinct from SPLASH_HOURS_LOCAL above, which stays sparse on
+# purpose for the weather panel table. Both the live pull (Open-Meteo
+# hourly data, already fetched in full -- pull_live_forecast.py) and the
+# historical/actuals pull (HRRR f00 analysis via Herbie, real data for any
+# hour it's asked for -- pull_historical.py) can supply real data at every
+# one of these hours, not just SPLASH_HOURS_LOCAL's checkpoints; the
+# splash-zone viewer only needs to *blend* (see analyze_real_flight.py's
+# blend_wind_profiles/circular_blend, the same technique the client ports
+# for the slider) across whatever gap remains between two of these, at most
+# 1 hour instead of the old up-to-2-hour gap between SPLASH_HOURS_LOCAL
+# checkpoints.
+WIND_PROFILE_HOURS_LOCAL = list(range(8, 17))
 
 # --- Per-site apogee altitude list ------------------------------------------
 # ALTITUDES_MASTER_FT tapers in density by band rather than using one even

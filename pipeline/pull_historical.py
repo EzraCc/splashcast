@@ -2,11 +2,12 @@
 
 For each Saturday in range, pulls:
   - the HRRR f00 analysis (the model's own data-assimilation output, not a
-    forecast) at every hour in config.SPLASH_HOURS_LOCAL -- the "actual"/
-    best-estimate proxy per the spec, labeled hrrr_f00_analysis, never
-    "actual" outright. Multi-hour so splash_zones.py's compute_actual_points()
-    can populate points_history.json's actuals for whichever hour a viewer
-    has selected, not just one fixed hour.
+    forecast) at every hour in config.WIND_PROFILE_HOURS_LOCAL (hourly,
+    9am-5pm) -- the "actual"/best-estimate proxy per the spec, labeled
+    hrrr_f00_analysis, never "actual" outright. Multi-hour so
+    splash_zones.py's compute_actual_points() can populate
+    points_history.json's actuals for whichever time a viewer has selected,
+    not just one fixed hour.
   - each profile model's (GFS/HRRR/RAP/NAM) forecast for that same valid time,
     issued at lead times T-7 .. T-0 days (anchored to the 00Z cycle)
   - NBM's near-surface (10/30/80m) forecast for the same lead times, kept
@@ -75,8 +76,8 @@ def target_valid_time(saturday: date, hour_local: int = None) -> datetime:
     """`hour_local`:00 local (Central) time on `saturday`, as a naive UTC
     datetime. Defaults to config.TARGET_VALID_HOUR_LOCAL (10am) for the
     forecast-vs-forecast comparison; pull_actual() below instead loops over
-    every hour in config.SPLASH_HOURS_LOCAL, matching the hours the live
-    simulation actually samples.
+    every hour in config.WIND_PROFILE_HOURS_LOCAL, matching the hourly
+    density the live pull now publishes.
 
     DST-aware so the local sample hour stays fixed across both seasons -- see
     config.SITE_TZ / TARGET_VALID_HOUR_LOCAL for why a fixed UTC hour isn't used.
@@ -218,8 +219,12 @@ def extract_nbm(H: Herbie, source_type: str, run_init_time: datetime, lead_time_
 
 def pull_actual(saturday: date, site_id: str = "hutto") -> pd.DataFrame | None:
     """HRRR's own f00 analysis (its data-assimilation output, not a forecast)
-    at every hour in config.SPLASH_HOURS_LOCAL, plus a 10m surface point per
-    hour (extract_surface()).
+    at every hour in config.WIND_PROFILE_HOURS_LOCAL (hourly, 9am-5pm --
+    widened from the sparser SPLASH_HOURS_LOCAL so the map's time slider has
+    real hourly actuals to land on, not just the weather panel's curated
+    checkpoints), plus a 10m surface point per hour (extract_surface()).
+    Real cost, accepted directly: ~9 Herbie fetches per site/date now
+    instead of ~4-5, meaningfully longer than before.
 
     Meant to be run the day AFTER `saturday` -- not because the data itself
     is from the next day (every point here is still valid during `saturday`),
@@ -230,7 +235,7 @@ def pull_actual(saturday: date, site_id: str = "hutto") -> pd.DataFrame | None:
     if out_path.exists():
         return pd.read_parquet(out_path)
     frames = []
-    for hour_local in config.SPLASH_HOURS_LOCAL:
+    for hour_local in config.WIND_PROFILE_HOURS_LOCAL:
         valid_dt = target_valid_time(saturday, hour_local)
         try:
             with pull_timeout():

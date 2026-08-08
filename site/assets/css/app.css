@@ -325,8 +325,8 @@
      all append their cells into this same container (see app.js's
      renderWeatherPanel()/addWeatherHeaderRow()/addRainRow()/addTempRow()/
      addCloudRow()), relying on CSS grid's row-wrapping auto-placement: as
-     long as each logical row's cells sum to exactly 7 column-units (label +
-     Prior day + Morning + 4 hours), it wraps to a new line on its own with
+     long as each logical row's cells sum to exactly 8 column-units (label +
+     Prior day + Morning + 5 hours), it wraps to a new line on its own with
      no explicit grid-row/grid-column-start bookkeeping needed. Label column
      wider than the data columns -- needs to fit the temp row's inline
      actual/feels-like toggle, not just a short "Rain"/"Low" string.
@@ -345,9 +345,9 @@
      with the data, which is the entire point of a shared column grid. */
   .weather-grid {
     display: grid;
-    grid-template-columns: minmax(78px, auto) repeat(2, minmax(56px, 1fr)) repeat(4, minmax(52px, 1fr));
+    grid-template-columns: minmax(78px, auto) repeat(2, minmax(56px, 1fr)) repeat(5, minmax(52px, 1fr));
     column-gap: 6px; row-gap: 16px; align-items: end;
-    /* 7 columns still won't always fit a narrow phone alongside a wide
+    /* 8 columns still won't always fit a narrow phone alongside a wide
        label column -- scroll instead of crushing any column below what its
        own text needs, same pattern already used for .accuracy-table-wrap. */
     overflow-x: auto;
@@ -369,23 +369,95 @@
     padding-top: 4px;
   }
   .weather-hr-label { font-size: var(--fs-xs); color: var(--text-muted); text-align: center; padding-bottom: 4px; }
-  /* The hour columns' headers are buttons, not plain text -- they ARE the
-     hour selector now (see addWeatherHeaderRow()'s own comment), replacing
-     the standalone #hour-toggle that used to live in .controls. */
-  .weather-hour-btn {
-    border: 1px solid var(--border); border-radius: 6px; background: var(--surface-1); color: var(--text-secondary);
-    font-size: var(--fs-xs); padding: 4px 2px; cursor: pointer; text-align: center;
+  /* The hour columns' header is one continuous time slider now, not a row
+     of buttons -- it IS the hour selector (see addWeatherTimeSlider()'s own
+     comment), replacing both the button row and, before that, the
+     standalone #hour-toggle that used to live in .controls. `grid-column:
+     span 5` here is a fallback default only -- addWeatherTimeSlider() sets
+     it inline per dataset (DATA.hours.length), since an older capture can
+     have fewer real hourly columns than 5 (confirmed: every currently-
+     published capture in this repo still does) and a mismatched span was a
+     real, reported column-alignment bug. Major ticks land at each real
+     column's own center via JS (timeSliderMinMax()'s own comment), not an
+     approximation. 62px, not 44 -- the top 18px is reserved for
+     .weather-time-readout (see its own comment for why that space has to
+     live INSIDE this box, not float above it). */
+  .weather-time-slider {
+    grid-column: span 5; position: relative; height: 62px; cursor: pointer;
+    touch-action: none; /* this element owns horizontal drag -- don't let the browser also try to pan/scroll on it */
   }
-  .weather-hour-btn:hover:not(.active) { background: var(--surface-2); }
-  .weather-hour-btn.active { background: var(--accent); color: #fff; font-weight: 600; border-color: var(--accent); }
+  .weather-time-slider:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+  /* Track/ticks/thumb all sit in the BOTTOM 44px of the slider's own box
+     (top:18px, not 0) -- the top 18px is .weather-time-readout's own
+     reserved row. */
+  .weather-time-track {
+    position: absolute; left: 9px; right: 9px; top: 26px; height: 3px;
+    background: var(--border); border-radius: 2px;
+  }
+  .weather-time-ticks { position: absolute; inset: 0; }
+  /* Hit-box wider than the visible dash (same 44x44 touch-target padding
+     idea .descent3d-alt-tick already uses under (pointer: coarse) below,
+     just applied unconditionally here since this row has less spare
+     vertical room to grow into on a touch device). */
+  .weather-time-tick {
+    position: absolute; top: 18px; width: 18px; height: 18px; padding: 0; border: none; background: none; cursor: pointer;
+  }
+  .weather-time-tick::before {
+    content: ''; position: absolute; left: 50%; top: 8px; width: 2px; height: 3px;
+    transform: translateX(-50%); background: var(--text-muted); border-radius: 1px; opacity: 0.6;
+  }
+  .weather-time-tick.major::before { width: 2px; height: 9px; top: 5px; opacity: 1; background: var(--text-secondary); }
+  .weather-time-tick-label {
+    position: absolute; left: 50%; top: 18px; transform: translateX(-50%);
+    font-size: var(--fs-xs); color: var(--text-secondary); white-space: nowrap;
+  }
+  .weather-time-thumb {
+    position: absolute; top: 18px; width: 18px; height: 18px; border-radius: 50%;
+    background: var(--accent); border: 2px solid var(--surface-1); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+    pointer-events: none; /* the slider's own pointerdown handles the whole track, incl. visually over the thumb */
+  }
+  /* Hidden by default, shown only while actively adjusting (dragging or
+     keyboard-focused) -- quiet the rest of the time rather than a
+     persistent floating label competing with the tick labels right below
+     it for the same small vertical space. Positioned WITHIN this row's own
+     18px-tall top reserve (top:0, not a negative offset floating above the
+     slider's own box) -- .weather-grid has overflow-x:auto for narrow-
+     phone horizontal scrolling (see its own comment), which per spec also
+     forces overflow-y to compute as auto (a real, confirmed CSS gotcha,
+     not a guess -- verified directly: a negative-top floating readout
+     rendered with the right text/color/opacity by every computed-style
+     check, yet painted nothing at all, clipped by this exact mechanism).
+     Reserving real space here sidesteps that fight entirely rather than
+     trying to poke a hole in the grid's own deliberate scroll clipping. */
+  .weather-time-readout {
+    position: absolute; top: 0; transform: translateX(-50%); white-space: nowrap;
+    font-size: var(--fs-xs); font-weight: 600; color: var(--accent);
+    opacity: 0; pointer-events: none; transition: opacity 0.1s ease;
+  }
+  .weather-time-slider.dragging .weather-time-readout,
+  .weather-time-slider:focus-visible .weather-time-readout { opacity: 1; }
   /* Same disabled treatment .toggle-group.disabled gave the old standalone
-     #hour-toggle-group in byTime mode (that mode shows all 4 hours at once
-     and ignores state.hour for its own zone selection) -- scoped to just
-     the hour buttons via a class on the panel container rather than a
-     dedicated wrapper div, since the buttons have to be direct grid
-     children for column alignment (see .weather-grid's own comment) and
-     can't be wrapped in an extra container without breaking that. */
-  #weather-panel.hours-disabled .weather-hour-btn { opacity: 0.4; pointer-events: none; }
+     #hour-toggle-group in byTime mode (that mode shows every DATA.hours
+     zone at once and ignores state.timeMinutes for its own zone
+     selection). */
+  #weather-panel.hours-disabled .weather-time-slider { opacity: 0.4; pointer-events: none; }
+  /* Same 44x44 touch-target convention .descent3d-alt-thumb/.info-btn's own
+     coarse-pointer rules already use elsewhere in this app -- an invisible
+     ::after overlay, centered on the real (still 18px) tick via top/left:
+     50% + translate(-50%,-50%), not a resize of the visible dash itself
+     (which would also throw off the JS's own centering math -- see
+     updateTimeSliderUI()'s "left IS the left edge, inset by the 9px
+     radius" comment, sized against an 18px box specifically). Ticks only --
+     the thumb doesn't need its own expanded target, it's pointer-events:
+     none (see its own rule) precisely because the WHOLE .weather-time-slider
+     already IS the drag surface at a real 44px tall, not something a user
+     ever needs to land precisely on the thumb itself for. */
+  @media (pointer: coarse) {
+    .weather-time-tick::after {
+      content: ''; position: absolute; top: 50%; left: 50%;
+      width: 44px; height: 44px; transform: translate(-50%, -50%);
+    }
+  }
   /* First-column cell for a data row -- empty for Wind/Rain/Temp (each
      metric's own label lives in its .weather-section-heading directly
      above now, see addRainRow()'s own comment), just keeping this row's

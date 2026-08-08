@@ -496,7 +496,8 @@ function path3dHandleHover(evt) {
   // invented for this view.
   if (!best || bestDist > PROXIMITY_PX) { hideTooltip(); return; }
 
-  const profile = DATA.wind_profiles[state.hour] && DATA.wind_profiles[state.hour][best.model];
+  const timeProfiles = profilesForTime(state.timeMinutes);
+  const profile = timeProfiles && timeProfiles[best.model];
   // modelNameHTML() (app.js) -- same per-model-colored name every other
   // tooltip on the page uses now, not a plain bolded --accent-blue name.
   const rows = [`<div class="tt-row">${modelNameHTML(best.model)}</div>`,
@@ -635,7 +636,7 @@ function renderDescent3D() {
     return;
   }
 
-  const pathsRaw = descentPathsFor(state.hour, state.deploy, altFt);
+  const pathsRaw = descentPathsFor(state.timeMinutes, state.deploy, altFt);
   const paths = pathsRaw.filter(p => state.selectedModels === null || state.selectedModels.has(p.model));
 
   if (!paths.length) {
@@ -862,7 +863,13 @@ function path3dDrawPath(p, toScreen, altFt) {
   // (Open-Meteo has no gust field at any other height/pressure level,
   // confirmed live -- see splash_zones.py's build_wind_data() comment).
   // Not fabricated anywhere else along the path.
-  const groundCell = DATA.wind && DATA.wind.hourly[state.hour] ? DATA.wind.hourly[state.hour][p.model] : null;
+  // DATA.wind.hourly is already dense (every real hour in
+  // config.RAIN_WINDOW_START/END_HOUR_LOCAL, not just the weather panel's
+  // sparse SPLASH_HOURS_LOCAL checkpoints -- see build_wind_data()'s own
+  // comment), so nearest-hour rounding is a real hour's own reading here,
+  // not an approximation across a wide gap.
+  const groundHour = nearestPublishedHour(state.timeMinutes);
+  const groundCell = DATA.wind && DATA.wind.hourly[groundHour] ? DATA.wind.hourly[groundHour][p.model] : null;
   const gust = groundCell ? groundCell.gust : null;
   if (gust !== null && gust !== undefined) {
     const r = 3 + Math.min(10, gust / 3);

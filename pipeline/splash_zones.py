@@ -192,6 +192,18 @@ def simulate(profile: list[tuple[float, float, float]], apogee_ft: float, phases
 def compute_splash_points(df: pd.DataFrame, target_date: date, site_id: str = "hutto") -> pd.DataFrame:
     """Wind capture -> drift points for every hour/model/altitude/deploy/rate combo.
 
+    Two independent callers: build_viewer_data() (this function's `pts` is
+    used only to size base_view_box there, see its own comment) and
+    build_points_history() (where this IS the real data source for History
+    mode's ladder-altitude view, points_by_key -- unlike byAltitude/byTime,
+    which always resimulate client-side off DATA.wind_profiles via zoneFor(),
+    History's ladder view stays server-precomputed across every capture date
+    at once, so it needs its own real per-hour grid here, not just a
+    viewbox estimate). Looped over WIND_PROFILE_HOURS_LOCAL (hourly) for
+    both reasons -- more real hours for History's own slider ticks, and a
+    same-or-larger viewbox estimate for the other caller (never smaller,
+    so it's a safe widening for that use too).
+
     Models with fewer than 2 usable profile points at a given hour (i.e. beyond
     that model's forecast horizon at this lead time) are skipped for that
     hour -- this is the mechanism that naturally drops short-horizon models
@@ -213,7 +225,7 @@ def compute_splash_points(df: pd.DataFrame, target_date: date, site_id: str = "h
     levels_mb = config.levels_mb_for_site(site_id)
     altitudes = config.altitudes_for_site(site_id)
     all_points = []
-    for h in config.SPLASH_HOURS_LOCAL:
+    for h in config.WIND_PROFILE_HOURS_LOCAL:
         hdt = datetime.combine(target_date, dtime(h, 0))
         for m in config.LIVE_PROFILE_MODELS:
             profile = build_profile_single(df, hdt, m, site_elev_ft, levels_mb)
@@ -233,12 +245,14 @@ def compute_splash_points(df: pd.DataFrame, target_date: date, site_id: str = "h
 
 # --- "Actual" splash points from HRRR's own analysis ------------------------
 # pull_historical.py's pull_actual() fetches HRRR's f00 (its own data-
-# assimilation output, not a forecast) at every SPLASH_HOURS_LOCAL hour for
-# a past target date -- the closest this project has to "what actually
-# happened" absent real post-flight GPS (see build_points_history()'s
-# comment on points_history.json's actuals key). The two functions below
-# turn that raw pull into the same kind of simulated point every forecast
-# gets, so the viewer's star marker has something real to show.
+# assimilation output, not a forecast) at every WIND_PROFILE_HOURS_LOCAL
+# hour (hourly, 9am-5pm -- widened from the sparser SPLASH_HOURS_LOCAL so
+# this has the same real hourly density the live pull publishes) for a past
+# target date -- the closest this project has to "what actually happened"
+# absent real post-flight GPS (see build_points_history()'s comment on
+# points_history.json's actuals key). The two functions below turn that raw
+# pull into the same kind of simulated point every forecast gets, so the
+# viewer's star marker has something real to show.
 MPS_TO_MPH = 2.236936
 
 
@@ -276,12 +290,12 @@ def compute_actual_points(site_id: str, target_date: date) -> dict[str, dict]:
     site_elev_ft = config.elev_ft_for_site(site_id)
     altitudes = config.altitudes_for_site(site_id)
     actuals = {}
-    for h in config.SPLASH_HOURS_LOCAL:
+    for h in config.WIND_PROFILE_HOURS_LOCAL:
         # raw["valid_time"] is UTC-naive (straight from the GRIB2 files via
         # Herbie, which does no timezone conversion) -- NOT local like the
         # live pull's "valid_time_local" column build_profile_single() reads
-        # elsewhere. h is a local hour (config.SPLASH_HOURS_LOCAL), so it has
-        # to go through the same local->UTC conversion pull_historical.py's
+        # elsewhere. h is a local hour (config.WIND_PROFILE_HOURS_LOCAL), so
+        # it has to go through the same local->UTC conversion pull_historical.py's
         # target_valid_time() already does, or every lookup here would
         # silently match nothing.
         hdt_utc = datetime.combine(target_date, dtime(h, 0), tzinfo=_SITE_TZ).astimezone(timezone.utc).replace(tzinfo=None)
@@ -363,9 +377,16 @@ def build_viewer_data(df: pd.DataFrame, pts: pd.DataFrame, site_meta: dict, site
     # compute_splash_points() makes internally, just not fed into a drift
     # integration here. This is the entire per-hour/per-model dataset the
     # client needs to run simulateDrift() (app.js) for itself; everything
-    # else in this JSON is projection scaling and sim constants.
+    # else in this JSON is projection scaling and sim constants. Looped over
+    # WIND_PROFILE_HOURS_LOCAL (hourly, 9am-5pm), not the sparser
+    # SPLASH_HOURS_LOCAL -- df already has every hour's data in memory (the
+    # live pull fetches full hourly Open-Meteo data regardless), so this is
+    # free: no extra network cost, just publishing more of what's already
+    # been fetched. The map's time slider (app.js) can then land exactly on
+    # any of these hours with no blending, only estimating the remaining
+    # sub-hour gaps.
     wind_profiles = {}
-    for h in config.SPLASH_HOURS_LOCAL:
+    for h in config.WIND_PROFILE_HOURS_LOCAL:
         hdt = datetime.combine(target_date, dtime(h, 0))
         hour_profiles = {}
         for m in config.LIVE_PROFILE_MODELS:
@@ -375,7 +396,15 @@ def build_viewer_data(df: pd.DataFrame, pts: pd.DataFrame, site_meta: dict, site
             hour_profiles[m] = [[round(a), round(s, 2), round(d, 2)] for a, s, d in profile]
         if hour_profiles:
             wind_profiles[h] = hour_profiles
-    hours = sorted(wind_profiles.keys())
+    # "hours" stays the weather panel's own sparse, curated set (its Clouds/
+    # Rain/Wind/Temp columns are built directly off SPLASH_HOURS_LOCAL
+    # elsewhere in this module, unaffected by the wider loop above) --
+    # deliberately NOT every key wind_profiles now has, or that table would
+    # balloon to 9 columns. "wind_hours" is the real, dense set the map's
+    # slider actually reads for its tick marks/blend-bracketing -- see
+    # profilesForTime() (app.js).
+    hours = sorted(h for h in wind_profiles.keys() if h in config.SPLASH_HOURS_LOCAL)
+    wind_hours = sorted(wind_profiles.keys())
 
     # ft_to_px() above is linear in x_ft/y_ft (no rotation/shear -- just an
     # equirectangular-ish local scale), so it reduces to px = site_px.x +
@@ -394,7 +423,8 @@ def build_viewer_data(df: pd.DataFrame, pts: pd.DataFrame, site_meta: dict, site
     px_per_ft_y = (ft_to_m / m_per_deg_lat) / (lat_n - lat_s) * img_h
 
     output = {
-        "hours": [int(h) for h in hours], "deploys": deploys, "altitudes": [int(a) for a in altitudes],
+        "hours": [int(h) for h in hours], "wind_hours": [int(h) for h in wind_hours],
+        "deploys": deploys, "altitudes": [int(a) for a in altitudes],
         "site_px": list(ft_to_px(0, 0)), "image_view_box": [0, 0, img_w, img_h],
         "wide_view_box": wide_view_box,
         "ft_to_px_scale": {"x": round(px_per_ft_x, 6), "y": round(px_per_ft_y, 6)},
@@ -499,7 +529,7 @@ def build_rain_data(df: pd.DataFrame, target_date: date) -> dict:
     """{"prior_day": {model: cell}, "morning": {model: cell}, "hourly":
     {hour: {model: cell}}} where cell = {"amount": inches|None, "chance":
     pct|None}. hourly covers every hour from config.RAIN_WINDOW_START through
-    END_HOUR_LOCAL inclusive (8am-4pm, 9 hours) -- finer-grained than
+    END_HOUR_LOCAL inclusive (8am-5pm, 10 hours) -- finer-grained than
     pull_live_forecast.py's own CLI rain_stats() (which pairs hours into 4
     buckets around the SPLASH_HOURS_LOCAL sample points for a terse log
     line); the timeline wants each raw hour for a real "when does it clear
@@ -568,7 +598,7 @@ def build_temperature_data(df: pd.DataFrame, target_date: date) -> dict:
     """{"prior_day": {model: cell}, "morning": {model: cell}, "hourly":
     {hour: {model: cell}}} where cell = {"actual": degF|None, "apparent":
     degF|None}. hourly covers config.RAIN_WINDOW_START through
-    END_HOUR_LOCAL inclusive (8am-4pm, 9 hours), same time axis as
+    END_HOUR_LOCAL inclusive (8am-5pm, 10 hours), same time axis as
     build_rain_data() so the two timelines line up. Each hourly cell is that
     single hour's own reading, not an aggregate (matches rain's hourly cells
     being one hour's own value).
@@ -778,16 +808,22 @@ def build_points_history(target_dir: Path, target_date: date, site_id: str = "hu
         frames.append(pts)
 
         # This capture's own wind profile, same shape build_viewer_data()
-        # publishes for the live/latest capture -- lets the viewer simulate
-        # a History point at any altitude client-side (the "Specific
-        # altitude" override), not just the discrete ladder
-        # compute_splash_points() precomputed into points_by_key above.
-        # Cheap to rebuild every run: captured_*.parquet is tens of KB, and
-        # the payload win from the client-side migration was in the
-        # *precomputed point grid*, not the raw profile -- so there's no
-        # separate staleness check to maintain here, unlike pts above.
+        # publishes for the live/latest capture (including the same
+        # WIND_PROFILE_HOURS_LOCAL hourly density, not the sparser
+        # SPLASH_HOURS_LOCAL) -- lets the viewer simulate a History point at
+        # any altitude AND any time client-side (the map's time slider), not
+        # just the discrete ladder compute_splash_points() precomputed into
+        # points_by_key above. Cheap to rebuild every run: captured_*.parquet
+        # is tens of KB, and the payload win from the client-side migration
+        # was in the *precomputed point grid*, not the raw profile -- so
+        # there's no separate staleness check to maintain here, unlike pts
+        # above. A capture pulled before WIND_PROFILE_HOURS_LOCAL existed
+        # still only has its original sparse hours here (this loop can't
+        # invent data captured_*.parquet never had) -- the client's slider
+        # falls back gracefully per-capture, same as it does for the current
+        # live capture.
         hour_profiles: dict[str, dict] = {}
-        for h in config.SPLASH_HOURS_LOCAL:
+        for h in config.WIND_PROFILE_HOURS_LOCAL:
             hdt = datetime.combine(target_date, dtime(h, 0))
             model_profiles = {}
             for m in config.LIVE_PROFILE_MODELS:
@@ -952,7 +988,7 @@ def run(target_date: date, site_id: str = "hutto") -> None:
           f"site/{history_path.relative_to(config.SITE_DIR)}")
 
     print("models contributing per hour (of the 6 in config.LIVE_PROFILE_MODELS):")
-    for h in config.SPLASH_HOURS_LOCAL:
+    for h in config.WIND_PROFILE_HOURS_LOCAL:
         models_present = sorted(pts[pts["hour"] == h]["model"].unique())
         missing = [m for m in config.LIVE_PROFILE_MODELS if m not in models_present]
         print(f"  {h}:00 -- {len(models_present)}/6 present: {models_present}" + (f"  (missing: {missing})" if missing else ""))
