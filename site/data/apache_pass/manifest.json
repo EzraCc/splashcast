@@ -1,7 +1,16 @@
 {
   "site_id": "apache_pass",
-  "generated_at": "2026-08-05T19:41:44",
+  "generated_at": "2026-08-08T02:22:04",
   "launch_dates": [
+    {
+      "target_date": "2026-08-15",
+      "capture_date": "2026-08-08",
+      "lead_days": 7,
+      "label": "Sat, Aug 15 (T-7)",
+      "data_path": "data/apache_pass/live/2026-08-15/splash_zones_captured_2026-08-08.json",
+      "history_path": "data/apache_pass/live/2026-08-15/points_history.json",
+      "real_flight_paths": []
+    },
     {
       "target_date": "2026-08-01",
       "capture_date": "2026-07-31",
