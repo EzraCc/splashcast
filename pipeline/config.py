@@ -261,17 +261,19 @@ LIVE_PROFILE_MODELS = ["gfs", "ecmwf", "gem", "icon", "arpege", "hrrr"]
 LAUNCH_WINDOW_START_HOUR_LOCAL = 8
 LAUNCH_WINDOW_END_HOUR_LOCAL = 17
 
-# Rain-specific window for pull_live_forecast.py's rain_stats() -- 8am-4pm,
+# Rain-specific window for pull_live_forecast.py's rain_stats() -- 8am-5pm,
 # a deliberately separate figure from LAUNCH_WINDOW_START/END_HOUR_LOCAL
 # above (which also drives wind/cloud/temp/CAPE stats and day-over-day drift
 # tracking in delta_report() -- not touched here, so changing this doesn't
 # ripple into those). Starts at setup (8am, same reasoning as the general
-# window) but ends at 4pm rather than 5pm: matches SPLASH_HOURS_LOCAL's own
-# 8am-4pm checkpoint span below (briefly 8am-5pm mid-session while
-# SPLASH_HOURS_LOCAL had a 5pm checkpoint -- reverted alongside it, see that
-# constant's own comment).
+# window) and now ends at 5pm again, matching SPLASH_HOURS_LOCAL's own
+# 9am-5pm checkpoint span below -- this and that constant have swapped
+# between 8am-4pm/9am-5pm a couple of times this same session chasing the
+# right checkpoint parity; see SPLASH_HOURS_LOCAL's own comment for the
+# final call (odd-hour majors, 8am kept reachable as a real minor tick
+# rather than promoted to its own column).
 RAIN_WINDOW_START_HOUR_LOCAL = 8
-RAIN_WINDOW_END_HOUR_LOCAL = 16
+RAIN_WINDOW_END_HOUR_LOCAL = 17
 
 # Wind-agreement thresholds: a model's wind for a given hour/level is called
 # out separately (not folded into the consensus group) unless mutually within
@@ -378,14 +380,13 @@ def elev_ft_for_site(site_id: str) -> float:
 # deliberately sparse/curated so the table stays a handful of columns
 # regardless of how much raw hourly data is actually available (see
 # WIND_PROFILE_HOURS_LOCAL below for the denser figure the slider's minor
-# ticks and blend-bracketing use instead). 8am-4pm at a clean 2-hour step,
-# not 9/11/13/15/17 (this constant's own value earlier the same session) --
-# per direction, so the slider's own major-tick columns land on round,
-# evenly-spaced clock times; the old 9/11/13/15 set becomes the slider's
-# minor ticks instead (each sitting exactly at the boundary between two
-# major-tick columns, i.e. still real, still exact, just not a labeled
-# weather-panel column of its own).
-SPLASH_HOURS_LOCAL = [8, 10, 12, 14, 16]
+# ticks and blend-bracketing use instead). Back to 9/11/13/15/17 (this
+# constant's own value earlier the same session briefly moved to
+# 8/10/12/14/16, then reverted) -- per direction, the leftmost weather-panel
+# column/major slider tick should always be 9am specifically, with 8am kept
+# reachable as a real slider minor tick (see WIND_PROFILE_HOURS_LOCAL
+# below), not promoted to its own labeled column.
+SPLASH_HOURS_LOCAL = [9, 11, 13, 15, 17]
 
 # Every hour the map's time-of-day slider can land on exactly (no blend
 # needed) -- distinct from SPLASH_HOURS_LOCAL above, which stays sparse on
@@ -398,8 +399,10 @@ SPLASH_HOURS_LOCAL = [8, 10, 12, 14, 16]
 # blend_wind_profiles/circular_blend, the same technique the client ports
 # for the slider) across whatever gap remains between two of these, at most
 # 1 hour instead of the old up-to-2-hour gap between SPLASH_HOURS_LOCAL
-# checkpoints.
-WIND_PROFILE_HOURS_LOCAL = list(range(8, 17))
+# checkpoints. Starts at 8am, one hour earlier than SPLASH_HOURS_LOCAL's own
+# first checkpoint -- per direction, 8am should still be a real, selectable
+# point on the slider (a minor tick), just not its own major/labeled column.
+WIND_PROFILE_HOURS_LOCAL = list(range(8, 18))
 
 # --- Per-site apogee altitude list ------------------------------------------
 # ALTITUDES_MASTER_FT tapers in density by band rather than using one even

@@ -407,9 +407,25 @@
     transform: translateX(-50%); background: var(--text-muted); border-radius: 1px; opacity: 0.6;
   }
   .weather-time-tick.major::before { width: 2px; height: 9px; top: 5px; opacity: 1; background: var(--text-secondary); }
+  /* pointer-events:none -- this is a CHILD of .weather-time-tick, but
+     renders BELOW that button's own 18px box (top:18px here is relative to
+     the tick, not the slider), so it hit-tests as its own separate element
+     wherever its text actually renders, not clipped to the tick's box.
+     Without this, pressing ANYWHERE on the visible "11am"/"1pm" text --
+     often 30-40px wide, several times the tick's own narrow dash -- bubbles
+     into the tick's own pointerdown (stopPropagation()) and instantly jumps
+     there instead of starting a drag. Reported directly as "finicky"/
+     unreliable dragging compared to the 3D altitude slider; confirmed this
+     was the real cause -- that slider has no visible on-track text labels
+     competing for the same space, only this one does. Falls through to the
+     slider's own general pointerdown/drag-start handler now; the tick's own
+     narrow hit-box (its 18px button, not this label) is still a real,
+     precise "jump to this exact hour" target on its own dash.
+  */
   .weather-time-tick-label {
     position: absolute; left: 50%; top: 18px; transform: translateX(-50%);
     font-size: var(--fs-xs); color: var(--text-secondary); white-space: nowrap;
+    pointer-events: none;
   }
   .weather-time-thumb {
     position: absolute; top: 18px; width: 18px; height: 18px; border-radius: 50%;

@@ -191,7 +191,7 @@ let timeBaseColor = localStorage.getItem(TIME_COLOR_STORAGE_KEY) || DEFAULT_TIME
 // on every load (same ALT_COLORS_HEX/DATA.altitudes pattern), which is the
 // only version that actually matters -- this literal only exists so nothing
 // reads `undefined` in the brief window before the first dataset loads.
-let TIME_COLORS_HEX = computeSequentialRamp(timeBaseColor, [8, 10, 12, 14, 16]);
+let TIME_COLORS_HEX = computeSequentialRamp(timeBaseColor, [9, 11, 13, 15, 17]);
 
 // Satellite vs. road/street map layer -- some sites (e.g. Hutto) have no real
 // terrain features to avoid, where satellite imagery is closer to visual
