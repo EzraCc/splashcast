@@ -518,6 +518,18 @@ function buildToggle(containerId, options, labels, stateKey, onChange) {
 }
 
 function setMode(mode) {
+  // 3D only supports byAltitude (renderDescent3D() shows an empty-state
+  // hint for the other two, see its own guard) -- switching to byTime/
+  // History while in 3D left the map area genuinely blank instead of
+  // falling back to something useful. Auto-switch to 2D instead, per
+  // direction, rather than leaving that half-broken until 3D supports
+  // every mode. Deliberately one-way -- going back to byAltitude does NOT
+  // auto-restore 3D, so a user isn't surprised by the view silently
+  // switching back on its own; they'd click 3D again if they want it.
+  if (mode !== 'byAltitude' && mapViewMode === '3d') {
+    mapViewMode = '2d';
+    updateMapViewModeUI();
+  }
   state.mode = mode;
   // fresh start on every mode switch -- a hidden zone-group carrying over from
   // the other mode's isolation state would reference a data-alt/data-hour that
@@ -1694,18 +1706,33 @@ function isCloudHot(vals) {
 // WIND_SPEED_NOGO_MPH, Tripoli USC §9-3 / NAR Safety Code item 9's 20mph
 // sustained-wind limit) is the ONE real cited number here, same standing as
 // DATA.cloud_nogo_pct above. The two breakpoints below it are NOT codified
-// -- just a graduated "getting worse" read (calm/breezy/gusty) chosen for
+// -- just a graduated "getting worse" read (calm/breezy/strong) chosen for
 // display, kept out of config.py specifically so nothing there implies a
-// citation that doesn't exist. Tiered off the cell's WORST (max) reported
-// sustained speed, same "peak is the safety-relevant read" precedent
-// build_temperature_data() established pipeline-side.
+// citation that doesn't exist. "Strong," not "gusty" -- this scale grades
+// SUSTAINED speed, a real separate field from gust (shown alongside it,
+// the "G##" in each cell); "gusty" would misstate which number the color
+// is actually about.
 const WIND_TIER_YELLOW_MIN_MPH = 8;
 const WIND_TIER_ORANGE_MIN_MPH = 16;
-function windTier(mph) {
-  if (mph === null) return null;
-  if (mph >= DATA.wind_nogo_mph) return 'red';
-  if (mph >= WIND_TIER_ORANGE_MIN_MPH) return 'orange';
-  if (mph >= WIND_TIER_YELLOW_MIN_MPH) return 'yellow';
+// Same majority-vote principle isCloudHot() already uses for clouds,
+// generalized across all three breakpoints instead of one -- per direction,
+// with a real example (hearne 08/08 15:00: GFS alone at 10mph, every other
+// model at 7mph or below): a cell's tier used to be set by the single
+// WORST (max) model's own number, so one outlier could shift the whole
+// cell's color on its own. Now it's the most severe threshold at least
+// half of the models that actually reported this hour agree it's reached
+// -- a real majority (half or more, same >= 0.5 isCloudHot() uses) moves
+// it, one disagreeing model does not. Checked from the most severe
+// threshold down: each successive check is strictly harder to clear, so a
+// red-majority is automatically also an orange-majority and a
+// yellow-majority, and falling through is correct without re-deriving
+// that relationship explicitly.
+function windTierMajority(speeds) {
+  if (!speeds.length) return null;
+  const atOrAboveMajority = mph => speeds.filter(s => s >= mph).length / speeds.length >= 0.5;
+  if (atOrAboveMajority(DATA.wind_nogo_mph)) return 'red';
+  if (atOrAboveMajority(WIND_TIER_ORANGE_MIN_MPH)) return 'orange';
+  if (atOrAboveMajority(WIND_TIER_YELLOW_MIN_MPH)) return 'yellow';
   return 'green';
 }
 
@@ -2145,10 +2172,8 @@ function addTempRow(grid) {
 }
 
 // --- ground-level wind row -- see splash_zones.py's build_wind_data() and
-// windTier()'s own comment above. The one row here with a real go/no-go
-// line drawn in it (DATA.wind_nogo_mph, the red tier), so it leads the
-// panel (see renderWeatherPanel()) rather than sitting after clouds/rain/
-// temp by default inertia.
+// windTierMajority()'s own comment above. The one row here with a real
+// go/no-go line drawn in it (DATA.wind_nogo_mph, the red tier).
 //
 // Bar height is scaled against a fixed ceiling (WIND_BAR_MAX_MPH), not a
 // per-capture range like temperature's -- unlike temperature, wind speed
@@ -2161,6 +2186,36 @@ function addTempRow(grid) {
 // identically regardless of how far past 20 it actually is.
 const WIND_BAR_MAX_MPH = 30;
 
+// Small rotated arrow glyph pointing DOWNWIND -- the direction the wind
+// (and therefore the rocket) is actually traveling TOWARD -- replacing a
+// raw "@ 149°" number, per direction. Deliberately NOT the traditional
+// physical weather-vane convention (a real vane's pointer faces where the
+// wind comes FROM); confirmed as a real, reported point of confusion: a
+// vane pointing SW for a "from-207°" reading looked contradictory next to
+// a rocket path actually drifting NE, since most readers expect an arrow
+// to show where something is going, not where it came from. Rotating by
+// direction+180 instead points the arrow the same way the rocket
+// actually drifts, matching the path on screen instead of fighting the
+// reader's own intuition about what an arrow means.
+// The displayed number (title=) shows that SAME downwind bearing now too,
+// not Open-Meteo's own raw "from" convention -- per direction, the number,
+// the arrow, and the actual rocket path all need to agree with each other,
+// not each tell a technically-correct but differently-conventioned story.
+// DATA.wind's own stored `direction` field is untouched (still the raw
+// Open-Meteo "from" bearing simulateDrift()/interpWind() correctly expect
+// as their input) -- only this display-layer conversion changed, nothing
+// simulation-facing.
+// CSS rotate() is clockwise for positive degrees, same as compass bearings
+// (measured clockwise from north) -- an arrow drawn pointing up (0deg =
+// north, unrotated) rotated by direction+180 lands exactly on the
+// downwind compass bearing with no extra math needed. Shared by app.js's
+// own wind row tooltip and descent3d.js's point tooltip -- one glyph/
+// rotation convention to get right, not two.
+function windVaneHTML(directionDeg) {
+  const towardRounded = Math.round((directionDeg + 180) % 360);
+  return `<span class="wind-vane" style="transform:rotate(${towardRounded}deg)" title="${towardRounded}&deg;">&uarr;</span>`;
+}
+
 function addWindCell(grid, cellData, tooltipLabel) {
   const cell = document.createElement('div');
 
@@ -2170,10 +2225,15 @@ function addWindCell(grid, cellData, tooltipLabel) {
 
   const vals = weatherPanelModels().map(m => ({ m, ...(cellData[m] || { speed: null, gust: null, direction: null }) }));
   const real = vals.filter(x => x.speed !== null);
-  // Tiered off the worst (max) reported sustained speed in this cell -- see
-  // windTier()'s own comment for why max, not mean.
-  const tier = real.length ? windTier(Math.max(...real.map(x => x.speed))) : null;
-  cell.className = 'cloud-cell wind-cell' + (tier === 'red' ? ' cell-hot' : tier ? ' tier-' + tier : '');
+  // Majority vote across models, not the single worst (max) one -- see
+  // windTierMajority()'s own comment.
+  const tier = windTierMajority(real.map(x => x.speed));
+  // cell-hot alongside tier-red (not instead of it) on the red tier -- still
+  // gets the shared ⚠ badge (a real cited limit deserves that same signal
+  // clouds' own hot cells use), but tier-red's own, more specific color
+  // rule (below) wins over cell-hot's shared amber background/baseline --
+  // see that rule's own comment for why amber stopped being reused here.
+  cell.className = 'cloud-cell wind-cell' + (tier ? ' tier-' + tier : '') + (tier === 'red' ? ' cell-hot' : '');
 
   if (real.length) {
     const nums = real.map(x => x.speed);
@@ -2211,7 +2271,7 @@ function addWindCell(grid, cellData, tooltipLabel) {
     const rows = vals.map(({ m, speed, gust, direction }) => {
       const isHigh = speed !== null && speed >= DATA.wind_nogo_mph;
       const text = speed === null ? 'no data'
-        : `${Math.round(speed)} mph${gust !== null ? ` (G${Math.round(gust)})` : ''}${direction !== null ? ` @ ${Math.round(direction)}°` : ''}`;
+        : `${Math.round(speed)} mph${gust !== null ? ` (G${Math.round(gust)})` : ''}${direction !== null ? ` ${windVaneHTML(direction)}` : ''}`;
       return `<div class="tt-model-name"><b>${MODEL_LABELS[m] || m.toUpperCase()}</b></div>` +
         `<div class="tt-model-pct${isHigh ? ' pct-high' : ''}">${text}</div>`;
     }).join('');
@@ -2225,19 +2285,31 @@ function addWindCell(grid, cellData, tooltipLabel) {
   grid.appendChild(cell);
 }
 
+// Full-width heading, same treatment as Clouds/Rain/Temp's own
+// addCloudSectionHeading()/addRainSectionHeading()/addTempSectionHeading()
+// -- per direction. No extra per-section control here (unlike Clouds' "Show
+// all altitudes" or Temp's actual/feels-like toggle), just the label.
+function addWindSectionHeading(grid) {
+  const heading = document.createElement('div');
+  heading.className = 'weather-section-heading';
+  heading.textContent = '💨 Wind';
+  grid.appendChild(heading);
+}
+
 function addWindRow(grid) {
+  // Empty -- own label lives on addWindSectionHeading() above now, same
+  // convention addRainRow()/addTempRow() already use.
+  const lab = document.createElement('div');
+  lab.className = 'weather-row-label';
+  grid.appendChild(lab);
   // No Prior day/Morning data -- per direction, wind doesn't carry forward
   // the way rain (day-before precip context) or temp (morning trend) do; a
   // launch-day go/no-go call only cares about wind during the actual launch
   // window. Real blank cells for those two columns (not a wide spanning
-  // label) -- per direction, so the row keeps the same 7-column rhythm
-  // every other row has and the 4 hourly cells read as obviously lined up
-  // under their own header buttons, not just placed correctly by
-  // coincidence of the grid math.
-  const lab = document.createElement('div');
-  lab.className = 'weather-row-label';
-  lab.innerHTML = '💨 Wind';
-  grid.appendChild(lab);
+  // label) so the row keeps the same 7-column rhythm every other row has
+  // and the 4 hourly cells read as obviously lined up under their own
+  // header buttons, not just placed correctly by coincidence of the grid
+  // math.
   grid.appendChild(document.createElement('div'));
   grid.appendChild(document.createElement('div'));
 
@@ -2321,7 +2393,6 @@ function renderWeatherPanel() {
   container.appendChild(grid);
 
   addWeatherHeaderRow(grid);
-  if (DATA.wind) addWindRow(grid);
   if (DATA.clouds) {
     const shownLayers = cloudAltitudesExpanded ? CLOUD_LAYERS.map(l => l.key) : relevantLayers;
     const shownLabel = shownLayers.map(k => CLOUD_LAYERS.find(l => l.key === k).label).join(' + ');
@@ -2339,6 +2410,10 @@ function renderWeatherPanel() {
     rowsToShow.forEach(l => addCloudRow(grid, l.key, l.label, l.sub, cloudAltitudesExpanded && !relevantLayers.includes(l.key)));
   }
   if (DATA.rain) { addRainSectionHeading(grid); addRainRow(grid); }
+  // Right after Rain, not leading the panel any more -- per direction, it's
+  // a ground-level reading (10m AGL), grouped with Rain/Temp's own
+  // near-surface readings rather than sitting apart at the top.
+  if (DATA.wind) { addWindSectionHeading(grid); addWindRow(grid); }
   if (DATA.temperature) { addTempSectionHeading(grid); addTempRow(grid); }
 
   // No per-model color key here -- the main "Model" legend in the side
@@ -2347,10 +2422,16 @@ function renderWeatherPanel() {
   if (DATA.wind) {
     const legend = document.createElement('div');
     legend.className = 'cloud-legend wind-legend';
+    // Labeled now (previously just 4 bare dots with no heading at all) --
+    // and "gusty" renamed to "strong": this scale grades SUSTAINED speed
+    // (the wind row's own numbers), not gust, which is a real separate
+    // field shown alongside it (the "G##" in each cell) -- "gusty" here
+    // was actively misleading about which number the color refers to.
     legend.innerHTML =
+      '<span class="wind-legend-label">Sustained wind:</span>' +
       '<span class="wind-tier-key"><span class="wind-tier-dot tier-green"></span>&le;7 calm</span>' +
       '<span class="wind-tier-key"><span class="wind-tier-dot tier-yellow"></span>8-15 breezy</span>' +
-      '<span class="wind-tier-key"><span class="wind-tier-dot tier-orange"></span>16-19 gusty</span>' +
+      '<span class="wind-tier-key"><span class="wind-tier-dot tier-orange"></span>16-19 strong</span>' +
       `<span class="wind-tier-key"><span class="wind-tier-dot tier-red"></span>&ge;${DATA.wind_nogo_mph} no-go (Tripoli §9-3)</span>`;
     container.appendChild(legend);
   }
@@ -3655,21 +3736,31 @@ function drawZone(zone, color, hour) {
     // solo -- either path lands here the same way): exactly one point now
     // (one model, one active rate -- see buildRateEditor()'s own comment),
     // so a filled hull isn't meaningful either. Draw the pad->point bearing
-    // as a line instead, colored by the zone (altitude or time, matching
-    // the multi-model view), and plot the point itself.
+    // as a line instead, and plot the point itself -- colored by the MODEL
+    // now, not the zone (altitude/time). Used to be zone-colored, back when
+    // shape meant nothing here (every point was a plain circle, so color
+    // was the only channel available at all); now that shape identifies
+    // model everywhere (see MODEL_SHAPES's own comment), a zone-colored fill
+    // under a model-specific shape sent two contradicting signals -- "this
+    // is GFS" (shape) filled with "this is the 9,000ft zone" (color).
+    // Reported directly as a real regression once shape started meaning
+    // something here. altitude/time still reads from the legend the user
+    // just isolated/pinned to get here, same as before -- only the point's
+    // own paint changed.
     const modelPoints = points;
     if (modelPoints.length > 0) {
+      const modelColor = MODEL_COLORS_HEX[modelPoints[0].model] || color;
       const [sx, sy] = ftToPx(0, 0); // the pad -- offset-aware, not DATA.site_px directly
       const line = document.createElementNS(ns, 'polyline');
       const linePts = [[sx, sy], ...modelPoints.map(p => ftToPx(p.x_ft, p.y_ft))];
       line.setAttribute('points', linePts.map(p => p.join(',')).join(' '));
       line.setAttribute('fill', 'none');
-      line.setAttribute('stroke', color);
+      line.setAttribute('stroke', modelColor);
       line.setAttribute('stroke-width', 3);
       line.setAttribute('stroke-opacity', '0.85');
       g.appendChild(line);
 
-      modelPoints.forEach(pt => drawPoint(g, pt, hour, zone.altitude, color));
+      modelPoints.forEach(pt => drawPoint(g, pt, hour, zone.altitude, modelColor));
     }
     svg.appendChild(g);
     return;

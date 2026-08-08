@@ -19,15 +19,21 @@
     --hot-bg:         #fbe9d0;
     --hot-border:     #c17a17;
     --hot-text:       #8a5a10;
-    /* Wind row's graduated tier scale (windTier() in app.js) -- red reuses
-       --hot-* above verbatim (it's the one tier with a real cited limit,
-       DATA.wind_nogo_mph); these three are the display-only tiers below it.
-       Per-cell backgrounds are derived from these via color-mix() at the
-       rule site (same technique .burn-ban-chip.banned already uses)
-       instead of a bg/border/text triple per tier per theme. */
+    /* Wind row's graduated tier scale (windTierMajority() in app.js).
+       --wind-red used to just reuse --hot-border verbatim (the cloud
+       panel's amber "models agree it's cloudy" flag) on the theory that
+       both are real cited limits worth the same visual standing -- but
+       amber (#c17a17) actually reads LESS alarming than --wind-orange
+       below it (#cc5500 is more saturated/red than #c17a17 is), so the
+       tier meant to be most severe looked less severe than the one below
+       it. Real, dedicated red now -- same danger-red the burn-ban chip
+       already uses (color-mix() technique also shared with that chip),
+       so there's still only two reds in the app, not three, just the
+       right one reused here instead of amber. */
     --wind-green:  #2e9e4f;
     --wind-yellow: #b58900;
     --wind-orange: #cc5500;
+    --wind-red:    #d1332c;
   }
   @media (prefers-color-scheme: dark) {
     :root:where(:not([data-theme="light"])) .viz-root {
@@ -49,6 +55,7 @@
       --wind-green:  #3fc16a;
       --wind-yellow: #e8c547;
       --wind-orange: #ff8a48;
+      --wind-red:    #ff8a80;
     }
   }
   :root[data-theme="dark"] .viz-root {
@@ -70,6 +77,7 @@
     --wind-green:  #3fc16a;
     --wind-yellow: #e8c547;
     --wind-orange: #ff8a48;
+    --wind-red:    #ff8a80;
   }
 
   * { box-sizing: border-box; }
@@ -345,15 +353,16 @@
     overflow-x: auto;
   }
   .weather-corner { grid-column: span 1; }
-  /* Full-width sub-heading, one per metric (Wind excepted -- its row label
-     doubles as its only heading, see .weather-row-label below) -- Clouds,
-     Rain, and Temp each get one (addCloudSectionHeading()/
+  /* Full-width sub-heading, one per metric -- Wind, Clouds, Rain, and Temp
+     each get one (addWindSectionHeading()/addCloudSectionHeading()/
      addRainSectionHeading()/addTempSectionHeading()), spanning every
      column via the same grid-column:1/-1 span .cloud-layer-divider also
      uses. A metric's own panel-specific control lives here too (Clouds'
      "Show all altitudes", Temp's Feels like/Actual toggle) rather than the
      whole panel's shared .weather-head -- these aren't whole-panel
-     controls. */
+     controls. Rendered in Clouds/Rain/Wind/Temp order (renderWeatherPanel())
+     -- Wind sits with Rain/Temp's own near-surface readings rather than
+     leading the panel, since it's a ground-level (10m AGL) reading too. */
   .weather-section-heading {
     grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between; gap: 8px;
     font-size: var(--fs-sm); color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.03em;
@@ -377,13 +386,11 @@
      children for column alignment (see .weather-grid's own comment) and
      can't be wrapped in an extra container without breaking that. */
   #weather-panel.hours-disabled .weather-hour-btn { opacity: 0.4; pointer-events: none; }
-  /* First-column cell for a data row -- empty for Rain/Temp (their own
-     label lives in the metric's .weather-section-heading directly above
-     now, see addRainRow()'s own comment), just keeping this row's first
-     grid column occupied like every other row's does. Wind is the one
-     exception still using this cell for its actual label ("💨 Wind") --
-     it's the panel's lead row with no heading of its own above it. Its own
-     Prior day/Morning cells are real empty divs (addWindRow()), not a
+  /* First-column cell for a data row -- empty for Wind/Rain/Temp (each
+     metric's own label lives in its .weather-section-heading directly
+     above now, see addRainRow()'s own comment), just keeping this row's
+     first grid column occupied like every other row's does. Wind's own
+     Prior day/Morning cells are real empty divs too (addWindRow()), not a
      wider span, so the row keeps the same 7-column rhythm every other row
      has. */
   .weather-row-label {
@@ -466,32 +473,42 @@
      overlap. */
   .cloud-cell.cell-hot::after { content: "\26A0"; position: absolute; right: -4px; top: 2px; z-index: 2; }
 
-  /* Wind row's 3 display-only tiers (windTier() in app.js) -- the 4th, red,
-     reuses .cloud-cell.cell-hot above verbatim (zero new CSS for the one
-     tier that's an actual cited limit, DATA.wind_nogo_mph -- keeps that ⚠
-     badge meaningful as one real signal, not stacked across tiers that
-     aren't codified). Background/baseline derived via color-mix() from the
-     3 tokens above rather than a hand-maintained bg/border/text triple per
-     tier per theme. */
+  /* Wind row's 4 tiers (windTierMajority() in app.js) -- background/baseline
+     derived via color-mix() from the 4 tokens above rather than a
+     hand-maintained bg/border/text triple per tier per theme. tier-red no
+     longer reuses .cloud-cell.cell-hot's own amber background (that made
+     the tier meant to be most severe look LESS alarming than orange below
+     it -- --hot-border, #c17a17, is a duller amber than --wind-orange's
+     own #cc5500, confirmed as a real, reported color-ordering bug) -- a
+     wind cell still gets .cell-hot too, for its shared ⚠ badge (see
+     addWindCell()'s own comment), but this more specific selector wins on
+     color by higher specificity (3 classes vs .cell-hot's 2), regardless
+     of source order. */
   .cloud-cell.wind-cell.tier-green  { background: color-mix(in srgb, var(--wind-green) 14%, var(--surface-1)); }
   .cloud-cell.wind-cell.tier-green  .baseline { background: var(--wind-green); }
   .cloud-cell.wind-cell.tier-yellow { background: color-mix(in srgb, var(--wind-yellow) 16%, var(--surface-1)); }
   .cloud-cell.wind-cell.tier-yellow .baseline { background: var(--wind-yellow); }
   .cloud-cell.wind-cell.tier-orange { background: color-mix(in srgb, var(--wind-orange) 18%, var(--surface-1)); }
   .cloud-cell.wind-cell.tier-orange .baseline { background: var(--wind-orange); }
+  .cloud-cell.wind-cell.tier-red    { background: color-mix(in srgb, var(--wind-red) 20%, var(--surface-1)); }
+  .cloud-cell.wind-cell.tier-red    .baseline { background: var(--wind-red); }
 
   .cloud-legend { margin-top: 12px; padding-top: 9px; border-top: 1px solid var(--border); }
-  /* Wind legend key -- 4 small dots (one per tier), the only place the
-     tier scale is explained (unlike clouds' single ⚠ flag, which is
+  /* Wind legend key -- a label (previously missing entirely -- confirmed
+     as a real point of confusion once this row moved next to Rain/Temp
+     instead of leading the panel, since nothing here says what these 4
+     dots even describe) plus 4 small dots (one per tier), the only place
+     the tier scale is explained (unlike clouds' single ⚠ flag, which is
      explained in-place by its own cell tooltip -- see addCloudRow()'s own
      comment -- so it no longer gets a standalone legend row at all). */
-  .wind-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; }
+  .wind-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; }
+  .wind-legend-label { font-size: var(--fs-xs); color: var(--text-muted); font-weight: 600; }
   .wind-tier-key { display: flex; align-items: center; gap: 5px; font-size: var(--fs-xs); color: var(--text-muted); }
   .wind-tier-dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
   .wind-tier-dot.tier-green  { background: var(--wind-green); }
   .wind-tier-dot.tier-yellow { background: var(--wind-yellow); }
   .wind-tier-dot.tier-orange { background: var(--wind-orange); }
-  .wind-tier-dot.tier-red    { background: var(--hot-border); }
+  .wind-tier-dot.tier-red    { background: var(--wind-red); }
 
   /* Temp's actual/feels-like toggle -- lives in Temp's own full-width
      .weather-section-heading now (addTempSectionHeading()), same as
@@ -971,6 +988,12 @@
      name in the footer below, same --hot-text used for the cell's own
      "pop" state so the two read as the same signal. */
   .tooltip .tt-model-pct.pct-high { font-weight: 700; color: var(--hot-text); }
+  /* Wind direction arrow (windVaneHTML(), app.js) -- inline-block so the
+     rotate() transform has a real box to pivot, explicit transform-origin
+     since the glyph's own em-box isn't perfectly square across fonts (a
+     center guess would drift the pivot slightly off actual center). Points
+     INTO the wind (real weather-vane convention), unrotated = due north. */
+  .wind-vane { display: inline-block; transform-origin: 50% 50%; font-weight: 700; }
   .tooltip .tt-cloud-footer { margin-top: var(--sp-2); padding-top: var(--sp-2); border-top: 1px solid var(--border, #dedcd6); display: flex; align-items: center; }
   /* Rain-cell hover: model|chance|amount, same right-aligned-numbers idea as
      the cloud grid above but a 3rd column -- probability and amount are

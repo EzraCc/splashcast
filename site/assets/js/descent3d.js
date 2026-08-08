@@ -501,7 +501,9 @@ function path3dHandleHover(evt) {
     `<div class="tt-row">${Math.round(best.alt_ft).toLocaleString()} ft AGL</div>`];
   if (profile) {
     const [spdMph, drc] = interpWind(profile, best.alt_ft);
-    rows.push(`<div class="tt-row">${Math.round(spdMph)} mph @ ${Math.round(drc)}&deg;</div>`);
+    // windVaneHTML() (app.js) -- same rotated-arrow-into-the-wind glyph the
+    // 2D weather panel's own wind tooltip uses, not a raw degree number.
+    rows.push(`<div class="tt-row">${Math.round(spdMph)} mph ${windVaneHTML(drc)}</div>`);
   }
   rows.push(`<div class="tt-row" style="color:var(--text-muted);">${Math.round(best.x_ft)} ft E, ${Math.round(best.y_ft)} ft N of pad</div>`);
   tooltip.innerHTML = rows.join('');
