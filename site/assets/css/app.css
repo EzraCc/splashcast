@@ -698,8 +698,14 @@
      Slow, view presets, Map toggle) never run underneath the overlay
      above -- confirmed needed at desktop widths where all three toggle
      groups fit on one line and would otherwise reach past 10px of the
-     right edge. */
-  .descent3d-header-controls { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: var(--sp-4); padding-right: 70px; }
+     right edge. padding-left is the same idea for the upper-left overlay
+     stack (#layer-toggle/#burn-ban-chip, moved into .map-view-wrap
+     2026-08-09 -- reported missing from 3D entirely) -- sized for
+     #layer-toggle's own two-button width ("Satellite"/"Road", the wider
+     of the two stacked elements) plus #burn-ban-chip's own capped
+     max-width (see that rule's own comment) covering its worst case too,
+     confirmed via a real rendered measurement, not just estimated. */
+  .descent3d-header-controls { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: var(--sp-4); padding-right: 70px; padding-left: 245px; }
   .descent3d-view-toggle { flex-shrink: 0; }
   .descent3d-empty-hint { font-size: var(--fs-sm); color: var(--text-muted); padding: 20px 0; text-align: center; }
   /* Canvas on the left, altitude control on the right -- matches the main
@@ -816,6 +822,12 @@
     padding: 5px 10px; border-radius: 999px; border: 1px solid var(--border);
     background: var(--surface-1); color: var(--text-secondary);
     box-shadow: 0 1px 4px rgba(0,0,0,0.15);
+    /* Capped, not left to grow with an arbitrarily long county name (an
+       active ban's own text runs "Burn ban active -- <County>") --
+       .descent3d-header-controls' own padding-left is sized against this
+       exact number, so a long name has to ellipsize rather than push past
+       it and land on that row's own buttons. */
+    max-width: 220px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     /* Hover/click reveals when this was checked and against which county
        (renderBanStatus()'s tooltip) regardless of clear/banned state. */
     cursor: pointer;
@@ -1146,6 +1158,26 @@
     background: var(--text-muted); opacity: 0.55; transform-origin: 50% 100%;
     transform: translateX(-50%) rotate(0deg); pointer-events: none;
   }
+  /* Numeric magnitude readout, collapsed-dial only -- requested directly:
+     the thumb's own distance from center already encodes this, but that's
+     a hard visual judgment at 56px, harder than reading the thumb's rough
+     compass direction. Always an UPPER corner (left or right, toggled via
+     .rail-dial-angle-label.right, set in JS from the heading's own sign --
+     see updateRailDialUI()'s own comment) -- never lower, so it can't ever
+     collide with #rail-dial-wind-ray's own bottom-anchored line either. */
+  .rail-dial-angle-label {
+    /* Inset well past the circle's own visible edge, not just the square
+       bounding box's corner (top:3px/left:4px read as sitting right on
+       the ring's curve, reported directly) -- 8px clears it with real
+       breathing room at this size. */
+    position: absolute; top: 8px; left: 8px; font-size: 9px; font-weight: 700;
+    color: var(--text-primary); pointer-events: none; line-height: 1;
+  }
+  .rail-dial-angle-label.right { left: auto; right: 8px; }
+  /* The real Angle input right there already covers this once expanded --
+     no reason to duplicate it, and the bigger 160px dial has real room for
+     the thumb's own position to read clearly regardless. */
+  .rail-angle-control.expanded .rail-dial-angle-label { display: none; }
   .rail-dial-thumb {
     position: absolute; left: 50%; top: 50%; width: 12px; height: 12px; border-radius: 50%;
     background: var(--accent); border: 2px solid var(--surface-1); transform: translate(-50%, -50%);
@@ -1303,6 +1335,26 @@
       grid-template-columns: 1fr;
       grid-template-areas: "map" "side" "notes" "accuracy";
     }
+    /* .descent3d-header-controls' desktop padding-left/right (reserving
+       horizontal room beside the #layer-toggle/#burn-ban-chip stack and
+       #map-view-toggle) doesn't scale down -- confirmed directly, a narrow
+       phone has so little width left after both reservations that the row
+       wraps into a squeezed mess, its own last button landing UNDER the
+       2D/3D toggle instead of clearing it. Below this width, push the row
+       BELOW both overlay stacks instead of squeezing beside them -- 85px
+       clears #burn-ban-chip's own bottom edge (top:48px + ~27px tall) plus
+       a small buffer, #map-view-toggle's own height is comfortably under
+       that already. Full width freed back up since there's nothing left
+       to dodge horizontally once it's below them.
+       padding-top, NOT margin-top -- this element is .descent3d-frame's
+       own first in-flow child with nothing (no border/padding) separating
+       them, so a margin-top here collapses straight through into the
+       parent's own position instead of creating space inside it -- caught
+       directly (computed style showed margin-top:85px applied, but the
+       element's own screen position hadn't moved at all; the whole frame
+       had shifted down instead, taking the still-unmoved-relative-to-it
+       header row along with it). Padding never collapses like this. */
+    .descent3d-header-controls { padding-left: 0; padding-right: 0; padding-top: 85px; }
   }
 
   /* --- launch-site picker: plain <select> --- */

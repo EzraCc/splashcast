@@ -1473,15 +1473,21 @@ function endPadDrag() { draggingPad = false; wrap.classList.remove('dragging-pad
 window.addEventListener('pointerup', endPadDrag);
 window.addEventListener('pointercancel', endPadDrag);
 
-// Any button living inside #map-wrap (zoom controls, the layer toggle below)
-// silently stops responding to clicks without this: wrap's own pointerdown
-// handler (setPointerCapture() + drag tracking, above) has no evt.target
-// check, so a pointerdown on a child button bubbles up and gets captured by
-// wrap before the browser's click synthesis on the button completes. Same
-// fix the pad marker uses (stopPropagation() on its own pointerdown) --
-// applied here at the container level so every button inside inherits it
-// without needing its own listener. Any *new* button added inside #map-wrap
-// needs to be covered by this selector or the same bug recurs.
+// Any button living inside #map-wrap (zoom controls) silently stops
+// responding to clicks without this: wrap's own pointerdown handler
+// (setPointerCapture() + drag tracking, above) has no evt.target check, so
+// a pointerdown on a child button bubbles up and gets captured by wrap
+// before the browser's click synthesis on the button completes. Same fix
+// the pad marker/rail-angle-control use (stopPropagation() on their own
+// pointerdown) -- applied here at the container level so every button
+// inside inherits it without needing its own listener. Any *new* button
+// added inside #map-wrap needs to be covered by this selector or the same
+// bug recurs.
+// .layer-toggle/.burn-ban-chip/.ban-overlay no longer live inside #map-wrap
+// (moved to .map-view-wrap 2026-08-09 so they work in 3D too, same reason
+// #rail-angle-control moved there first) -- this guard is harmless but
+// genuinely unnecessary for them now, kept defensively rather than removed
+// on the assumption the DOM structure never moves again.
 document.querySelectorAll('.zoom-btns, .layer-toggle, .burn-ban-chip, .ban-overlay').forEach(el => {
   el.addEventListener('pointerdown', evt => evt.stopPropagation());
 });
@@ -1642,6 +1648,7 @@ const railAngleControl = document.getElementById('rail-angle-control');
 const railDial = document.getElementById('rail-dial');
 const railDialWindRay = document.getElementById('rail-dial-wind-ray');
 const railDialThumb = document.getElementById('rail-dial-thumb');
+const railDialAngleLabel = document.getElementById('rail-dial-angle-label');
 const railHeadingInput = document.getElementById('rail-heading-input');
 const railAngleInput = document.getElementById('rail-angle-input');
 const railHeadingResetBtn = document.getElementById('rail-heading-reset');
@@ -1705,6 +1712,18 @@ function updateRailDialUI() {
   railDialThumb.style.left = `${50 + frac * 50 * Math.sin(headingRad)}%`;
   railDialThumb.style.top = `${50 - frac * 50 * Math.cos(headingRad)}%`;
   railDial.setAttribute('aria-valuetext', `${Math.round(headingDeg)}° heading, ${railAngleDeg}° off vertical`);
+  // Numeric magnitude, collapsed-dial only (hidden once expanded, see CSS)
+  // -- requested directly, the thumb's own distance from center is hard to
+  // read precisely at 56px. Always an upper corner, left or right chosen
+  // from the SAME sin(headingRad) sign the thumb's own left% above uses --
+  // sin>=0 means the thumb sits right-of-center (or dead center), so the
+  // label goes left; sin<0 means the thumb's on the left, so the label
+  // goes right. Opposite side from the thumb, always, regardless of
+  // magnitude -- e.g. 45deg (thumb upper-right) puts this upper-left; a
+  // heading anywhere in 270-359deg (thumb somewhere on the left half)
+  // puts it upper-right.
+  railDialAngleLabel.textContent = `${railAngleDeg}°`;
+  railDialAngleLabel.classList.toggle('right', Math.sin(headingRad) < 0);
   // Inputs reflect the LIVE-TRACKED heading even when not explicitly chosen
   // -- per direction, showing the actual default value being used (not a
   // blank/placeholder) so a user can see exactly what "not set" currently

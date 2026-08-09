@@ -92,14 +92,27 @@ writeLocalBustedTag('<link rel="stylesheet" href="', 'assets/css/app.css', '">')
            same mechanism weatherPanelCollapsed etc. already use.
            .map-view-wrap (position:relative) wraps both frames so the 2D/3D
            toggle can sit as one absolutely-positioned overlay in the
-           upper-right regardless of which frame is currently showing --
-           same corner-overlay convention .layer-toggle already uses on the
-           opposite (upper-left) corner of the 2D map itself. -->
+           upper-right regardless of which frame is currently showing.
+           #layer-toggle/#burn-ban-chip/#ban-overlay (below) use the same
+           convention on the upper-left -- moved here from inside
+           .map-wrap 2026-08-09 (reported missing from 3D entirely; same
+           fix #rail-angle-control already got, moved from .map-wrap to
+           here for the same reason -- these all need to work in both
+           modes, not just 2D). .descent3d-header-controls carries a
+           matching padding-left reserving room for these two so they
+           don't land on top of that row's own buttons -- see its own CSS
+           comment (same padding-right trick already reserved for this
+           toggle on the right). -->
       <div class="map-view-wrap">
         <div class="map-view-toggle toggle-btns" id="map-view-toggle">
           <button type="button" data-mode="2d" class="active">2D</button>
           <button type="button" data-mode="3d" title="Each model's actual predicted descent path, in 3D">3D</button>
         </div>
+        <div class="layer-toggle" id="layer-toggle">
+          <button data-layer="sat" title="Satellite imagery">Satellite</button>
+          <button data-layer="road" title="Roads/labels only -- less visual noise on sites with no real terrain features to avoid">Road</button>
+        </div>
+        <div class="burn-ban-chip" id="burn-ban-chip" style="display:none;"></div>
       <div class="map-frame" id="map-frame-2d">
         <div class="map-wrap" id="map-wrap">
           <svg id="overlay"></svg>
@@ -109,18 +122,7 @@ writeLocalBustedTag('<link rel="stylesheet" href="', 'assets/css/app.css', '">')
             <button id="zoom-reset" title="Reset view">&#8635;</button>
             <button id="copy-view-btn" title="Copy a link to this exact pan/zoom (for setting this site's default view)">&#9678;</button>
           </div>
-          <div class="layer-toggle" id="layer-toggle">
-            <button data-layer="sat" title="Satellite imagery">Satellite</button>
-            <button data-layer="road" title="Roads/labels only -- less visual noise on sites with no real terrain features to avoid">Road</button>
-          </div>
           <div class="zoom-hint">drag or pinch to pan/zoom</div>
-          <div class="burn-ban-chip" id="burn-ban-chip" style="display:none;"></div>
-          <div class="ban-overlay" id="ban-overlay">
-            <div class="flame">&#128293;</div>
-            <div class="headline" id="ban-headline"></div>
-            <div class="sub">Most clubs stand down during an active ban. If yours has a real exception, dismiss this to keep working &mdash; it'll shrink to a badge, not disappear.</div>
-            <button class="dismiss" id="ban-dismiss" type="button">Dismiss</button>
-          </div>
         </div>
       </div>
 
@@ -162,6 +164,19 @@ writeLocalBustedTag('<link rel="stylesheet" href="', 'assets/css/app.css', '">')
         </div>
       </div>
 
+      <!-- Also moved here from inside .map-wrap -- an active burn ban is
+           unmissable-by-design (see this element's own CSS comment), which
+           should mean blocking the WHOLE map area including 3D's own
+           header controls, not just the canvas underneath them. inset:0
+           on .map-view-wrap covers whichever frame is showing correctly
+           either way, no per-mode sizing needed. -->
+      <div class="ban-overlay" id="ban-overlay">
+        <div class="flame">&#128293;</div>
+        <div class="headline" id="ban-headline"></div>
+        <div class="sub">Most clubs stand down during an active ban. If yours has a real exception, dismiss this to keep working &mdash; it'll shrink to a badge, not disappear.</div>
+        <button class="dismiss" id="ban-dismiss" type="button">Dismiss</button>
+      </div>
+
       <!-- Lives in .map-view-wrap (shared by both frames), not inside
            .map-frame -- per direction, the rail angle affects both the 2D
            hull and the 3D descent path (railShiftFt() is already threaded
@@ -184,6 +199,14 @@ writeLocalBustedTag('<link rel="stylesheet" href="', 'assets/css/app.css', '">')
         <div id="rail-dial" class="rail-dial" tabindex="0" role="slider" aria-label="Weathercocking angle (heading and magnitude, not a physical rail tilt) -- click to see readouts" aria-valuemin="0" aria-valuemax="25">
           <div id="rail-dial-safety-ring" class="rail-dial-safety-ring" title="20&deg; -- the safety code's rail-tilt limit. This dial can go past it because it models overall weathercocking drift, not a physically tilted rail; see the note below."></div>
           <div id="rail-dial-wind-ray" class="rail-dial-wind-ray"></div>
+          <!-- Collapsed-only numeric readout of the magnitude (the thumb's
+               OWN distance-from-center already encodes this visually, but
+               that's a hard judgment to make precisely at 56px -- see this
+               element's own JS-side comment for why a number, and why the
+               heading, not the magnitude, decides which corner it sits in).
+               Hidden once expanded (see CSS) -- the real Angle input right
+               there already covers this exactly, no need to duplicate it. -->
+          <div id="rail-dial-angle-label" class="rail-dial-angle-label"></div>
           <div id="rail-dial-thumb" class="rail-dial-thumb"></div>
         </div>
         <div class="rail-angle-panel" id="rail-angle-panel">
