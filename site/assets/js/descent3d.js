@@ -676,10 +676,18 @@ function path3dDrawScene(paths, altFt) {
   // post-hoc screen-space nudge, so it's a real shift of the world, not a
   // cosmetic one -- the origin marker and ground-plane image both move
   // with it, same as the 2D map's own pad crosshair does.
+  //
+  // railShiftFt(pt.alt_ft) (app.js) is the same rail-heading/angle shift
+  // the 2D map applies per-altitude via ftToPxShifted() -- grows with
+  // altitude, so it's evaluated per-point here (not once at apogee) to
+  // match the 2D view's own per-altitude treatment exactly. At alt_ft=0
+  // it's always {0,0}, so the pad/ground-plane origin (toScreen(...,0))
+  // is naturally unaffected without any special-casing.
   let maxXY = 1;
   const maxZ = Math.max(1, altFt);
   paths.forEach(p => p.path.forEach(pt => {
-    maxXY = Math.max(maxXY, Math.abs(pt.x_ft + padOffsetFt.x), Math.abs(pt.y_ft + padOffsetFt.y));
+    const shift = railShiftFt(pt.alt_ft);
+    maxXY = Math.max(maxXY, Math.abs(pt.x_ft + padOffsetFt.x + shift.x), Math.abs(pt.y_ft + padOffsetFt.y + shift.y));
   }));
   const maxX = maxXY, maxY = maxXY;
 
@@ -733,7 +741,8 @@ function path3dDrawScene(paths, altFt) {
   const radius = Math.min(rect.width, rect.height) * 0.34 * path3dZoom;
 
   function toScreen(xFt, yFt, zFt) {
-    const r = path3dRotate((xFt + padOffsetFt.x) / scaleFt, (yFt + padOffsetFt.y) / scaleFt, zFt / scaleFt);
+    const shift = railShiftFt(zFt);
+    const r = path3dRotate((xFt + padOffsetFt.x + shift.x) / scaleFt, (yFt + padOffsetFt.y + shift.y) / scaleFt, zFt / scaleFt);
     return [cx + r.sx * radius, cy - r.sy * radius, r.depth];
   }
 

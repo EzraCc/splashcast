@@ -306,13 +306,26 @@ function rateNameMatching(fps) {
 let state = null;
 
 // Deliberately NOT part of `state` / freshState() -- state resets on every
-// date/site switch by design (see initFromData()), but a boost-angle the
-// user dialed in is a standing preference about how they want the buffer
-// drawn, not a "which zone am I looking at" selection, so it should survive
-// switching dates the way currentSiteId does. null until the first dataset
-// loads, then initialized from that dataset's boost_angle_deg and left alone
-// by every subsequent switch.
-let boostAngleDeg = null;
+// date/site switch by design (see initFromData()), but a rail angle the
+// user dialed in is a standing preference about how they want the apogee
+// shift drawn, not a "which zone am I looking at" selection, so it should
+// survive switching dates the way currentSiteId does. null until the first
+// dataset loads, then initialized to 0 (the magnitude only -- heading is
+// handled separately below) and left alone by every subsequent switch --
+// see initFromData()'s own comment on why 0, not a nonzero seed. Same
+// standing-preference treatment the old single boostAngleDeg control had;
+// this replaces it (see railShiftFt()'s own comment for the redesign this
+// is part of -- a directional apogee shift instead of an omnidirectional
+// buffer band).
+let railAngleDeg = null;
+// UNLIKE railAngleDeg above, this is NOT a cached/resolved value -- it's
+// the user's own explicit override ONLY, null whenever they haven't
+// touched the compass dial (or arrived via a link with no ?railheading=).
+// Per direction, the un-chosen default should live-track the current
+// ground wind direction (recomputed every render, not cached and
+// invalidated) rather than being resolved once like railAngleDeg's
+// magnitude -- see effectiveRailHeadingDeg().
+let railHeadingDeg = null;
 
 // Permalink support: site/date/mode/hour/deploy/rate/alt/compare read from
 // the URL on first load, written back out on every render so a bookmark or a
@@ -347,11 +360,17 @@ let dateExplicitlyChosen = URL_PARAMS.has('date');
 // against by forcing them.
 let hourExplicitlyChosen = URL_PARAMS.has('t') || URL_PARAMS.has('hour');
 let deployExplicitlyChosen = URL_PARAMS.has('deploy');
-// Same treatment as hour/deploy above -- boostAngleDeg's default (10°,
+// Same treatment as hour/deploy above -- railAngleDeg's default (10°,
 // below) reproduces identically on any later visit, so it only goes in the
-// URL once the slider's actually been touched (initFromData()'s own read of
-// this flag) or arrived via a link that already had ?boost= on it.
-let boostAngleExplicitlyChosen = URL_PARAMS.has('boost');
+// URL once the dial's magnitude has actually been touched (initFromData()'s
+// own read of this flag) or arrived via a link that already had ?railangle=
+// on it. Heading gets its own, separate flag -- its default isn't a fixed
+// constant like the magnitude's, it live-tracks the current ground wind
+// (see railHeadingDeg's own declaration), so it needs to distinguish "no
+// heading chosen yet, keep tracking wind" from "user picked a heading" the
+// same way, just independently of the magnitude.
+let railAngleExplicitlyChosen = URL_PARAMS.has('railangle');
+let railHeadingExplicitlyChosen = URL_PARAMS.has('railheading');
 // pad needs DATA.site_lat/site_lon (to convert the URL's GPS coordinate
 // back to a ft offset) which isn't available until initFromData() runs, so
 // unlike the flags above this can't just be read into a plain boolean here
@@ -398,7 +417,7 @@ function freshState() {
     // pattern instead of every 2D zone doubling into two rate-labeled point
     // sets). Changes which points exist, not just how they're drawn, so it
     // lives here rather than as a standing "what-if" global like
-    // boostAngleDeg. structuredClone, not a plain reference --
+    // railAngleDeg. structuredClone, not a plain reference --
     // DATA.descent_params.default_rates_fps must never be mutated (the Fast/
     // Slow preset buttons reset back to it, and rateName's divergence check
     // below compares against it).
@@ -1027,7 +1046,7 @@ document.getElementById('model-reset').addEventListener('click', () => {
 // the map cold -- matches descent3d.js's own single-active-rate pattern
 // instead). See state.rateFps/state.rateName's own declarations in
 // freshState() for why they live in `state` rather than as a standing
-// "what-if" global like boostAngleDeg.
+// "what-if" global like railAngleDeg.
 function buildRateEditor() {
   const presetToggle = document.getElementById('rate-preset-toggle');
   presetToggle.querySelectorAll('button').forEach(btn => {
@@ -1226,6 +1245,27 @@ function applyIsolation() {
 // --- pan / zoom (viewBox-based) ---
 const wrap = document.getElementById('map-wrap');
 const svg = document.getElementById('overlay');
+// Hand-tuned per-site default view (SVG viewBox: x,y,w,h -- same pixel-space
+// units the map's own ft_to_px_scale produces, not raw feet), one site at a
+// time via the map's own "copy view" button (see copyViewBtn below) --
+// BASE_VB's own auto-fit framing (the current zones' bounding box, grown by
+// a flat padding factor) doesn't always center on the real terrain/hazards
+// a launch director actually cares about as well as a human's own judgment
+// does. A site absent from this map falls back to BASE_VB as before (see
+// defaultViewBox()) -- nothing breaks for a site that hasn't been tuned yet.
+const SITE_DEFAULT_VIEWS = {
+  hutto: [581, 331, 2329.9, 2329.9],
+  apache_pass: [563.8, 381.1, 2266.9, 2266.9],
+  gunter: [-166.7, -289.3, 2736.6, 2736.6],
+  argonia: [3020.6, 3061.9, 3072.1, 3072.1],
+  sd_rocket_jockies: [519.5, 614.4, 1761.9, 1761.9],
+  seymour: [3052.8, 3118.9, 1723.6, 1723.6],
+  hearne: [265.8, 291.4, 1378.6, 1378.6],
+  tripoli_houston_south: [888.9, 761.4, 1117.9, 1117.9],
+};
+function defaultViewBox() {
+  return SITE_DEFAULT_VIEWS[currentSiteId] || BASE_VB;
+}
 // Assigned per-dataset in initFromData() (was a one-time const off the
 // embedded DATA blob; now DATA can change at runtime via the date selector).
 let BASE_VB, IMG_VB, view, MIN_SPAN, MAX_SPAN;
@@ -1439,13 +1479,51 @@ document.getElementById('zoom-out').addEventListener('click', () => {
   zoomAt(1.4, rect.left + rect.width / 2, rect.top + rect.height / 2);
 });
 document.getElementById('zoom-reset').addEventListener('click', () => {
-  // BASE_VB (what's actually relevant -- the current zones' own extent),
-  // not IMG_VB (the full raw detail image) -- same box the first paint
-  // itself now starts at, see viewInitialized's own comment. A user who
-  // explicitly wants the full wide image can still zoom out from here
-  // (MAX_SPAN allows past BASE_VB), this is just what "reset" resets to.
-  view = { x: BASE_VB[0], y: BASE_VB[1], w: BASE_VB[2], h: BASE_VB[3] };
+  // defaultViewBox() -- this site's own hand-tuned default if one's been
+  // set (SITE_DEFAULT_VIEWS), else BASE_VB (what's actually relevant -- the
+  // current zones' own extent), not IMG_VB (the full raw detail image) --
+  // same box the first paint itself now starts at, see viewInitialized's
+  // own comment. A user who explicitly wants the full wide image can still
+  // zoom out from here (MAX_SPAN allows past it), this is just what
+  // "reset" resets to.
+  const vb = defaultViewBox();
+  view = { x: vb[0], y: vb[1], w: vb[2], h: vb[3] };
   setViewBox();
+});
+
+// --- copy current pan/zoom as a link -- a hand-tuning tool, not the
+// general-purpose Copy Link button above (which deliberately excludes
+// pan/zoom, see its own file-top comment on "durable, what am I looking
+// at" choices vs. personal display state -- this isn't meant to become
+// part of ordinary shared launch-scenario links). Exists so a real
+// per-site default view can be set by eye and handed back as exact
+// numbers instead of guessed at from BASE_VB's own auto-fit framing.
+// `vb` isn't read by anything yet -- applying a site's chosen default is a
+// separate follow-up once real numbers come back for each site.
+const copyViewBtn = document.getElementById('copy-view-btn');
+copyViewBtn.addEventListener('click', () => {
+  const p = new URLSearchParams();
+  p.set('site', currentSiteId);
+  if (dateSelect.value) p.set('date', dateSelect.value);
+  // Rounded to 1 decimal -- these are SVG viewBox units (pixel-space, same
+  // as ft_to_px_scale's own output), not raw feet; a whole extra digit of
+  // precision here is meaningless for a hand-tuned default.
+  p.set('vb', [view.x, view.y, view.w, view.h].map(n => Math.round(n * 10) / 10).join(','));
+  const url = `${location.origin}${location.pathname}?${p.toString()}`;
+  const showCopied = () => {
+    // A checkmark, not the word "Copied!" the wider copy-link-btn shows --
+    // no room for text in this 30x30px square (see #copy-view-btn.copied's
+    // own CSS comment).
+    const original = copyViewBtn.innerHTML;
+    copyViewBtn.textContent = '✓';
+    copyViewBtn.classList.add('copied');
+    setTimeout(() => { copyViewBtn.innerHTML = original; copyViewBtn.classList.remove('copied'); }, 1500);
+  };
+  if (navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(url).then(showCopied).catch(() => window.prompt('Copy this view link:', url));
+  } else {
+    window.prompt('Copy this view link:', url);
+  }
 });
 
 const layerToggleEl = document.getElementById('layer-toggle');
@@ -1524,16 +1602,198 @@ copyLinkBtn.addEventListener('click', () => {
   }
 });
 
-// --- boost-angle slider: recomputes the buffer band client-side (see
-// computeBufferHullPx()) rather than reloading data -- boostAngleDeg is the
-// only thing that changes, everything it needs (raw points, ft_to_px_scale)
-// is already in the currently-loaded DATA. ---
-const boostAngleSlider = document.getElementById('boost-angle-slider');
-const boostAngleReadout = document.getElementById('boost-angle-readout');
-boostAngleSlider.addEventListener('input', () => {
-  boostAngleDeg = Number(boostAngleSlider.value);
-  boostAngleReadout.textContent = `${boostAngleDeg}°`;
-  boostAngleExplicitlyChosen = true; // render() -> applyIsolation() -> syncUrl() picks this up
+// --- rail angle: compass-dial widget (heading + magnitude) -----------------
+// Recomputes the shifted zone/points client-side (see railShiftFt()) rather
+// than reloading data -- railAngleDeg/railHeadingDeg are the only things
+// that change, everything else needed (raw points, ft_to_px_scale) is
+// already in the currently-loaded DATA. Same range the old single slider
+// had (0-25deg) -- not a new decision, just carried over.
+const RAIL_ANGLE_MAX_DEG = 25;
+const railAngleControl = document.getElementById('rail-angle-control');
+const railDial = document.getElementById('rail-dial');
+const railDialWindRay = document.getElementById('rail-dial-wind-ray');
+const railDialThumb = document.getElementById('rail-dial-thumb');
+const railHeadingInput = document.getElementById('rail-heading-input');
+const railAngleInput = document.getElementById('rail-angle-input');
+const railHeadingResetBtn = document.getElementById('rail-heading-reset');
+const railAngleResetBtn = document.getElementById('rail-angle-reset');
+const railWindReadout = document.getElementById('rail-wind-readout');
+
+// This whole control now lives inside .map-wrap (a corner overlay, like
+// .zoom-btns/.layer-toggle), which means every pointerdown inside it also
+// reaches #map-wrap's own pan handler and gets setPointerCapture()'d to
+// `wrap` -- same fix the pad marker/altitude ticks/color-picker popover
+// already need (see their own stopPropagation() calls). One delegated
+// listener on the container, not one per child (the dial, both inputs,
+// both reset buttons) -- captured pointer capture would otherwise reroute
+// the dial's own 'click' event to `wrap` instead of the dial that was
+// actually pressed, and would turn every dial drag into a map pan.
+railAngleControl.addEventListener('pointerdown', evt => evt.stopPropagation());
+
+// The readouts panel opens (not toggles) on any interaction with the dial
+// itself -- pointerdown/keydown/focus all ADD .expanded rather than
+// toggling it; a toggle here would make a second click-to-fine-tune
+// immediately close the panel that same press just opened. Closing is a
+// separate, single mechanism: click anywhere outside the whole control.
+// Note: the dial's own pointerdown handler (below, near
+// railDialFromClientXY()) also opens the panel on a first/collapsed press
+// -- not duplicated here, since checking classList synchronously inside
+// that one handler is what lets it tell "first press" (not yet expanded)
+// from "already open, this press should drag" apart.
+function openRailAnglePanel() { railAngleControl.classList.add('expanded'); }
+railDial.addEventListener('focus', openRailAnglePanel);
+document.addEventListener('click', evt => {
+  if (!railAngleControl.contains(evt.target)) railAngleControl.classList.remove('expanded');
+});
+
+// Single choke point for every way the dial's value can change (drag, typed
+// number, or a tick) -- always updates both the JS state and every piece of
+// UI that reflects it, so none of those call sites can drift out of sync
+// with each other. `commitHeading`/`commitAngle` default true -- false only
+// for the live-tracking case (see updateRailDialUI()) where headingDeg is
+// being displayed but shouldn't itself count as an explicit user choice.
+function setRailAngle(angleDeg, headingDeg, commitHeading = true, commitAngle = true) {
+  railAngleDeg = Math.max(0, Math.min(RAIL_ANGLE_MAX_DEG, Math.round(angleDeg)));
+  if (commitAngle) railAngleExplicitlyChosen = true;
+  if (commitHeading) {
+    railHeadingDeg = ((Math.round(headingDeg) % 360) + 360) % 360;
+    railHeadingExplicitlyChosen = true;
+  }
+  updateRailDialUI();
+  render();
+}
+
+function updateRailDialUI() {
+  const headingDeg = effectiveRailHeadingDeg();
+  const frac = railAngleDeg / RAIL_ANGLE_MAX_DEG;
+  const headingRad = headingDeg * Math.PI / 180;
+  // Same screen convention CSS rotate()/the wind vane already use elsewhere
+  // in this app -- 0deg = up = north, clockwise for positive degrees. `left`/
+  // `top` here are the thumb's own CENTER (unlike the time slider's edge-
+  // based math -- this widget is small/circular enough that a transform:
+  // translate(-50%,-50%) centering trick is simpler and in no danger of the
+  // bottom+transform combination bug documented on the 3D alt slider,
+  // since nothing here is ALSO using `bottom`).
+  railDialThumb.style.left = `${50 + frac * 50 * Math.sin(headingRad)}%`;
+  railDialThumb.style.top = `${50 - frac * 50 * Math.cos(headingRad)}%`;
+  railDial.setAttribute('aria-valuetext', `${Math.round(headingDeg)}° heading, ${railAngleDeg}° off vertical`);
+  // Inputs reflect the LIVE-TRACKED heading even when not explicitly chosen
+  // -- per direction, showing the actual default value being used (not a
+  // blank/placeholder) so a user can see exactly what "not set" currently
+  // resolves to before deciding whether to override it.
+  if (document.activeElement !== railHeadingInput) railHeadingInput.value = Math.round(headingDeg);
+  if (document.activeElement !== railAngleInput) railAngleInput.value = railAngleDeg;
+  railHeadingResetBtn.style.display = railHeadingExplicitlyChosen ? '' : 'none';
+  // Angle has no "live-tracked" default the way heading does (it's a flat
+  // 0) -- this button just means "you've moved this off 0, want it back?",
+  // shown by the same railAngleExplicitlyChosen flag drag/typing already
+  // set (see setRailAngle()).
+  railAngleResetBtn.style.display = railAngleExplicitlyChosen ? '' : 'none';
+  const wind = currentGroundWind();
+  // Reference ray -- always the REAL ground wind's own direction (not
+  // effectiveRailHeadingDeg(), which would just retrace the thumb whenever
+  // heading isn't explicitly chosen). Only useful once there's a rail
+  // angle worth aiming, i.e. once the user's touched the dial at all --
+  // hidden entirely with no wind data to reference.
+  if (wind) {
+    railDialWindRay.style.display = '';
+    railDialWindRay.style.transform = `translateX(-50%) rotate(${wind.directionDeg}deg)`;
+  } else {
+    railDialWindRay.style.display = 'none';
+  }
+  // Direction shown as a rotated arrow (same .wind-vane glyph/rotation
+  // convention windVaneHTML() uses elsewhere), not a bare "@ 185°" -- per
+  // direction, degrees alone don't read at a glance. Rotated by the RAW
+  // "from" bearing here (not +180 like windVaneHTML's downwind arrows) so
+  // it points the same way the dial's own thumb/ray do -- "drag the dial
+  // to match this arrow" has to mean the same rotation in both places.
+  const arrowRotation = wind ? Math.round(wind.directionDeg) : 0;
+  railWindReadout.innerHTML = wind
+    ? `Ground wind: ${Math.round(wind.speedMph)}mph <span class="wind-vane" style="transform:rotate(${arrowRotation}deg)" title="${arrowRotation}&deg;">&uarr;</span> ${compassDir(wind.directionDeg)}`
+    : 'No ground wind data for this hour';
+}
+
+function railDialFromClientXY(clientX, clientY) {
+  const rect = railDial.getBoundingClientRect();
+  const dx = clientX - (rect.left + rect.width / 2);
+  const dy = clientY - (rect.top + rect.height / 2);
+  const dist = Math.hypot(dx, dy);
+  const radius = rect.width / 2;
+  const angleDeg = Math.min(RAIL_ANGLE_MAX_DEG, (dist / radius) * RAIL_ANGLE_MAX_DEG);
+  // atan2(dx, -dy), not atan2(dy, dx) -- screen dy grows downward but a
+  // compass heading of 0deg (north) points up (negative dy); this is the
+  // same "clockwise from north, north=up" convention windVaneHTML()'s own
+  // CSS rotate() already uses, just derived from a drag position instead of
+  // applied to a fixed glyph.
+  const headingDeg = ((Math.atan2(dx, -dy) * 180 / Math.PI) + 360) % 360;
+  return { angleDeg, headingDeg };
+}
+
+// Collapsed, the dial is a 56px indicator, not a precision drag target --
+// a thumb press there is too easy to fat-finger past the intended angle,
+// especially on a phone. First press just opens/enlarges it (see
+// .rail-angle-control.expanded .rail-dial in app.css -- CSS grows the
+// same element to a real finger-sized target); dragging only takes effect
+// on a press that lands once it's already open, i.e. a deliberate second
+// touch, not the same gesture that opened it.
+railDial.addEventListener('pointerdown', evt => {
+  evt.preventDefault();
+  if (!railAngleControl.classList.contains('expanded')) {
+    openRailAnglePanel();
+    return;
+  }
+  railDial.setPointerCapture(evt.pointerId);
+  const move = e => {
+    const { angleDeg, headingDeg } = railDialFromClientXY(e.clientX, e.clientY);
+    setRailAngle(angleDeg, headingDeg);
+  };
+  const stop = () => {
+    document.removeEventListener('pointermove', move);
+    document.removeEventListener('pointerup', stop);
+  };
+  document.addEventListener('pointermove', move);
+  document.addEventListener('pointerup', stop);
+  move(evt);
+});
+railDial.addEventListener('keydown', evt => {
+  const step = { ArrowUp: 1, ArrowRight: 1, ArrowDown: -1, ArrowLeft: -1 }[evt.key];
+  if (step === undefined) return;
+  evt.preventDefault();
+  // Arrow keys nudge the MAGNITUDE only -- there's no natural "arrow key"
+  // mapping for a 2D heading that wouldn't be confusing (which arrow spins
+  // which way?); heading stays precisely settable via the typed input or
+  // the drag itself.
+  setRailAngle(railAngleDeg + step, effectiveRailHeadingDeg(), false);
+});
+
+// Typed numeric entry -- same "widget + typed number" pattern
+// alt-custom-input already establishes alongside the altitude ladder.
+railHeadingInput.addEventListener('change', () => {
+  const v = Number(railHeadingInput.value);
+  if (!Number.isNaN(v)) setRailAngle(railAngleDeg, v, true, false);
+  else updateRailDialUI(); // invalid entry -- just redraw back to the real value, no state change
+});
+railAngleInput.addEventListener('change', () => {
+  const v = Number(railAngleInput.value);
+  if (!Number.isNaN(v)) setRailAngle(v, effectiveRailHeadingDeg(), false, true);
+  else updateRailDialUI();
+});
+// Only clears the HEADING back to live-tracking -- the magnitude is a
+// separate standing preference (see railAngleDeg's own declaration),
+// untouched by this button.
+railHeadingResetBtn.addEventListener('click', () => {
+  railHeadingDeg = null;
+  railHeadingExplicitlyChosen = false;
+  updateRailDialUI();
+  render();
+});
+// Magnitude back to its own default (0, no shift) -- separate from the
+// heading reset above, since the two are independent standing preferences
+// (see railAngleDeg's own declaration).
+railAngleResetBtn.addEventListener('click', () => {
+  railAngleDeg = 0;
+  railAngleExplicitlyChosen = false;
+  updateRailDialUI();
   render();
 });
 
@@ -1546,7 +1806,6 @@ boostAngleSlider.addEventListener('input', () => {
 // waiver); time's is always the fixed 4 hours. ---
 const zoneColorPicker = document.getElementById('zone-color-picker');
 const zoneColorReset = document.getElementById('zone-color-reset');
-const bufferSwatch = document.getElementById('buffer-swatch');
 const timeColorPicker = document.getElementById('time-color-picker');
 const timeColorReset = document.getElementById('time-color-reset');
 zoneColorPicker.value = zoneBaseColor;
@@ -1556,8 +1815,6 @@ function applyZoneBaseColor(hex) {
   zoneBaseColor = hex;
   ALT_COLORS_HEX = computeSequentialRamp(zoneBaseColor, DATA ? DATA.altitudes : [1000, 3000, 5000, 7000, 9000]);
   zoneColorPicker.value = zoneBaseColor;
-  bufferSwatch.style.background = zoneBaseColor;
-  bufferSwatch.style.borderColor = zoneBaseColor;
   buildAltList();
   render();
 }
@@ -1569,14 +1826,6 @@ zoneColorReset.addEventListener('click', () => {
   localStorage.removeItem(ZONE_COLOR_STORAGE_KEY);
   applyZoneBaseColor(DEFAULT_ZONE_BASE_COLOR);
 });
-// Just the swatch here, not the full applyZoneBaseColor() -- DATA hasn't
-// loaded yet at this point in script execution, so buildAltList()/render()
-// would have nothing to draw. ALT_COLORS_HEX is already correct (computed
-// at module load above); the normal initFromData() -> render() flow below
-// recomputes it against the real per-site altitude list once data arrives.
-bufferSwatch.style.background = zoneBaseColor;
-bufferSwatch.style.borderColor = zoneBaseColor;
-
 function applyTimeBaseColor(hex) {
   timeBaseColor = hex;
   // DATA.hours, not a hardcoded literal -- see initFromData()'s own comment
@@ -3032,14 +3281,13 @@ function polyPoints(hull) { return hull.map(p => p.join(',')).join(' '); }
 const ns = 'http://www.w3.org/2000/svg';
 let renderedPoints = [];
 
-// --- client-side hull recompute (boost-angle buffer + core hull) ----------
-// Ported from pipeline/splash_zones.py's hull_of()/buffered_points()/
-// ft_to_px(). Both the buffer band and the core hull are recomputed here on
-// every render from each zone's raw x_ft/y_ft points (drawZone() does this,
-// not the server-baked core_hull_px/buffer_hull_px) -- needed for two
-// independent reasons: the boost-angle slider has to move the buffer live
+// --- client-side hull recompute (core hull, rail-shifted) ------------------
+// Ported from pipeline/splash_zones.py's hull_of()/ft_to_px(). The hull is
+// recomputed here on every render from each zone's raw x_ft/y_ft points
+// (drawZone() does this, not a server-baked core_hull_px) -- needed for two
+// independent reasons: the rail-angle dial has to move the shift live
 // rather than being locked to whatever angle that day's pull baked in, and
-// an edited rate has to actually recompute both hulls from the new points
+// an edited rate has to actually recompute the hull from the new points
 // rather than leaving a static outline around numbers that no longer match.
 
 // Convex hull via Andrew's monotone chain -- doesn't need to match scipy's
@@ -3062,17 +3310,6 @@ function convexHull(points) {
   }
   upper.pop(); lower.pop();
   return lower.concat(upper);
-}
-
-function bufferedPointsFt(pointsFt, radiusFt, n = 12) {
-  const out = [];
-  for (const [x, y] of pointsFt) {
-    for (let i = 0; i < n; i++) {
-      const theta = 2 * Math.PI * i / n;
-      out.push([x + radiusFt * Math.cos(theta), y + radiusFt * Math.sin(theta)]);
-    }
-  }
-  return out;
 }
 
 // --- client-side descent-drift simulation ----------------------------------
@@ -3422,8 +3659,9 @@ function simulateDriftPath(profile, apogeeFt, phases, siteElevFt, stepFt) {
 // Zone cache: `${hour}_${deploy}_${altitude}` -> {altitude, points}. Cleared
 // on dataset load and on a rate edit -- and on nothing else, deliberately:
 // x_ft/y_ft don't depend on padOffsetFt (applied later, in ftToPx()) or on
-// boostAngleDeg (applied later, in computeBufferHullPx()), so dragging the
-// pad or moving the boost slider stays a pure redraw with zero re-simulation.
+// railAngleDeg/railHeadingDeg (applied later, in railShiftFt()), so
+// dragging the pad or the rail-angle dial stays a pure redraw with zero
+// re-simulation.
 // Also why several legend hover handlers (model/hour) calling render() on
 // mouseenter/mouseleave don't re-simulate the whole grid on every mouse
 // movement -- a full grid computes once per (dataset, rate-setting), every
@@ -3573,11 +3811,11 @@ function historyPointsForAltitude(timeMinutes, deploy, altitudeFt) {
 // of exact placement, and it's generous enough for a real "set up on the
 // other side of the field" adjustment without modeling an actually
 // different site. Set per-dataset in initFromData(), not just on first
-// load like boostAngleDeg -- this is a physical fact about whichever site
+// load like railAngleDeg -- this is a physical fact about whichever site
 // is currently selected, not a standing user preference that should
 // survive a site switch unchanged.
 let MAX_PAD_MOVE_FT = 2000;
-// Not part of `state` -- like boostAngleDeg, this is a standing "what if"
+// Not part of `state` -- like railAngleDeg, this is a standing "what if"
 // exploration setting, not a "which zone am I looking at" selection. Reset
 // on site switch (selectSite()) since a different site's pad is a genuinely
 // different GPS point, but left alone across date switches within a site.
@@ -3604,16 +3842,104 @@ function ftToPxAbsolute(x_ft, y_ft) {
   ];
 }
 
-// Caller passes whichever points should currently count -- drawZone() passes
-// the model-filtered set so deselecting a model actually shrinks the
-// buffer, not the unfiltered zone.points (a static outline around a
-// filtered-down set of dots reads as broken, not as "the buffer means
-// something different").
-function computeBufferHullPx(zonePoints, boostAngleDeg, altitudeFt) {
-  const radiusFt = altitudeFt * Math.tan(boostAngleDeg * Math.PI / 180);
-  const ptsFt = zonePoints.map(p => [p.x_ft, p.y_ft]);
-  const hullFt = convexHull(bufferedPointsFt(ptsFt, radiusFt));
-  return hullFt.map(([x, y]) => ftToPx(x, y));
+// --- rail angle: directional apogee shift (replaces the old omnidirectional
+// buffer band, computeBufferHullPx()/bufferedPointsFt()) --------------------
+// Real weathercocking is directional, not a fog of uncertainty: with the
+// rail pointed straight up, a rocket still naturally curves INTO the wind
+// during boost due to aerodynamics alone (confirmed directly, not assumed --
+// "rail is straight up, rocket turns into the wind as it leaves the rail
+// due to wind"). The old buffer instead expanded every zone into a
+// symmetric ring in every direction ("it could land pretty much anywhere"),
+// which isn't what actually happens and hid the one interesting diagnostic
+// this could offer: a real flight's deviation NOT lining up with that day's
+// ground wind argues against weathercocking as the explanation (points at
+// the rocket/motor instead) -- not built as a feature here, but the reason
+// getting the heading right matters beyond just prettier output.
+//
+// RSO correction (leaning the rail to counter the expected weathercock) is
+// deliberately NOT modeled -- confirmed directly: "We don't need to model
+// that." This is purely the physical into-wind curve itself; adjusting away
+// from the default heading is the user's own exploration (an intentionally
+// angled rail, or testing a hypothesis about a real flight's deviation),
+// not something this tool infers.
+function circularMeanDeg(degrees) {
+  if (!degrees.length) return 0;
+  const sinSum = degrees.reduce((s, d) => s + Math.sin(d * Math.PI / 180), 0);
+  const cosSum = degrees.reduce((s, d) => s + Math.cos(d * Math.PI / 180), 0);
+  return ((Math.atan2(sinSum, cosSum) * 180 / Math.PI) + 360) % 360;
+}
+
+// {speedMph, directionDeg} averaged/circular-mean across every model
+// currently reporting real ground wind for the slider's current time --
+// null if this capture has no wind row at all, or no model has real data
+// for the nearest published hour (a rare gap, not the common case).
+// directionDeg is the SAME raw Open-Meteo "from" bearing DATA.wind's own
+// direction field already is (see windVaneHTML()'s own comment) -- not
+// flipped to a downwind display convention, since railShiftFt() below
+// needs the true "which way is the wind coming FROM" bearing to shift the
+// apogee INTO it, matching the confirmed physical convention directly.
+function currentGroundWind() {
+  if (!DATA.wind) return null;
+  const h = nearestPublishedHour(state.timeMinutes);
+  const cellData = DATA.wind.hourly[h];
+  if (!cellData) return null;
+  const real = weatherPanelModels().map(m => cellData[m]).filter(c => c && c.speed !== null && c.direction !== null);
+  if (!real.length) return null;
+  return {
+    speedMph: real.reduce((s, c) => s + c.speed, 0) / real.length,
+    directionDeg: circularMeanDeg(real.map(c => c.direction)),
+  };
+}
+
+// railHeadingDeg itself is ONLY ever the user's own explicit override (null
+// otherwise, see its own declaration) -- this is what every actual
+// consumer (railShiftFt, the dial's own drawn position, the permalink
+// builder) reads instead, so the un-chosen default is always freshly
+// computed from whatever DATA/state.timeMinutes currently are, never a
+// stale cached value that needs its own invalidation bookkeeping. Falls
+// back to due north (0deg, an arbitrary but harmless default -- shift
+// magnitude still defaults to a real, non-zero value even then) only when
+// there's no wind data at all to track, which is rare.
+function effectiveRailHeadingDeg() {
+  if (railHeadingDeg !== null) return railHeadingDeg;
+  const wind = currentGroundWind();
+  return wind ? wind.directionDeg : 0;
+}
+
+// Pure display-time translation, exactly like padOffsetFt already is (see
+// its own comment) -- NOT a re-simulation. Wind doesn't meaningfully vary
+// across the few-hundred-foot lateral offsets this angle range produces,
+// the same approximation that already justifies padOffsetFt not
+// triggering one either, so "simulate straight up, then rigidly translate
+// the result by the rail-tilt vector" is physically equivalent to actually
+// starting the integration off-center, without touching the sim/cache/
+// hit-testing code at all -- and composes for free with an active pad-
+// offset preview, since both are just added together downstream (see
+// ftToPxShifted() below).
+//
+// Direct sin/cos of the heading -- NOT the negated wind-PUSH convention
+// simulateDrift() uses for its own vector math (`u = -spd*sin(drc)`, wind
+// blowing FROM drc pushes the rocket toward drc+180). This is a different
+// calculation: the shift's own heading target IS "point toward this
+// compass bearing" directly, so no negation -- confirmed sign convention
+// directly: the apogee shifts INTO the wind (toward its own FROM bearing),
+// so effectiveRailHeadingDeg() (already the raw "from" bearing) is used
+// as-is.
+function railShiftFt(altitudeFt) {
+  const shiftFt = Math.max(0, altitudeFt) * Math.tan((railAngleDeg ?? 0) * Math.PI / 180);
+  const headingRad = effectiveRailHeadingDeg() * Math.PI / 180;
+  return { x: shiftFt * Math.sin(headingRad), y: shiftFt * Math.cos(headingRad) };
+}
+
+// ftToPx(), plus the rail-angle shift at this altitude -- the one call
+// every zone/point-drawing site should use instead of bare ftToPx() (see
+// drawPoint()/drawZone()'s own call sites). Real/absolute GPS points (a
+// real flight's own launch rail, apogee, landing) still go through
+// ftToPxAbsolute() below, untouched -- the rail-angle shift is a property
+// of the SIMULATED trajectory, not a real measurement.
+function ftToPxShifted(x_ft, y_ft, altitudeFt) {
+  const shift = railShiftFt(altitudeFt);
+  return ftToPx(x_ft + shift.x, y_ft + shift.y);
 }
 
 // --- History view: one splash point per model per capture date ------------
@@ -4003,12 +4329,13 @@ function renderHistory() {
 
   const activeCapture = state.isolatedCapture ?? state.pinnedCapture;
 
-  // Splash polygon for the hovered/pinned forecast age: same buffer+core
-  // hull treatment drawZone() uses for the main view, but built from that
-  // one capture date's points across the currently-selected models (same
-  // composable filtering the accuracy table already does) -- lets the
-  // actual star be read against "how big was the projected area that day,"
-  // not just its distance to each individual point.
+  // Splash polygon for the hovered/pinned forecast age: same core-hull
+  // treatment drawZone() uses for the main view (no separate buffer band
+  // any more -- see railShiftFt()'s own comment), built from that one
+  // capture date's own shifted points across the currently-selected models
+  // (same composable filtering the accuracy table already does) -- lets
+  // the actual star be read against "how big was the projected area that
+  // day," not just its distance to each individual point.
   if (activeCapture) {
     const dayPoints = rawPoints.filter(pt => {
       if (pt.capture_date !== activeCapture) return false;
@@ -4016,14 +4343,7 @@ function renderHistory() {
       return true;
     });
     if (dayPoints.length) {
-      const buf = document.createElementNS(ns, 'polygon');
-      buf.setAttribute('points', polyPoints(computeBufferHullPx(dayPoints, boostAngleDeg, altitude)));
-      buf.setAttribute('class', 'zone-buffer');
-      buf.setAttribute('fill', zoneBaseColor);
-      buf.setAttribute('fill-opacity', '0.30');
-      svg.appendChild(buf);
-
-      const corePx = convexHull(dayPoints.map(p => [p.x_ft, p.y_ft])).map(([x, y]) => ftToPx(x, y));
+      const corePx = convexHull(dayPoints.map(p => [p.x_ft, p.y_ft])).map(([x, y]) => ftToPxShifted(x, y, altitude));
       const core = document.createElementNS(ns, 'polygon');
       core.setAttribute('points', polyPoints(corePx));
       core.setAttribute('class', 'zone-core');
@@ -4041,7 +4361,7 @@ function renderHistory() {
     if (activeCapture) sorted = sorted.filter(pt => pt.capture_date === activeCapture);
     if (!sorted.length) return;
     const shape = MODEL_SHAPES[model] || 'circle';
-    const pxPts = sorted.map(p => ftToPx(p.x_ft, p.y_ft));
+    const pxPts = sorted.map(p => ftToPxShifted(p.x_ft, p.y_ft, altitude));
 
     if (pxPts.length > 1) {
       const line = document.createElementNS(ns, 'polyline');
@@ -4074,7 +4394,11 @@ function renderHistory() {
 
   projectionStarEl = null;
   if (actual) {
-    const [px, py] = ftToPx(actual.x_ft, actual.y_ft);
+    // Shifted like every other simulated point -- `actual` is the HRRR-
+    // analysis wind profile run through the same simulate() every model
+    // uses (see compute_actual_points()), not a real GPS measurement, so
+    // it gets the same rail-angle treatment as any other model's point.
+    const [px, py] = ftToPxShifted(actual.x_ft, actual.y_ft, altitude);
     projectionStarEl = drawMarker(svg, 'star', px, py, 13, PROJECTION_MARKER_COLOR, PROJECTION_MARKER_STROKE);
   }
 
@@ -4231,8 +4555,8 @@ function drawPoint(g, pt, hour, altitude, fillColor) {
   // change a baked pixel position would only ever be right when the pad
   // hasn't been dragged (see padOffsetFt); computing it fresh here is what
   // makes every rendered point actually move with the pad, same as the
-  // hulls/buffer (which already go through ftToPx() too).
-  const [px, py] = ftToPx(pt.x_ft, pt.y_ft);
+  // hulls (which already go through ftToPxShifted() too).
+  const [px, py] = ftToPxShifted(pt.x_ft, pt.y_ft, altitude);
   const rp = Object.assign({}, pt, { altitude, hour, px, py });
   renderedPoints.push(rp);
   // Shape = model now (see MODEL_SHAPES's comment), same signal History
@@ -4273,9 +4597,12 @@ function drawZone(zone, color, hour) {
     const modelPoints = points;
     if (modelPoints.length > 0) {
       const modelColor = MODEL_COLORS_HEX[modelPoints[0].model] || color;
-      const [sx, sy] = ftToPx(0, 0); // the pad -- offset-aware, not DATA.site_px directly
+      // The pad itself -- offset-aware (padOffsetFt), but NOT rail-shifted:
+      // the shift represents where the ROCKET ends up relative to a fixed
+      // rail base, not the rail base itself moving.
+      const [sx, sy] = ftToPx(0, 0);
       const line = document.createElementNS(ns, 'polyline');
-      const linePts = [[sx, sy], ...modelPoints.map(p => ftToPx(p.x_ft, p.y_ft))];
+      const linePts = [[sx, sy], ...modelPoints.map(p => ftToPxShifted(p.x_ft, p.y_ft, zone.altitude))];
       line.setAttribute('points', linePts.map(p => p.join(',')).join(' '));
       line.setAttribute('fill', 'none');
       line.setAttribute('stroke', modelColor);
@@ -4289,19 +4616,15 @@ function drawZone(zone, color, hour) {
     return;
   }
 
-  // Both hulls are recomputed from `points` -- `zone.points` itself is
+  // The hull is recomputed from `points` -- `zone.points` itself is
   // computed just-in-time by zoneFor() (see its own comment) from the
   // published wind profile at whatever rate the rate editor currently has
   // set -- there's no separate server-baked point set any more to fall
-  // back to.
-  const buf = document.createElementNS(ns, 'polygon');
-  buf.setAttribute('points', polyPoints(computeBufferHullPx(points, boostAngleDeg, zone.altitude)));
-  buf.setAttribute('class', 'zone-buffer');
-  buf.setAttribute('fill', color);
-  buf.setAttribute('fill-opacity', '0.30');
-  g.appendChild(buf);
-
-  const corePx = convexHull(points.map(p => [p.x_ft, p.y_ft])).map(([x, y]) => ftToPx(x, y));
+  // back to. No separate buffer polygon any more (see railShiftFt()'s own
+  // comment) -- the core hull itself is built from each point's own
+  // rail-shifted position instead of a symmetric band drawn around the
+  // unshifted points.
+  const corePx = convexHull(points.map(p => [p.x_ft, p.y_ft])).map(([x, y]) => ftToPxShifted(x, y, zone.altitude));
   const core = document.createElementNS(ns, 'polygon');
   core.setAttribute('points', polyPoints(corePx));
   core.setAttribute('class', 'zone-core');
@@ -4321,10 +4644,11 @@ function drawZone(zone, color, hour) {
 // pickers (personal display preferences already persisted via localStorage,
 // not part of a shareable launch scenario). `layer` is the exception among
 // the localStorage-backed prefs -- see mapLayer's own comment for why it's
-// also shareable. `date`/`t`/`deploy`/`boost` are further gated behind an
-// explicit user action each -- see
+// also shareable. `date`/`t`/`deploy`/`railangle`/`railheading` are further
+// gated behind an explicit user action each -- see
 // dateExplicitlyChosen/hourExplicitlyChosen/deployExplicitlyChosen/
-// boostAngleExplicitlyChosen's declarations for why.
+// railAngleExplicitlyChosen/railHeadingExplicitlyChosen's declarations for
+// why.
 function buildPermalinkParams(includeDate) {
   const p = new URLSearchParams();
   p.set('site', currentSiteId);
@@ -4336,7 +4660,13 @@ function buildPermalinkParams(includeDate) {
   // so an old shared permalink keeps working, just without that precision.
   if (hourExplicitlyChosen) p.set('t', formatTimeParam(state.timeMinutes));
   if (deployExplicitlyChosen) p.set('deploy', state.deploy);
-  if (boostAngleExplicitlyChosen) p.set('boost', boostAngleDeg);
+  if (railAngleExplicitlyChosen) p.set('railangle', railAngleDeg);
+  // Only the CHOSEN heading, never the live-tracked default -- a shared
+  // link should reproduce "the user picked this exact heading," not freeze
+  // in whatever the ground wind happened to be at the moment of sharing
+  // (a stale ?railheading= would silently stop tracking wind for whoever
+  // opens it later, the opposite of what an un-chosen heading means).
+  if (railHeadingExplicitlyChosen) p.set('railheading', railHeadingDeg);
   // Only emit when it's a real subset -- same "don't pin defaults into the
   // URL" convention as everywhere else here. buildModelLegend() always
   // resolves the sentinel/re-validates before this can run (it runs on
@@ -4398,17 +4728,20 @@ function syncUrl() {
 // SINGLE_DEPLOY_RATES_FPS) -- a user dialing in a slower rate client-side can
 // drift past that box. Grows (never shrinks -- a monotonic ceiling avoids the
 // zoom-out limit jittering as the selection changes) to whatever the
-// currently-drawn zones' buffer hulls actually reach, reassigned as a new
-// array each time (not mutated in place) so a fresh DATA.base_view_box on
-// the next dataset load starts clean. `zones` is whatever render() is about
-// to draw -- computing their buffer-hull px extent here duplicates a little
-// of drawZone()'s own work, but it's cheap (see simulateDrift()'s own
-// comment on performance headroom) and lets the background rect be sized
-// correctly *before* it's drawn, not after.
+// currently-drawn zones' own rail-shifted points actually reach, reassigned
+// as a new array each time (not mutated in place) so a fresh
+// DATA.base_view_box on the next dataset load starts clean. `zones` is
+// whatever render() is about to draw -- computing their shifted px extent
+// here duplicates a little of drawZone()'s own work, but it's cheap (see
+// simulateDrift()'s own comment on performance headroom) and lets the
+// background rect be sized correctly *before* it's drawn, not after.
 function growBaseViewBox(zones) {
   const allX = [], allY = [];
   zones.forEach(zone => {
-    computeBufferHullPx(zone.points, boostAngleDeg, zone.altitude).forEach(([x, y]) => { allX.push(x); allY.push(y); });
+    zone.points.forEach(pt => {
+      const [x, y] = ftToPxShifted(pt.x_ft, pt.y_ft, zone.altitude);
+      allX.push(x); allY.push(y);
+    });
   });
   if (!allX.length) return;
   const pad = 80;
@@ -4453,18 +4786,20 @@ function render() {
     growBaseViewBox(timeZones.map(hz => hz.zone));
   }
 
-  // First real render for this dataset: start the visible view at BASE_VB
-  // (what's actually relevant -- the current zones' own extent, just grown
-  // above for byAltitude/byTime, or the server's own default sweep as-is
-  // for byHistory, which doesn't grow it) rather than the far wider full
-  // detail image -- per direction, a user shouldn't need to zoom in just
-  // to see their own data; zooming OUT (up to MAX_SPAN) is still how to
-  // reach the wider image for context. Only the very first render after a
-  // dataset loads does this -- every render after that leaves `view`
-  // alone, so an ordinary hour/rate/deploy change never fights a manual
-  // pan/zoom already in progress.
+  // First real render for this dataset: start the visible view at this
+  // site's own hand-tuned default if one's been set (SITE_DEFAULT_VIEWS),
+  // else BASE_VB (what's actually relevant -- the current zones' own
+  // extent, just grown above for byAltitude/byTime, or the server's own
+  // default sweep as-is for byHistory, which doesn't grow it) rather than
+  // the far wider full detail image -- per direction, a user shouldn't need
+  // to zoom in just to see their own data; zooming OUT (up to MAX_SPAN) is
+  // still how to reach the wider image for context. Only the very first
+  // render after a dataset loads does this -- every render after that
+  // leaves `view` alone, so an ordinary hour/rate/deploy change never
+  // fights a manual pan/zoom already in progress.
   if (!viewInitialized) {
-    view = { x: BASE_VB[0], y: BASE_VB[1], w: BASE_VB[2], h: BASE_VB[3] };
+    const vb = defaultViewBox();
+    view = { x: vb[0], y: vb[1], w: vb[2], h: vb[3] };
     viewInitialized = true;
   }
 
@@ -4627,18 +4962,31 @@ function initFromData() {
   viewInitialized = false;
   MIN_SPAN = IMG_VB[2] * 0.15;
   MAX_SPAN = Math.max(BASE_VB[2], BASE_VB[3]) * 1.4;
-  if (boostAngleDeg === null) {
-    // first load only -- see its declaration. URL wins over the dataset's
-    // own default when the link was explicitly built with one (see
-    // boostAngleExplicitlyChosen), clamped to the slider's own range since
-    // a hand-edited URL could carry anything.
-    const urlBoost = Number(URL_PARAMS.get('boost'));
-    boostAngleDeg = (boostAngleExplicitlyChosen && !Number.isNaN(urlBoost))
-      ? Math.min(Number(boostAngleSlider.max), Math.max(Number(boostAngleSlider.min), urlBoost))
-      : DATA.boost_angle_deg;
+  if (railAngleDeg === null) {
+    // first load only -- see its declaration. URL wins over the default
+    // when the link was explicitly built with one (see
+    // railAngleExplicitlyChosen), clamped to the dial's own range since a
+    // hand-edited URL could carry anything. Default is 0 (no shift), not
+    // DATA.boost_angle_deg -- per direction, showing a nonzero shift before
+    // the user has ever touched the dial implied a false certainty about
+    // which way the rail's tipped; the reference wind ray on the dial
+    // itself (see updateRailDialUI()) is what points at the live default
+    // heading now, without silently pre-applying its magnitude too.
+    const urlRailAngle = Number(URL_PARAMS.get('railangle'));
+    railAngleDeg = (railAngleExplicitlyChosen && !Number.isNaN(urlRailAngle))
+      ? Math.min(RAIL_ANGLE_MAX_DEG, Math.max(0, urlRailAngle))
+      : 0;
   }
-  boostAngleSlider.value = boostAngleDeg;
-  boostAngleReadout.textContent = `${boostAngleDeg}°`;
+  // Heading, unlike the magnitude above, is NOT resolved once and cached --
+  // only a URL-supplied explicit choice sets the actual railHeadingDeg
+  // variable here (first load only, same as the magnitude); otherwise it
+  // stays null so effectiveRailHeadingDeg() keeps live-tracking the ground
+  // wind on every subsequent load/render, not just the first.
+  if (railHeadingExplicitlyChosen && railHeadingDeg === null) {
+    const urlRailHeading = Number(URL_PARAMS.get('railheading'));
+    if (!Number.isNaN(urlRailHeading)) railHeadingDeg = ((Math.round(urlRailHeading) % 360) + 360) % 360;
+  }
+  updateRailDialUI();
   // Every load, not just first -- see MAX_PAD_MOVE_FT's own declaration.
   MAX_PAD_MOVE_FT = DATA.max_pad_move_ft ?? 2000;
   if (!padUrlApplied) {
@@ -4692,7 +5040,7 @@ let manifestEntries = [];
 
 function describeEntry(entry) {
   const lead = entry.lead_days === 0 ? 'captured this morning' : `captured ${entry.capture_date} (T-${entry.lead_days})`;
-  return `Target ${entry.target_date} &middot; ${lead} &middot; descent-only drift + boost-angle buffer, per model`;
+  return `Target ${entry.target_date} &middot; ${lead} &middot; descent-only drift + rail-angle shift, per model`;
 }
 
 async function loadDataset(entry) {
