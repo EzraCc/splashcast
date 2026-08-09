@@ -841,6 +841,50 @@ function path3dDrawScene(paths, altFt) {
     .map(o => o.p);
 
   ordered.forEach(p => path3dDrawPath(p, toScreenPath, altFt));
+
+  // Drawn LAST -- on top of the ground plane, axes, and every model's own
+  // path/apogee marker, so it's never occluded by any of them regardless
+  // of orbit angle.
+  path3dDrawApogeeLabel(toScreenPath, altFt);
+}
+
+// Apogee altitude label -- reported directly: with the satellite ground
+// plane on, the existing axis-tick text (--text-muted/--text-secondary,
+// fine over this app's own surface color) washed out against real map
+// imagery. Solid white background, independent of light/dark theme, since
+// the point is contrast against a photo, not matching the app's own
+// palette. One label, not per-model -- same reasoning as
+// path3dDrawBoostLine() above: every path shares the identical apogee
+// point (toScreenPath(0, 0, altFt)), so a per-model version would just be
+// the same text stacked on itself.
+function path3dDrawApogeeLabel(toScreenPath, altFt) {
+  const ctx = path3dCtx;
+  const [ax, ay] = toScreenPath(0, 0, altFt);
+  const text = `Apogee ${Math.round(altFt).toLocaleString()} ft`;
+
+  ctx.save();
+  ctx.font = `600 12px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  const padX = 7, padY = 4;
+  const boxW = ctx.measureText(text).width + padX * 2;
+  const boxH = 12 + padY * 2;
+  // Centered above the marker point, clear of the small hollow apogee
+  // circles path3dDrawPath() draws right at that same point for every model.
+  const boxCx = ax, boxCy = ay - boxH / 2 - 12;
+  const x = boxCx - boxW / 2, y = boxCy - boxH / 2;
+
+  ctx.fillStyle = '#ffffff';
+  ctx.strokeStyle = 'rgba(0, 0, 0, 0.25)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.roundRect(x, y, boxW, boxH, 4);
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.fillStyle = '#1a1a19';
+  ctx.fillText(text, boxCx, boxCy + 1);
+  ctx.restore();
 }
 
 function path3dDrawAxes(toScreen, maxX, maxY, maxZ, canvasW, canvasH) {
