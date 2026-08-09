@@ -28,11 +28,11 @@
 // gridline are what keep magnitude readable at that scale, not an
 // artificially inflated horizontal extent.
 //
-// Altitude selection is a priority chain (see resolveAltFt()) topped by
-// this panel's own vertical slider, so a user can explore any apogee
-// without leaving this section, while still following whatever's already
-// selected in the sidebar (typed specific altitude, pinned/hovered ladder
-// row, or the range slider's current max) the rest of the time.
+// Altitude selection (resolveMapAltFt(), app.js) is shared with the 2D map
+// now -- 2026-08, promoted from this file's own bespoke slider/priority
+// chain to one implementation both frames use, since the compact altitude
+// control it drove is no longer 3D-only. renderDescent3D() just reads
+// whatever that resolves to on each call.
 
 // Default camera: yaw=0 specifically, not an arbitrary angle -- at yaw=0,
 // path3dRotate()'s rx == nx exactly (screen-X is pure east, zero
@@ -54,162 +54,16 @@ let path3dZoom = 1;
 // extra click, and it's one click to turn back off if it's too busy.
 let path3dShowGround = true;
 
-// Set only by dragging this panel's own slider (altSlider's pointerdown
-// handler below) -- null means "follow the sidebar" (see resolveAltFt()).
-let path3dAltOverrideFt = null;
-// True for exactly one renderDescent3D() call right after a drag on this
-// panel's own slider -- lets resolveAltFt() tell "the override just
-// changed because of OUR OWN drag" apart from "the sidebar moved since our
-// last render", without needing to touch any of app.js's several separate
-// customAlt/pinnedAlt/isolatedAlt/altMax call sites individually.
-let path3dSliderJustMoved = false;
-let path3dLastSidebarAltSig = null;
-// The altitude actually used by the most recent real render -- read by the
-// slider's own keyboard handler instead of calling resolveAltFt() a second
-// time mid-interaction (that function has side effects on the override/sig
-// above, meant to run at most once per render).
-let path3dLastResolvedAltFt = null;
-
 const path3dCanvas = document.getElementById('descent3d-canvas');
 const path3dCtx = path3dCanvas.getContext('2d');
 const path3dMain = document.getElementById('descent3d-main');
 const path3dEmptyHint = document.getElementById('descent3d-empty-hint');
 const path3dViewToggle = document.getElementById('descent3d-view-toggle');
 const path3dGroundToggle = document.getElementById('descent3d-ground-toggle');
-const path3dAltSlider = document.getElementById('descent3d-alt-slider');
-const path3dAltTicks = document.getElementById('descent3d-alt-ticks');
-const path3dAltThumb = document.getElementById('descent3d-alt-thumb');
-const path3dAltReadout = document.getElementById('descent3d-alt-readout');
 const path3dCanvasWrap = document.querySelector('.descent3d-canvas-wrap');
 
 function path3dCssVar(name) {
   return getComputedStyle(document.querySelector('.viz-root')).getPropertyValue(name).trim();
-}
-
-function path3dAltSliderMaxFt() {
-  return DATA.altitudes[DATA.altitudes.length - 1];
-}
-
-// Priority chain, highest first: this panel's own slider override, then
-// whatever's already selected in the sidebar, falling back to the range
-// slider's current max -- always defined, so this view always has
-// something sensible to show, never a bare "pick an altitude" dead end.
-// path3dAltOverrideFt is cleared back to "follow the sidebar" as soon as
-// any of the four sidebar values changes from a source OTHER than this
-// panel's own slider (tracked via path3dSliderJustMoved, reset to false
-// every call -- so it only "protects" the override for the one render
-// immediately following an actual drag).
-function path3dResolveAltFt() {
-  // byHistory reads compareAlt (History's own altitude-ladder selection,
-  // renderHistory()'s "state.customAlt !== null ? state.customAlt :
-  // state.compareAlt" -- mirrored here), not pinnedAlt/isolatedAlt (the
-  // byAltitude ladder's own hover/pin, always null while in History mode
-  // since that's a different legend entirely). state.mode included in the
-  // signature too, so switching modes always re-evaluates this instead of
-  // getting stuck on an override signature that happened to match.
-  const sig = `${state.mode}|${state.customAlt}|${state.pinnedAlt}|${state.isolatedAlt}|${state.compareAlt}|${state.altMax}`;
-  if (path3dAltOverrideFt !== null && !path3dSliderJustMoved && sig !== path3dLastSidebarAltSig) {
-    path3dAltOverrideFt = null;
-  }
-  path3dLastSidebarAltSig = sig;
-  path3dSliderJustMoved = false;
-  if (path3dAltOverrideFt !== null) return path3dAltOverrideFt;
-  if (state.customAlt !== null) return state.customAlt;
-  if (state.mode === 'byHistory') return state.compareAlt ?? state.altMax;
-  if (state.pinnedAlt !== null) return state.pinnedAlt;
-  if (state.isolatedAlt !== null) return state.isolatedAlt;
-  return state.altMax;
-}
-
-function path3dUpdateAltSliderUI(altFt) {
-  const max = path3dAltSliderMaxFt();
-  const frac = max > 0 ? Math.max(0, Math.min(1, altFt / max)) : 0;
-  // `bottom` on .descent3d-alt-thumb IS its own bottom EDGE, not its
-  // center (translateX-only, see its own CSS comment) -- inset by the
-  // thumb's 9px radius so its circle never spills past the track's ends
-  // into whatever sits beside it (confirmed directly: at frac=1 the thumb's
-  // circle overlapped the "Apogee" readout label sitting just above the
-  // track).
-  const centerFromBottom = `calc(9px + (100% - 18px) * ${frac})`;
-  path3dAltThumb.style.bottom = `calc(${centerFromBottom} - 9px)`;
-  path3dAltReadout.textContent = Math.round(altFt).toLocaleString() + ' ft';
-  path3dAltSlider.setAttribute('aria-valuenow', String(Math.round(altFt)));
-  path3dAltSlider.setAttribute('aria-valuemin', '0');
-  path3dAltSlider.setAttribute('aria-valuemax', String(Math.round(max)));
-  path3dRenderAltTicks();
-}
-
-// Dash-mark ticks at each of this site's real apogee-altitude options
-// (DATA.altitudes, the same list the sidebar's own ladder shows) -- lets a
-// tap land exactly on a "real" altitude instead of eyeballing a freeform
-// drag. Rebuilt on every call (cheap: DATA.altitudes is a handful of
-// values) since the slider's own live pixel height -- which
-// path3dTicksToShow() decimates against -- can change from a window
-// resize/orientation change independently of anything else that would
-// otherwise trigger a rebuild.
-function path3dRenderAltTicks() {
-  const rect = path3dAltSlider.getBoundingClientRect();
-  // Matches the 9px-inset-each-end usable range centerFromBottom above
-  // already uses, so a tick and the thumb land in the identical spot when
-  // the current altitude is exactly one of the ladder's own values.
-  const trackPx = Math.max(0, rect.height - 18);
-  const max = path3dAltSliderMaxFt();
-  path3dAltTicks.innerHTML = '';
-  path3dTicksToShow(trackPx).forEach(alt => {
-    const frac = max > 0 ? alt / max : 0;
-    const tick = document.createElement('button');
-    tick.type = 'button';
-    tick.className = 'descent3d-alt-tick';
-    tick.title = `${alt.toLocaleString()} ft`;
-    tick.style.bottom = `calc(9px + (100% - 18px) * ${frac} - 9px)`;
-    // pointerdown + stopPropagation, not a plain 'click' -- a tick sits
-    // inside #descent3d-alt-slider, so an unstopped pointerdown would bubble
-    // up into the slider's OWN pointerdown handler first (that one fires
-    // before this element's later 'click' does) and jump the thumb to
-    // whatever approximate Y-coordinate value that click landed on, then
-    // this handler would correct it to the exact tick altitude a moment
-    // later -- a real, confirmed visible "jump then snap back" rather than
-    // landing precisely in one motion (the entire point of a tick target).
-    tick.addEventListener('pointerdown', evt => {
-      evt.stopPropagation();
-      path3dSetAlt(alt, true);
-    });
-    // Also a plain 'click' -- keyboard activation (Enter/Space on a focused
-    // button) fires that without a preceding pointerdown at all. Redundant
-    // with the pointerdown handler above for a real mouse/touch click (both
-    // fire, both set the identical value), which is harmless, not worth
-    // guarding against.
-    tick.addEventListener('click', () => path3dSetAlt(alt, true));
-    path3dAltTicks.appendChild(tick);
-  });
-}
-
-// Thins DATA.altitudes down to whatever actually fits `trackPx` without
-// crowding -- ticks closer together than MIN_SPACING_PX get dropped, walking
-// bottom-up so the kept set stays evenly spread rather than clustering near
-// one end. Always keeps the top of the ladder (the last entry) even if that
-// means dropping its nearest-below neighbor instead, so the highest real
-// altitude option is never the one that silently disappears. A short
-// mobile slider naturally lands on a coarser real spacing this way (e.g.
-// every 3,000ft instead of every 1,000ft) without a hardcoded breakpoint --
-// it falls out of the same real pixel-spacing math at any slider height.
-function path3dTicksToShow(trackPx) {
-  const all = DATA.altitudes;
-  const max = path3dAltSliderMaxFt();
-  if (!all.length || max <= 0 || trackPx <= 0) return [];
-  const MIN_SPACING_PX = 22;
-  const kept = [];
-  let lastPx = -Infinity;
-  all.forEach((alt, i) => {
-    const px = (alt / max) * trackPx;
-    const isLast = i === all.length - 1;
-    if (isLast && kept.length && px - lastPx < MIN_SPACING_PX) kept.pop();
-    if (px - lastPx >= MIN_SPACING_PX || isLast) {
-      kept.push(alt);
-      lastPx = px;
-    }
-  });
-  return kept;
 }
 
 // Round to a clean interval from the data's own real extent -- same
@@ -308,72 +162,6 @@ path3dGroundToggle.querySelector('button').addEventListener('click', evt => {
   path3dShowGround = !path3dShowGround;
   evt.currentTarget.classList.toggle('active', path3dShowGround);
   renderDescent3D();
-});
-
-function path3dAltFromClientY(clientY) {
-  const rect = path3dAltSlider.getBoundingClientRect();
-  const frac = 1 - Math.max(0, Math.min(1, (clientY - rect.top) / rect.height));
-  return Math.round(frac * path3dAltSliderMaxFt());
-}
-// Pushes a new apogee into both this panel's own override (immediate) and
-// the sidebar's "Specific altitude" field (app.js's syncAltCustomUI()) --
-// previously one-way (sidebar -> this panel only; dragging here never told
-// the sidebar anything). `commit` is false for the many intermediate
-// pointermove updates during a drag (cheap: this panel's own canvas redraw
-// plus syncAltCustomUI(), which just reflects a number into an input/status
-// line -- no re-simulation), true for the drag's actual endpoint (a tick
-// click, an arrow-key step, or pointerup) -- that's the one point a full
-// render() runs, which also redraws the (hidden, while in 3D mode) 2D SVG
-// map and the sidebar's altitude-ladder highlighting, real cost not worth
-// paying on every pixel of a still-moving drag.
-function path3dSetAlt(altFt, commit) {
-  // Rounded to the nearest 100ft, not 1ft -- a freeform drag/keyboard step
-  // implies false precision at 1ft resolution (neither the model nor a
-  // mouse gesture is that exact, and dragging to land on an exact foot
-  // isn't a reasonable ask of anyone). A no-op for tick clicks -- every
-  // DATA.altitudes value is already a clean multiple of 1,000. Someone who
-  // genuinely wants an exact number still has the sidebar's "Specific
-  // altitude" field for that, untouched by this rounding.
-  const rounded = Math.round(altFt / 100) * 100;
-  const clamped = Math.max(1, Math.min(path3dAltSliderMaxFt(), rounded));
-  path3dAltOverrideFt = clamped;
-  path3dSliderJustMoved = true;
-  state.customAlt = clamped;
-  // Same clearing activateAltCustom() (app.js) does when the sidebar's own
-  // input turns "Specific altitude" on -- isolate/pin among the ladder rows
-  // stops meaning anything once one specific-altitude zone is the whole
-  // view, regardless of which control (sidebar or this slider) set it.
-  state.pinnedAlt = null;
-  state.isolatedAlt = null;
-  syncAltCustomUI();
-  if (commit) render(); else renderDescent3D();
-}
-path3dAltSlider.addEventListener('pointerdown', evt => {
-  evt.preventDefault();
-  path3dAltSlider.setPointerCapture(evt.pointerId);
-  const move = e => path3dSetAlt(path3dAltFromClientY(e.clientY), false);
-  const stop = () => {
-    document.removeEventListener('pointermove', move);
-    document.removeEventListener('pointerup', stop);
-    // Final commit -- see path3dSetAlt()'s own comment on why the drag
-    // itself doesn't pay for a full render() on every intermediate step.
-    if (path3dAltOverrideFt !== null) path3dSetAlt(path3dAltOverrideFt, true);
-  };
-  document.addEventListener('pointermove', move);
-  document.addEventListener('pointerup', stop);
-  move(evt);
-});
-path3dAltSlider.addEventListener('keydown', evt => {
-  if (path3dLastResolvedAltFt === null) return;
-  const max = path3dAltSliderMaxFt();
-  const step = Math.max(1, Math.round(max / 50));
-  let next = null;
-  if (evt.key === 'ArrowUp' || evt.key === 'ArrowRight') next = Math.min(max, path3dLastResolvedAltFt + step);
-  else if (evt.key === 'ArrowDown' || evt.key === 'ArrowLeft') next = Math.max(0, path3dLastResolvedAltFt - step);
-  if (next !== null) {
-    evt.preventDefault();
-    path3dSetAlt(next, true);
-  }
 });
 
 // Orbit-drag + pan + zoom -- same pointer-capture idiom the map's own pan/
@@ -644,9 +432,16 @@ function renderDescent3D() {
   if (mapViewMode !== '3d') return;
   if (!DATA || !state) return;
 
-  const altFt = path3dResolveAltFt();
-  path3dLastResolvedAltFt = altFt;
-  path3dUpdateAltSliderUI(altFt);
+  // resolveMapAltFt()/mapAltUpdateSliderUI()/mapAltLastResolvedFt (app.js) --
+  // shared with the 2D map's own compact altitude control since 2026-08,
+  // see that file's own comment. Safe to call here even when
+  // updateMapAltControl() already ran earlier in the same synchronous pass
+  // (e.g. via applyIsolation(), which calls both) -- resolveMapAltFt()'s
+  // own signature check is idempotent across two calls with unchanged state
+  // in between, only the FIRST call in a pass can actually flip anything.
+  const altFt = resolveMapAltFt();
+  mapAltLastResolvedFt = altFt;
+  mapAltUpdateSliderUI(altFt);
 
   if (state.mode !== 'byAltitude' && state.mode !== 'byHistory') {
     path3dShowEmpty('Switch to "By altitude" or "History" view to see a descent path here.');

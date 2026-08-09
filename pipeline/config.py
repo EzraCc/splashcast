@@ -433,13 +433,24 @@ WIND_PROFILE_HOURS_LOCAL = list(range(8, 18))
 # the pressure table's own MSL altitudes converted to AGL: those come out
 # site-specific and unreadable (e.g. 1,854ft at one site vs 1,990ft at
 # another for the "same" level) and would break exact-match lookups like a
-# published real-flight summary's altitude_bucket_used_ft. 10 of the previous
-# 12 values survive verbatim here (all but 13,500/17,000).
+# published real-flight summary's altitude_bucket_used_ft.
+#
+# Sparsified 2026-08 (requested directly, as part of the map-anchored
+# altitude-selector redesign -- see site/assets/js/app.js's altitude-control
+# comments): the old ladder's 1,000ft steps below 10,000ft made the ladder
+# list too dense to show as individual colored/labeled hit-boxes on a compact
+# map-edge slider. In-between altitudes remain reachable via the viewer's
+# "Specific altitude" freeform entry (client-side sim, not limited to this
+# list) -- this ladder is a curated set of quick-pick rungs, not the limit of
+# what can be simulated. No data-migration step needed for already-published
+# dates: analyze_real_flight.py already reads each capture's own published
+# ladder rather than this live list, specifically because it's changed
+# before; points_history.json/zone JSON are rebuilt fresh every pipeline run
+# regardless.
 ALTITUDES_MASTER_FT = [
-    1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000,   # 1,000ft steps -- where most flights apogee
-    12000, 14000, 16000, 18000, 20000,                              # 2,000ft
-    22500, 25000, 27500, 30000,                                     # 2,500ft
-    35000, 40000, 45000, 50000,                                     # 5,000ft
+    2000, 4000, 6000, 8000, 10000,   # 2,000ft steps -- where most flights apogee
+    15000, 20000, 25000, 30000,       # 5,000ft
+    40000, 50000,                     # 10,000ft
 ]
 
 

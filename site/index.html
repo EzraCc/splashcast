@@ -153,14 +153,6 @@ writeLocalBustedTag('<link rel="stylesheet" href="', 'assets/css/app.css', '">')
           <div class="descent3d-canvas-wrap">
             <canvas id="descent3d-canvas"></canvas>
           </div>
-          <div class="descent3d-alt-col">
-            <div class="descent3d-alt-label">Apogee<br><span id="descent3d-alt-readout">&mdash;</span></div>
-            <div class="descent3d-alt-slider" id="descent3d-alt-slider" tabindex="0" role="slider" aria-label="Apogee altitude for descent path">
-              <div class="descent3d-alt-track"></div>
-              <div class="descent3d-alt-ticks" id="descent3d-alt-ticks"></div>
-              <div class="descent3d-alt-thumb" id="descent3d-alt-thumb"></div>
-            </div>
-          </div>
         </div>
       </div>
 
@@ -225,6 +217,66 @@ writeLocalBustedTag('<link rel="stylesheet" href="', 'assets/css/app.css', '">')
           <div class="alt-hint" id="rail-angle-hint">Sets how far off vertical the flight travels during boost due to weathercocking or intentional rail tilt. Don't tilt a rail without clearing with the RSO first. The faint ray marks the predicted ground wind's direction; the Heading &#8635; returns to that direction.</div>
         </div>
       </div>
+
+      <!-- Lives in .map-view-wrap (shared by both frames), same reasoning as
+           #rail-angle-control just above -- promoted 2026-08 from a 3D-only
+           control (previously #descent3d-alt-col, inside #descent3d-main)
+           to the one shared altitude picker for both 2D and 3D, replacing
+           the old sidebar's separate ladder/range-slider/specific-altitude
+           trio entirely. Right-edge vertical overlay, not a flex sibling of
+           the 3D canvas any more -- needs to work as a floating strip over
+           the 2D SVG too, which has no equivalent flex slot to reserve.
+           Collapsed: readout + a draggable/clickable vertical slider, both
+           directly interactive at all times, same "collapsed but never
+           inert" precedent #rail-dial established -- but unlike that dial,
+           dragging/clicking the slider does NOT open the fly-out any more
+           (reported directly: opening on every adjustment was unwanted) --
+           #map-alt-toggle is the one explicit open/close control, see
+           app.js's toggleMapAltPanel(). -->
+      <div class="map-alt-control" id="map-alt-control">
+        <div class="map-alt-readout" id="map-alt-readout">
+          <!-- Plain text until clicked (shows whatever resolveMapAltFt()
+               currently resolves to); click swaps it for the same "Specific
+               altitude" input/clear-button pair the old sidebar had,
+               relocated here verbatim (same ids, same app.js logic --
+               activateAltCustom()/syncAltCustomUI()/the input's own
+               listeners are all unchanged, just re-homed). -->
+          <span class="map-alt-readout-text" id="map-alt-readout-text">&mdash;</span>
+          <div class="alt-custom-input-row" id="alt-custom-input-row" style="display:none;">
+            <input type="text" inputmode="numeric" pattern="[0-9]*" id="alt-custom-input" placeholder="ft AGL">
+            <button id="alt-custom-clear" class="zone-color-reset-btn" type="button" title="Clear specific altitude">&#10005;</button>
+          </div>
+        </div>
+        <!-- Explicit open/close for #map-alt-panel -- the ONLY thing that
+             toggles it now (see toggleMapAltPanel(), app.js). aria-expanded
+             kept in sync there too. -->
+        <button type="button" class="map-alt-toggle-btn" id="map-alt-toggle" title="Show/hide the altitude list" aria-expanded="false" aria-controls="map-alt-panel">&#171;</button>
+        <div class="map-alt-slider" id="map-alt-slider" tabindex="0" role="slider" aria-label="Apogee altitude">
+          <div class="map-alt-track"></div>
+          <div class="map-alt-ticks" id="map-alt-ticks"></div>
+          <div class="map-alt-thumb" id="map-alt-thumb"></div>
+          <!-- Nested inside the slider itself, not a sibling -- position:
+               absolute here anchors to the SLIDER's own box (top:0/bottom:0
+               matches its exact live height), so each ladder row below can
+               be positioned at the same alt/max fraction the slider's own
+               ticks use and land at the tick's real height, not just an
+               evenly-spaced guess -- reported directly ("fix the panel...
+               so the labels are aligned to the slider"). See app.js's
+               alignAltListToSlider(). -->
+          <div class="map-alt-panel" id="map-alt-panel">
+            <div class="alt-list-title">
+              Apogee altitude <button class="info-btn" type="button" data-hint="alt-hint" title="Show interaction hint">i</button>
+              <input type="color" id="zone-color-picker" class="zone-color-picker" title="Pick a zone color that stands out against this site's imagery">
+              <button id="zone-color-reset" class="zone-color-reset-btn" type="button" title="Reset to default zone color">&#8635;</button>
+            </div>
+            <!-- Read-only for now (per direction) -- DATA.descent_params.main_deploy_altitude_ft. -->
+            <div class="map-alt-deploy-readout" id="map-alt-deploy-readout"></div>
+            <div class="alt-list" id="alt-list"></div>
+            <div class="alt-custom-status" id="alt-custom-status"></div>
+            <div class="alt-hint" id="alt-hint">Click an altitude to toggle it on/off, like a checkbox -- all start selected. Double-click to solo just that one; double-click it again to bring back whatever was selected before. Or click the readout above the slider and type an exact predicted apogee instead of picking from the ladder; clear the field (or the &times; button) to go back. No single color reads well on every site's imagery -- pick one above that stands out here; shades for each altitude are generated from it.</div>
+          </div>
+        </div>
+      </div>
       </div>
       <div class="alt-list-title descent3d-hint-title" id="descent3d-hint-title" style="display:none; margin-top:12px;">
         3D Descent Path <button class="info-btn" type="button" data-hint="descent3d-hint" title="Show details">i</button>
@@ -269,33 +321,9 @@ writeLocalBustedTag('<link rel="stylesheet" href="', 'assets/css/app.css', '">')
       <div class="rate-warning" id="rate-warning" style="display:none;">Main capped at 35 fps &mdash; Tripoli Unified Safety Code &sect;11-1's max landing speed.</div>
       <div class="alt-hint" id="rate-hint">Editable drogue/main fps.</div>
 
-      <div class="alt-list-title" style="margin-top:28px;">
-        Apogee altitude <button class="info-btn" type="button" data-hint="alt-hint" title="Show interaction hint">i</button>
-        <input type="color" id="zone-color-picker" class="zone-color-picker" title="Pick a zone color that stands out against this site's imagery">
-        <button id="zone-color-reset" class="zone-color-reset-btn" type="button" title="Reset to default zone color">&#8635;</button>
-      </div>
-      <div class="alt-custom-control" id="alt-custom-control">
-        <label class="alt-custom-label" for="alt-custom-input">Specific altitude</label>
-        <div class="alt-custom-input-row">
-          <input type="text" inputmode="numeric" pattern="[0-9]*" id="alt-custom-input" placeholder="ft AGL">
-          <button id="alt-custom-clear" class="zone-color-reset-btn" type="button" title="Clear specific altitude" style="display:none;">&#10005;</button>
-          <span class="alt-custom-status" id="alt-custom-status"></span>
-        </div>
-      </div>
-      <div class="alt-range-readout">
-        <span id="alt-range-readout-text">All altitudes</span>
-        <button id="alt-range-reset" class="zone-color-reset-btn" type="button" title="Show every altitude">&#8635;</button>
-      </div>
-      <div class="alt-range-row">
-        <div class="alt-range-slider" id="alt-range-slider">
-          <div class="alt-range-track"></div>
-          <div class="alt-range-fill" id="alt-range-fill"></div>
-          <div class="alt-range-thumb" id="alt-max-thumb" tabindex="0" role="slider" aria-label="Maximum altitude"></div>
-          <div class="alt-range-thumb" id="alt-min-thumb" tabindex="0" role="slider" aria-label="Minimum altitude"></div>
-        </div>
-        <div class="alt-list" id="alt-list"></div>
-      </div>
-      <div class="alt-hint" id="alt-hint">Hover an altitude to isolate its zone. Click to pin it; click again to release. Drag the slider handles to narrow which altitudes are shown on the map -- altitudes outside the range gray out below but stay listed. Or click "Specific altitude" above and type an exact predicted apogee instead of picking from the ladder; clear the field (or the &times; button) to go back.</div>
+      <!-- Apogee altitude ladder/specific-altitude control moved 2026-08 to
+           the map-anchored #map-alt-control (see .map-view-wrap) -- one
+           shared picker for both 2D and 3D instead of a sidebar-only one. -->
 
       <div id="time-legend-block" style="display:none;">
         <div class="alt-list-title" style="margin-top:16px;">

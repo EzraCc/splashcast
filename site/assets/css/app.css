@@ -119,11 +119,11 @@
        consistency to gain (the same handful of margin-top/gap values --
        4/6/8/10/12/16px -- were already showing up repeatedly with no
        shared name behind them). Deliberately does NOT cover the cloud/
-       rain/temp grids' row-gap or the alt-range-slider system -- those
-       have real, documented exact-pixel couplings elsewhere (e.g.
-       .cloud-cell .range-num's absolute -14px offset only clears the row
-       above it because .weather-grid's row-gap is exactly 16px, not a
-       coincidence -- see that rule's own comment) that a shared token
+       rain/temp grids' row-gap -- those have real, documented exact-pixel
+       couplings elsewhere (e.g. .cloud-cell .range-num's absolute -14px
+       offset only clears the row above it because .weather-grid's
+       row-gap is exactly 16px, not a coincidence -- see that rule's own
+       comment) that a shared token
        could silently drift out of sync with if one call site's value ever
        changed without the other. */
     --sp-1: 4px;
@@ -247,7 +247,15 @@
   .map-wrap.dragging { cursor: grabbing; }
   .map-wrap svg { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
 
-  .zoom-btns { position: absolute; right: 10px; bottom: 10px; display: flex; flex-direction: column; gap: var(--sp-1); z-index: 5; }
+  /* Moved 2026-08 from bottom-right (right:10px/bottom:10px) to top-left,
+     stacked below where #layer-toggle/#burn-ban-chip end -- the new shared
+     #map-alt-control (see its own comment) now needs most of the right
+     edge's height for its vertical slider, which these would otherwise
+     collide with directly (both right-anchored). A fixed top offset here
+     rather than something conditional on whether a burn-ban chip is
+     actually showing -- simpler, and #burn-ban-chip's own worst-case
+     height (one line, ~30px) still leaves real clearance either way. */
+  .zoom-btns { position: absolute; left: 10px; top: 88px; display: flex; flex-direction: column; gap: var(--sp-1); z-index: 5; }
   .zoom-btns button {
     width: 30px; height: 30px; border-radius: 6px; border: 1px solid var(--border);
     background: var(--surface-1); color: var(--text-primary); font-size: var(--fs-md); cursor: pointer;
@@ -263,7 +271,7 @@
      is discoverable enough on desktop without a persistent hint (the zoom
      +/-/Reset buttons are already visible there). Hidden by default,
      shown only under (pointer: coarse) -- same touch-target convention
-     .descent3d-alt-thumb's own coarse-pointer rule already uses. */
+     .map-alt-thumb's own coarse-pointer rule already uses. */
   .zoom-hint { display: none; }
   @media (pointer: coarse) {
     /* left:10px/bottom:66px, not the corner's own 10px -- .rail-angle-dial
@@ -391,10 +399,10 @@
     background: var(--border); border-radius: 2px;
   }
   .weather-time-ticks { position: absolute; inset: 0; }
-  /* Hit-box wider than the visible dash (same 44x44 touch-target padding
-     idea .descent3d-alt-tick already uses under (pointer: coarse) below,
-     just applied unconditionally here since this row has less spare
-     vertical room to grow into on a touch device). */
+  /* Hit-box wider than the visible dash (same touch-target-padding idea
+     .info-btn/.zone-color-reset-btn use under (pointer: coarse) below, just
+     applied unconditionally here since this row has less spare vertical
+     room to grow into on a touch device). */
   .weather-time-tick {
     position: absolute; top: 18px; width: 18px; height: 18px; padding: 0; border: none; background: none; cursor: pointer;
   }
@@ -453,7 +461,7 @@
      zone at once and ignores state.timeMinutes for its own zone
      selection). */
   #weather-panel.hours-disabled .weather-time-slider { opacity: 0.4; pointer-events: none; }
-  /* Same 44x44 touch-target convention .descent3d-alt-thumb/.info-btn's own
+  /* Same 44x44 touch-target convention .map-alt-thumb/.info-btn's own
      coarse-pointer rules already use elsewhere in this app -- an invisible
      ::after overlay, centered on the real (still 18px) tick via top/left:
      50% + translate(-50%,-50%), not a resize of the visible dash itself
@@ -708,75 +716,10 @@
   .descent3d-header-controls { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: var(--sp-4); padding-right: 70px; padding-left: 245px; }
   .descent3d-view-toggle { flex-shrink: 0; }
   .descent3d-empty-hint { font-size: var(--fs-sm); color: var(--text-muted); padding: 20px 0; text-align: center; }
-  /* Canvas on the left, altitude control on the right -- matches the main
-     page's own map (left) + altitude ladder/slider (.side-col, right)
-     layout, so this panel reads as a small mirror of that convention
-     instead of putting the slider on the opposite side from what the rest
-     of the app trained the eye to expect. */
+  /* Just the canvas now -- the altitude slider that used to sit beside it
+     (.descent3d-alt-col) is gone, promoted to the shared #map-alt-control
+     overlay below (2026-08, works in both 2D and 3D now, not 3D-only). */
   .descent3d-main { display: flex; gap: 10px; align-items: stretch; }
-  .descent3d-alt-col { display: flex; flex-direction: column; align-items: center; gap: 8px; flex-shrink: 0; }
-  .descent3d-alt-label {
-    font-size: var(--fs-xs); color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.03em;
-    text-align: center; line-height: 1.4;
-  }
-  .descent3d-alt-label span { font-size: var(--fs-sm); color: var(--text-primary); font-weight: 600; text-transform: none; letter-spacing: normal; }
-
-  /* Same visual language as .alt-range-slider (track/fill/thumb, sized/
-     styled the same way) but its own classes/behavior -- this one's a
-     single continuous-drag thumb (any real ft value, not snapped to the
-     discrete altitude ladder), not the dual min/max range-snap-to-list
-     variant .alt-range-slider is built for. */
-  .descent3d-alt-slider { position: relative; width: 24px; flex: 1 1 auto; touch-action: none; cursor: grab; }
-  .descent3d-alt-slider:active { cursor: grabbing; }
-  .descent3d-alt-slider:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-  .descent3d-alt-track {
-    position: absolute; left: 50%; top: 0; bottom: 0; width: 4px;
-    transform: translateX(-50%); background: var(--border); border-radius: 2px;
-  }
-  /* No fill bar from 0 to the current altitude -- apogee is a single point
-     (the highest reached), not a span/range, so coloring "ground up to
-     here" like a progress bar misrepresented it as one. Just the track,
-     tick marks, and the thumb itself say where that one point is. */
-  /* One tick per altitude in DATA.altitudes (the same list the sidebar's
-     own apogee ladder shows), positioned with the identical bottom-from-
-     fraction math path3dUpdateAltSliderUI() uses for the thumb -- so a tick
-     and the thumb land in the exact same spot when the current altitude is
-     one of the ladder's own values. Visually a short dash (the ::before),
-     but each tick's own hit target is deliberately bigger and lightly
-     visible (a translucent rounded rect, not fully invisible) so it reads
-     as tappable on a touchscreen without needing to be that big visually.
-     path3dTicksToShow() (descent3d.js) decimates this list -- adjacent
-     ticks closer than a real minimum pixel spacing get dropped -- based on
-     the slider's own live pixel height, so a short mobile slider
-     automatically thins to fewer, evenly-spaced ticks instead of a crowded
-     unreadable/untappable cluster. */
-  .descent3d-alt-ticks { position: absolute; inset: 0; }
-  .descent3d-alt-tick {
-    position: absolute; left: 50%; width: 26px; height: 18px;
-    transform: translateX(-50%); /* see .descent3d-alt-thumb's own comment on why not translateY too */
-    padding: 0; border: none; border-radius: 5px; cursor: pointer;
-    background: var(--text-secondary); opacity: 0.12;
-  }
-  .descent3d-alt-tick::before {
-    content: ''; position: absolute; left: 50%; top: 50%; width: 12px; height: 2px;
-    transform: translate(-50%, -50%); background: var(--text-secondary); border-radius: 1px;
-  }
-  .descent3d-alt-tick:hover, .descent3d-alt-tick:focus-visible { opacity: 0.3; }
-  .descent3d-alt-tick:hover::before, .descent3d-alt-tick:focus-visible::before { background: var(--accent); }
-  /* translateX only, deliberately -- `bottom` already anchors this box's
-     BOTTOM edge (not its center), so a translateY(-50%) here would shift
-     the already-bottom-anchored box up by another half its own height on
-     top of that, overshooting the intended center position by a full
-     18px (confirmed directly: the thumb rendered high enough to overlap
-     the readout label above it, not just brush against it). translateY
-     centering is only correct paired with `top` positioning, which this
-     isn't -- see path3dUpdateAltSliderUI()'s own comment for the matching
-     JS-side fix. */
-  .descent3d-alt-thumb {
-    position: absolute; left: 50%; width: 18px; height: 18px;
-    transform: translateX(-50%);
-    background: var(--surface-1); border: 2px solid var(--accent); border-radius: 50%;
-  }
 
   /* Same aspect-ratio-box + absolute-fill-canvas treatment .map-wrap uses
      for its SVG -- consistent sizing pattern for the one other real
@@ -792,20 +735,183 @@
   #descent3d-canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; cursor: grab; }
   #descent3d-canvas.dragging { cursor: grabbing; }
 
+  /* ==================== shared altitude control (2D + 3D) ==================== */
+  /* Promoted 2026-08 from 3D's own bare compact slider (previously
+     .descent3d-alt-col, a flex sibling of the 3D canvas reserving real
+     layout space) to the ONE altitude picker for both frames, replacing
+     the old sidebar's ladder/range-slider/specific-altitude trio entirely.
+     Lives in .map-view-wrap as an absolutely-positioned right-edge overlay
+     (like #rail-angle-control's own corner treatment) since it has to
+     float over the 2D SVG too, which has no flex slot to reserve the way
+     the 3D canvas did. Spans most of the frame height (top/bottom insets,
+     not a fixed height) so it reads as a real vertical ladder, not a small
+     corner widget -- .zoom-btns (2D-only, previously bottom-right) moved
+     to make room, see its own comment. */
+  .map-alt-control {
+    position: absolute; right: 10px; top: 54px; bottom: 54px; z-index: 5;
+    display: flex; flex-direction: column; align-items: center; gap: 6px;
+  }
+  .map-alt-readout {
+    display: flex; flex-direction: column; align-items: center; gap: 4px;
+    font-size: var(--fs-sm); font-weight: 600; color: var(--text-primary);
+    text-align: center; white-space: nowrap;
+  }
+  /* Plain text, until clicked -- see app.js's mapAltReadoutText click
+     handler. A real click target (not just visually a label) since this is
+     the whole "Specific altitude" entry point now, not a separate sidebar
+     field. Solid background at all times, not just on hover -- reported
+     directly: floating directly over the map/satellite imagery, it needs
+     real contrast to stay legible regardless of hover state, same
+     "readable over a photo" reasoning path3dDrawApogeeLabel() (descent3d.js)
+     already established for the 3D canvas's own apogee label. Themed
+     (var(--surface-1)), not hardcoded white like that canvas-drawn one --
+     this is a real DOM element, so it already gets light/dark theming for
+     free and doesn't need to fight the app's own palette the way a
+     canvas-drawn label over a photo does. */
+  .map-alt-readout-text {
+    cursor: pointer; padding: 2px 6px; border-radius: 5px;
+    background: var(--surface-1); border: 1px solid var(--border);
+    box-shadow: 0 1px 4px rgba(0,0,0,0.15);
+  }
+  .map-alt-readout-text:hover { background: var(--surface-2); }
+  /* Same input this control's flyout used to hold in the old sidebar
+     layout (id="alt-custom-input", app.js unchanged) -- just relocated
+     here so "the current displayed altitude, editable in place" is one
+     control, not a readout plus a separate field elsewhere. */
+  #alt-custom-input-row { display: flex; align-items: center; gap: 4px; }
+  #alt-custom-input-row input[type="text"] {
+    width: 64px; box-sizing: border-box; padding: 3px 5px; text-align: center;
+    border: 1px solid var(--accent); border-radius: 5px;
+    background: var(--surface-1); color: var(--text-primary); font-size: var(--fs-sm); font-weight: 600;
+  }
+
+  /* Explicit open/close -- reported directly: opening the fly-out on every
+     slider drag/tick-click was unwanted, so this replaced that as the ONE
+     trigger (see toggleMapAltPanel(), app.js). Sized up from an initial
+     20px/11px pass (reported directly as too small) to a real secondary
+     button, closer to .zoom-btns' own 30px squares than the tiny 15px
+     info/reset dots. Glyph itself swaps between "&laquo;"/"&raquo;"
+     (toggleMapAltPanel() sets textContent, not a CSS rotation) -- reported
+     directly to point the same direction the panel actually moves: "&laquo;"
+     while collapsed (clicking opens it LEFTWARD, into the map, matching
+     .map-alt-panel's own right:calc(100% + 8px) growth direction), "&raquo;"
+     while expanded (clicking collapses it back rightward, closing). */
+  .map-alt-toggle-btn {
+    border: 1px solid var(--border); background: var(--surface-1); color: var(--text-secondary);
+    width: 26px; height: 26px; border-radius: 50%; font-size: 15px; font-weight: 700; line-height: 1;
+    display: inline-flex; align-items: center; justify-content: center;
+    cursor: pointer; padding: 0; flex-shrink: 0;
+  }
+  .map-alt-toggle-btn:hover { background: var(--surface-2); color: var(--text-primary); border-color: var(--accent); }
+  .map-alt-control.expanded .map-alt-toggle-btn { color: var(--accent); }
   @media (pointer: coarse) {
-    .descent3d-alt-thumb::before {
+    .map-alt-toggle-btn { position: relative; }
+    .map-alt-toggle-btn::before {
       content: ''; position: absolute; top: 50%; left: 50%;
       width: 44px; height: 44px; transform: translate(-50%, -50%);
     }
   }
 
-  /* No separate mobile layout -- the slider stays vertical (24px wide) and
-     the canvas keeps shrinking with it via flex + aspect-ratio at any
-     width, same as every other real-estate-constrained control in this
-     app (the sidebar's own vertical .alt-range-slider does the same,
-     unchanged all the way down to 375px). Flipping this one to a
-     horizontal slider on narrow screens would need its own separate drag-
-     axis math in descent3d.js for no real gain. */
+  /* Same visual language the old .descent3d-alt-slider/.alt-range-slider
+     both used (track/fill-less/thumb) -- single continuous-drag thumb (any
+     real ft value, not snapped to the ladder), now shared by both frames
+     instead of 3D-only. */
+  .map-alt-slider { position: relative; width: 28px; flex: 1 1 auto; touch-action: none; cursor: grab; }
+  .map-alt-slider:active { cursor: grabbing; }
+  .map-alt-slider:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .map-alt-track {
+    position: absolute; left: 50%; top: 0; bottom: 0; width: 4px;
+    transform: translateX(-50%); background: var(--border); border-radius: 2px;
+  }
+  /* No fill bar from 0 to the current altitude -- apogee is a single point
+     (the highest reached), not a span/range, so coloring "ground up to
+     here" like a progress bar misrepresented it as one. Just the track,
+     tick marks, and the thumb itself say where that one point is. */
+  /* One tick per altitude in DATA.altitudes, colored via the SAME
+     ALT_COLORS_HEX ramp the flyout's own ladder rows use (set inline by
+     app.js, not here -- this rule only supplies the shape/size/text
+     layout) -- requested directly, so the collapsed control's hit-boxes
+     read as the same "which altitude is which color" language as the
+     expanded list, not an unrelated gray dash. Sized to hold real text
+     ("2k'"..."50k'") now that the master ladder is sparse enough (11 rungs
+     max) for that to fit without crowding -- the old dash-only ticks were
+     26x18px; text needs more room in both dimensions. mapAltTicksToShow()
+     (app.js) still decimates by real pixel spacing on a short slider,
+     same mechanism as before, just a taller minimum spacing to match. */
+  .map-alt-ticks { position: absolute; inset: 0; }
+  .map-alt-tick {
+    position: absolute; left: 50%; width: 34px; height: 22px;
+    transform: translateX(-50%);
+    padding: 0; border: none; border-radius: 5px; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 10px; font-weight: 700; line-height: 1;
+    color: #fff; text-shadow: 0 1px 1px rgba(0,0,0,0.35);
+    opacity: 0.88;
+  }
+  .map-alt-tick:hover, .map-alt-tick:focus-visible { opacity: 1; outline: 2px solid var(--accent); outline-offset: 1px; }
+  /* Unlabeled reference ticks filling the gaps between the labeled master-
+     ladder rungs above -- requested directly ("on fields with lower
+     ceilings, you can put the 1k' marks, but don't label them"). Small
+     plain dash, not a colored/text-bearing pill like the labeled ticks --
+     the point is a visual reference grid, not another set of "real"
+     options (mapAltMinorStep(), app.js, already only generates these where
+     they're not redundant with a labeled tick). Real value still on hover
+     via title=, just not permanently on screen. */
+  .map-alt-tick-minor {
+    position: absolute; left: 50%; width: 14px; height: 3px;
+    transform: translateX(-50%);
+    padding: 0; border: none; border-radius: 1.5px; cursor: pointer;
+    background: var(--text-muted); opacity: 0.4;
+  }
+  .map-alt-tick-minor:hover, .map-alt-tick-minor:focus-visible { opacity: 0.9; background: var(--accent); }
+  /* translateX only, deliberately -- `bottom` already anchors this box's
+     BOTTOM edge (not its center), so a translateY(-50%) here would shift
+     the already-bottom-anchored box up by another half its own height on
+     top of that, overshooting the intended center position. translateY
+     centering is only correct paired with `top` positioning, which this
+     isn't -- see mapAltUpdateSliderUI()'s own comment (app.js) for the
+     matching JS-side fix. */
+  .map-alt-thumb {
+    position: absolute; left: 50%; width: 18px; height: 18px;
+    transform: translateX(-50%);
+    background: var(--surface-1); border: 2px solid var(--accent); border-radius: 50%;
+    pointer-events: none;
+  }
+  @media (pointer: coarse) {
+    .map-alt-thumb::before {
+      content: ''; position: absolute; top: 50%; left: 50%;
+      width: 44px; height: 44px; transform: translate(-50%, -50%);
+    }
+  }
+
+  /* Fly-out panel -- opens/closes ONLY via #map-alt-toggle now (see that
+     button's own comment) -- .expanded still lives on .map-alt-control
+     (the same outside-click-closes listener as before, toggleMapAltPanel()
+     in app.js), this is just a descendant-selector match regardless of
+     nesting depth. Nested INSIDE .map-alt-slider in the HTML now (not a
+     sibling) specifically so its own position:absolute anchors to the
+     SLIDER's box -- lets #alt-list's rows below be positioned at the same
+     alt/max fraction the slider's own ticks use (alignAltListToSlider(),
+     app.js), landing at each tick's real height instead of an evenly-
+     spaced guess. Grows LEFTWARD into the map (this control sits at the
+     right edge, unlike the dial's bottom-left corner spot) --
+     right:calc(100% + 8px) keeps its own right edge flush with the
+     slider's, growing left instead of off-screen right. */
+  .map-alt-panel {
+    display: none;
+    position: absolute; right: calc(100% + 8px); top: 0; bottom: 0; z-index: 6;
+    width: 260px; max-width: calc(100vw - 40px); box-sizing: border-box;
+    background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px;
+    padding: 10px 12px; box-shadow: 0 2px 10px rgba(0,0,0,0.25);
+    overflow-y: auto;
+  }
+  .map-alt-control.expanded .map-alt-panel { display: block; }
+  .map-alt-deploy-readout { font-size: var(--fs-sm); color: var(--text-secondary); margin: 2px 0 var(--sp-2); }
+
+  /* No separate mobile layout -- the slider stays vertical and the canvas
+     keeps shrinking independently via its own aspect-ratio, same as every
+     other real-estate-constrained control in this app. The flyout's own
+     max-width clamp (above) keeps it from overflowing a narrow viewport. */
 
   /* =========================== burn-ban status =========================== */
   /* Quiet by default (clear is the common case, most days) -- a small chip.
@@ -882,92 +988,26 @@
   .pad-marker.moved circle, .pad-marker.moved line { stroke: #e0b400; }
   .map-wrap.dragging-pad, .map-wrap.dragging-pad .pad-marker { cursor: grabbing; }
 
-  /* Direct-entry alternative to the ladder/range below -- now that the
-     drift sim runs client-side (zoneFor() takes any altitude, not just
-     DATA.altitudes), a flyer with a real predicted apogee can type it
-     exactly instead of picking the nearest rung. No checkbox -- focusing
-     the input activates it directly (see app.js's activateAltCustom()),
-     since a checkbox-then-type flow was two clicks for one intent. Active
-     dims the range row below (see .alt-range-row.alt-custom-dimmed) rather
-     than hiding it, matching this app's usual "gray out, don't remove"
-     pattern for a control that's momentarily not the active one. */
-  /* Label on its own line, input row below it -- was one wrapping flex row,
-     but the label reads better with the box always underneath it instead
-     of sometimes trailing on the same line depending on sidebar width. */
-  .alt-custom-control { display: flex; flex-direction: column; gap: var(--sp-1); margin-bottom: var(--sp-3); font-size: var(--fs-base); color: var(--text-secondary); }
-  .alt-custom-label { cursor: pointer; user-select: none; }
-  .alt-custom-input-row { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; }
-  .alt-custom-control input[type="text"] {
-    width: 90px; box-sizing: border-box; padding: 3px 6px;
-    border: 1px solid var(--border); border-radius: 5px;
-    background: var(--surface-1); color: var(--text-primary); font-size: var(--fs-base);
-  }
-  .alt-custom-status { font-size: var(--fs-xs); color: var(--hot-text); }
-
-  .alt-range-readout {
-    display: flex; align-items: center; justify-content: space-between; gap: var(--sp-2);
-    margin-bottom: var(--sp-2); font-size: var(--fs-sm); color: var(--text-secondary);
-  }
-  .alt-range-row { display: flex; gap: var(--sp-4); align-items: flex-start; }
-  .alt-range-row.alt-custom-dimmed { opacity: 0.35; pointer-events: none; }
-  /* A vertical fader, not a pair of <select>s -- narrow dropdowns read badly
-     in this sidebar's width, and the altitude set is still a fixed discrete
-     list either way (each drag position snaps to one of DATA.altitudes),
-     never free entry. Height and thumb positions are both set inline by
-     app.js's buildAltRange() from #alt-list's own real row positions
-     (offsetTop/offsetHeight of each rendered row), not a row-height formula
-     or flex-stretch against the list -- both were tried first: a formula
-     put each thumb at a proportional guess rather than its row's actual
-     center, and flex-stretch created a feedback loop during a drag
-     (narrowing the range used to remove rows, shrinking the stretched
-     slider mid-gesture and throwing the thumb past the cursor). Rows are
-     never removed now (buildAltList() always renders the full ladder,
-     graying out whatever's outside the range), which is what makes
-     measuring them mid-drag safe -- the list's height no longer changes as
-     a result of the drag itself. Deliberately no min-height floor: a CSS
-     floor taller than a short site's real list height (e.g. gunter's 3-6
-     rows) would win over the JS-computed inline height, decoupling the
-     slider from the list it's supposed to match and misaligning every
-     thumb by the difference -- confirmed exactly this way when a 120px
-     floor was tried against gunter's 104px-tall list (~2-16px off per
-     thumb). Row spacing stays comfortable to grab at any real site's count
-     without one.
-  */
-  .alt-range-slider {
-    position: relative; width: 20px; flex-shrink: 0;
-    touch-action: none;
-  }
-  .alt-range-track {
-    position: absolute; left: 50%; top: 0; bottom: 0; width: 4px;
-    transform: translateX(-50%); background: var(--border); border-radius: 2px;
-  }
-  .alt-range-fill {
-    position: absolute; left: 50%; width: 4px; transform: translateX(-50%);
-    background: var(--accent); border-radius: 2px; opacity: 0.55;
-  }
-  .alt-range-thumb {
-    position: absolute; left: 50%; width: 16px; height: 16px;
-    transform: translate(-50%, -50%);
-    background: var(--surface-1); border: 2px solid var(--accent); border-radius: 50%;
-    cursor: grab;
-  }
-  .alt-range-thumb:hover { background: var(--surface-2); }
-  .alt-range-thumb:active { cursor: grabbing; }
-  .alt-range-thumb:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-  /* Deliberately unbounded/no internal scroll -- the slider beside it sizes
-     itself to match this element's real height exactly (buildAltRange()),
-     and an internal scroll here would let the two drift out of sync (the
-     slider isn't scrolled in tandem, so a row scrolled out of .alt-list's
-     view would no longer sit under its own thumb position). A future
-     site with a much denser ladder could make this sidebar tall enough to
-     push the Model/Rate legends down -- not an issue at any currently
-     published site's altitude count; revisit if it becomes one. */
-  /* position:relative so its rows' offsetTop (read by app.js's
-     altRowCentersPx()) resolves relative to this element itself -- without
-     it, a non-positioned element's offsetTop climbs to whatever positioned
-     ancestor is further up the page, giving row centers hundreds of px too
-     large and badly misaligning the slider beside it. */
-  .alt-list { position: relative; flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: var(--sp-1); }
+  /* .alt-custom-status -- inline error/status text under the flyout's
+     ladder (e.g. "No wind data for this altitude/hour") when the Specific
+     altitude readout is active -- see app.js's syncAltCustomUI(). */
+  .alt-custom-status { font-size: var(--fs-xs); color: var(--hot-text); margin-bottom: var(--sp-1); }
+  /* Ladder rows, inside #map-alt-panel -- position:relative anchors each
+     row's own position:absolute below (JS-computed, not a flex/gap flow
+     any more) -- reported directly ("fix the panel... so the labels are
+     aligned to the slider"): each row is placed at the same alt/max
+     fraction the slider's own tick for that altitude uses
+     (alignAltListToSlider(), app.js), not just stacked evenly top-to-
+     bottom. min-height is a floor, not a fixed height -- the JS sets a
+     real inline height once it knows how tall the (possibly collision-
+     adjusted) row stack actually needs to be. */
+  .alt-list { position: relative; min-width: 0; min-height: 100%; }
+  /* Scoped to #alt-list specifically, not the bare .alt-row class --
+     #model-legend reuses .alt-row too and stays a normal top-to-bottom
+     flex list; only the altitude ladder's own rows get slider-aligned
+     absolute positioning. `top` is set inline per row (app.js); left/
+     right:0 here so each row spans the panel's full width regardless. */
+  #alt-list .alt-row { position: absolute; left: 0; right: 0; }
   .alt-list-title {
     font-size: var(--fs-sm); color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.03em;
     margin-bottom: 4px; display: flex; align-items: center; gap: 5px;
@@ -1006,16 +1046,15 @@
      (unaffected on desktop -- a mouse pointer doesn't need help hitting a
      15px circle, and visually enlarging it would add real bulk to an
      already-dense sidebar). Pointer/touch events landing on a pseudo-
-     element's rendered area count as events on its host, so this works for
-     .alt-range-thumb's existing drag listeners too, not just clicks.
+     element's rendered area count as events on its host.
      `(pointer: coarse)` scopes it to touch/stylus input specifically -- a
      mouse-driven hybrid device (e.g. a touchscreen laptop with a trackpad)
      keeps the tight, precise target a mouse doesn't need enlarged. */
   @media (pointer: coarse) {
     .info-btn, .zone-color-reset-btn {
-      position: relative; /* .alt-range-thumb is already position:absolute */
+      position: relative;
     }
-    .info-btn::before, .zone-color-reset-btn::before, .alt-range-thumb::before {
+    .info-btn::before, .zone-color-reset-btn::before {
       content: '';
       position: absolute;
       top: 50%; left: 50%;
@@ -1083,16 +1122,17 @@
      frames -- see this element's own placement comment in index.html), NOT
      .map-wrap, so it stays in the corner of whichever frame is actually
      showing rather than only ever existing inside the 2D one. Same
-     left:10px/bottom:10px corner-overlay convention .zoom-btns/.layer-
-     toggle use, opposite corner from .zoom-btns (bottom-right, 2D-only) so
-     the two never collide; .zoom-hint (touch-only, still 2D-only) is
-     bumped up out of the way below since it shares this same corner. */
+     left:10px corner-overlay convention .layer-toggle uses, bottom instead
+     of top so it doesn't collide with that (or .zoom-btns, stacked below
+     it since 2026-08 -- see that rule's own comment); .zoom-hint (touch-
+     only, still 2D-only) is bumped up out of the way below since it shares
+     this same bottom-left corner. */
   .rail-angle-control { position: absolute; left: 10px; bottom: 10px; z-index: 5; }
   /* Circular drag target: angle from center = heading (0deg/N = up, like a
      compass), distance from center = magnitude, capped at the 25deg max --
      see railDialFromClientXY() in app.js. touch-action:none stops the
      browser's own pan/scroll gesture from fighting the pointer drag on
-     mobile, same reason .alt-range-slider needs it.
+     mobile, same reason .map-alt-slider needs it.
      Always visible (not hidden behind a separate icon -- a first pass did
      that; reported directly that dragging the icon did nothing, since it
      wasn't the dial at all), but only DRAGGABLE once expanded -- see

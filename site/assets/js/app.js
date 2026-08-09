@@ -67,7 +67,7 @@ let REAL_FLIGHTS = [];
 // pin on one flight and a hover over a different flight's marker can be
 // true at the same time; activeRealFlight() below resolves which one wins
 // (hover takes precedence while it lasts, same pattern as
-// state.isolatedAlt ?? state.pinnedAlt elsewhere in this file).
+// state.isolatedHour ?? state.pinnedHour elsewhere in this file).
 let pinnedRealFlightIndex = null;
 let hoveredRealFlightIndex = null;
 // The pad offset in effect right before pinning a real flight snapped it to
@@ -402,8 +402,21 @@ function freshState() {
     // DATA.hours' own checkpoints. Defaults to the first (earliest) hour the
     // weather panel shows.
     timeMinutes: DATA.hours[0] * 60, deploy: DATA.deploys[0],
-    isolatedAlt: null, pinnedAlt: null,
     isolatedHour: null, pinnedHour: null,
+    // Multi-select checkboxes, not hover-isolate/click-pin -- byAltitude
+    // mode's own ladder got this treatment 2026-08, mirroring
+    // buildModelLegend()'s existing pattern exactly (see that function's own
+    // comment): click toggles one altitude's zone on/off, double-click
+    // solos it. null is a sentinel ("not resolved yet"), not "nothing
+    // selected" -- buildAltList() resolves it to every altitude with a real
+    // zone the first time it runs for this state, same as selectedModels.
+    // byTime/byHistory don't use this at all -- they keep the single-select
+    // compareAlt below, since those views render exactly one altitude at a
+    // time, not several simultaneous zones.
+    selectedAlts: null,
+    // Snapshot of selectedAlts from right before a double-click solo -- see
+    // selectedModels/preSoloModels' own comment, same mechanism.
+    preSoloAlts: null,
     // Multi-select checkboxes, not hover-isolate/click-pin like every other
     // legend here -- see buildModelLegend()'s own comment for why models
     // specifically got this treatment. null is a sentinel ("not resolved
@@ -417,15 +430,13 @@ function freshState() {
     // dblclick handler.
     preSoloModels: null,
     isolatedCapture: null, pinnedCapture: null, // History mode only -- which capture_date ("forecast age") to isolate
-    compareAlt: DATA.altitudes[0], // which altitude "by time of day" mode compares across hours
-    // Coarse pre-filter in front of isolatedAlt/pinnedAlt/compareAlt above --
-    // see buildAltRange(). Defaults to the site's full ladder.
-    altMin: DATA.altitudes[0], altMax: DATA.altitudes[DATA.altitudes.length - 1],
+    compareAlt: DATA.altitudes[0], // which altitude "by time of day"/History compares across hours/captures
     // Direct-entry altitude (see syncAltCustomUI()) -- null unless the
-    // "Specific altitude" checkbox is on. A real ft value, not restricted
-    // to DATA.altitudes, since zoneFor() can simulate any altitude now
-    // that the drift calc is client-side. Overrides the whole
-    // range/ladder selection above in byAltitude/byTime (see render()).
+    // map-anchored readout's "Specific altitude" field is active. A real ft
+    // value, not restricted to DATA.altitudes, since zoneFor() can simulate
+    // any altitude now that the drift calc is client-side. Overrides the
+    // whole ladder/selectedAlts selection above in byAltitude/byTime (see
+    // render()).
     customAlt: null,
     // Editable drogue+main fps -- ONE active pair now, not a simultaneously-
     // computed fast/slow pair (see buildRateEditor()'s own comment for why:
@@ -469,8 +480,22 @@ function freshState() {
       base.rateName = rate;
       base.rateFps = structuredClone(DATA.descent_params.default_rates_fps[rate]);
     }
-    const alt = Number(URL_PARAMS.get('alt'));
-    if (DATA.altitudes.includes(alt)) base.pinnedAlt = alt;
+    // alts=<comma-separated ft values> -- byAltitude's new multi-select
+    // ladder (2026-08), same validated-Set shape/convention as models=
+    // below. Legacy alt=<ft> (the old single pinned value, from before this
+    // was a Set) still works too, read-only -- never written by
+    // buildPermalinkParams() any more, but an old shared link still
+    // resolves sensibly ("select only this one"), same backward-compat
+    // precedent this app already has for hour=N vs. t=HH:MM. alts= wins if
+    // a URL somehow carries both.
+    const altsParam = URL_PARAMS.get('alts');
+    if (altsParam) {
+      const requested = new Set(altsParam.split(',').map(Number).filter(a => DATA.altitudes.includes(a)));
+      if (requested.size) base.selectedAlts = requested;
+    } else {
+      const legacyAlt = Number(URL_PARAMS.get('alt'));
+      if (DATA.altitudes.includes(legacyAlt)) base.selectedAlts = new Set([legacyAlt]);
+    }
     // models=<comma-separated keys> -- validated against MODEL_LABELS only,
     // not against "has data" (that's context-dependent -- byAltitude vs
     // History read different availability sources, and horizon/capture can
@@ -485,28 +510,8 @@ function freshState() {
     if (DATA.altitudes.includes(compare)) base.compareAlt = compare;
     const capture = URL_PARAMS.get('capture');
     if (HISTORY && HISTORY.captures.includes(capture)) base.pinnedCapture = capture;
-    // Same defensive includes() guard as alt/compare above -- a link from a
-    // different site, or from before the master altitude ladder changed,
-    // just degrades to the full range instead of an empty map.
-    const altMin = Number(URL_PARAMS.get('altmin'));
-    if (DATA.altitudes.includes(altMin)) base.altMin = altMin;
-    const altMax = Number(URL_PARAMS.get('altmax'));
-    if (DATA.altitudes.includes(altMax) && altMax >= base.altMin) base.altMax = altMax;
-    // A URL can carry alt/compare and altmin/altmax independently (e.g. an
-    // older link built before altmin/altmax existed, then hand-narrowed) --
-    // clamp both into the resolved range so byTime/byHistory never end up
-    // showing a zone outside the range the selects display as active.
-    const inRange = a => a >= base.altMin && a <= base.altMax;
-    const nearestInRange = target => {
-      const candidates = DATA.altitudes.filter(inRange);
-      return candidates.length
-        ? candidates.reduce((best, a) => Math.abs(a - target) < Math.abs(best - target) ? a : best)
-        : null;
-    };
-    if (base.pinnedAlt !== null && !inRange(base.pinnedAlt)) base.pinnedAlt = null;
-    if (base.compareAlt !== null && !inRange(base.compareAlt)) base.compareAlt = nearestInRange(base.compareAlt);
-    // customalt=<ft> -- real value, not restricted to DATA.altitudes/inRange
-    // (that's the whole point of it), just bounded to (0, site waiver].
+    // customalt=<ft> -- real value, not restricted to DATA.altitudes (that's
+    // the whole point of it), just bounded to (0, site waiver].
     const customAlt = Number(URL_PARAMS.get('customalt'));
     if (Number.isFinite(customAlt) && customAlt > 0 && customAlt <= DATA.altitudes[DATA.altitudes.length - 1]) {
       base.customAlt = Math.round(customAlt);
@@ -536,7 +541,7 @@ function freshState() {
 // Same DOM side effects setMode() applies on a real user click, extracted so
 // initFromData() can apply them for whatever mode the URL/default resolved
 // to on first load too -- without also running setMode()'s pin-clearing
-// (which would stomp the pinnedAlt a permalink just supplied).
+// (which would stomp the selectedAlts a permalink just supplied).
 function applyModeUI(mode) {
   // The time slider lives inside #weather-panel now (see
   // addWeatherHeaderRow()), not a standalone #hour-toggle -- same disabled-
@@ -551,7 +556,15 @@ function applyModeUI(mode) {
   document.getElementById('alt-hint').textContent =
     mode === 'byTime' ? 'Click an altitude to compare it across all times of day. Map colors now show time of day, not altitude.'
     : mode === 'byHistory' ? 'Click an altitude to see how each model\'s point for it moved across capture dates. Or use "Specific altitude" below to see that instead -- the forecast-age markers simulate just like the map does, though the star (final projection) only ever shows at one of the altitudes listed here.'
-    : 'Hover an altitude to isolate its zone. Click to pin it; click again to release. No single color reads well on every site\'s imagery -- pick one above that stands out here; shades for each altitude are generated from it.';
+    // No hover any more (2026-08) -- click an altitude to toggle its zone
+    // on/off, like a checkbox; double-click to solo/revert, same rules as
+    // the Model legend below. Reported directly: this branch was still
+    // describing the OLD hover-isolate/click-pin design, overwriting the
+    // correct static text index.html sets by default -- this runtime
+    // version (applyModeUI() runs on every mode switch and on load) is the
+    // one that actually reaches the page, so it's the one that has to be
+    // right.
+    : 'Click an altitude to toggle it on/off, like a checkbox -- all start selected. Double-click to solo just that one; double-click it again to bring back whatever was selected before. Or click the readout above the slider and type an exact predicted apogee instead of picking from the ladder; clear the field (or the × button) to go back. No single color reads well on every site\'s imagery -- pick one above that stands out here; shades for each altitude are generated from it.';
   document.getElementById('time-hint').textContent = mode === 'byHistory'
     ? 'Each row is one capture date -- swatch shade shows how many days before launch it was pulled (lighter = further out, darker = closer to launch). Hover to isolate just that capture (map + accuracy table); click to pin, click again to release.'
     : 'Hover a time to isolate it. Click to pin; click again to release.';
@@ -597,25 +610,24 @@ function setMode(mode) {
   // fresh start on every mode switch -- a hidden zone-group carrying over from
   // the other mode's isolation state would reference a data-alt/data-hour that
   // doesn't apply here
-  state.isolatedAlt = null; state.pinnedAlt = null;
   state.isolatedHour = null; state.pinnedHour = null;
-  // selectedModels is deliberately NOT reset here -- carry the user's model
-  // checkboxes across a mode switch instead of silently reselecting every
-  // model. byAltitude/byTime and byHistory do read different availability
-  // sources (modelsWithData() vs historyModelsAvailable()), but
-  // buildModelLegend() already drops anything not valid for the new mode
-  // and only falls back to "all available" if that empties the selection
-  // entirely -- no separate reset needed here, and doing it here as well
-  // was overriding that logic on every single mode switch, not just the
-  // byHistory edge case it was meant for.
-  state.preSoloModels = null; // nothing to undo across a mode switch
+  // selectedModels/selectedAlts are deliberately NOT reset here -- carry the
+  // user's checkboxes across a mode switch instead of silently reselecting
+  // everything. byAltitude/byTime and byHistory do read different
+  // availability sources (modelsWithData() vs historyModelsAvailable();
+  // selectedAlts isn't even read outside byAltitude at all), but
+  // buildModelLegend()/buildAltList() already drop anything not valid for
+  // the new mode and only fall back to "all available" if that empties the
+  // selection entirely -- no separate reset needed here, and doing it here
+  // as well was overriding that logic on every single mode switch, not just
+  // the byHistory edge case it was meant for.
+  state.preSoloModels = null; state.preSoloAlts = null; // nothing to undo across a mode switch
   state.isolatedCapture = null; state.pinnedCapture = null;
   // No rate reset here any more -- state.rateFps/rateName are one shared
   // setting across every mode now (see buildRateEditor()'s own comment),
   // not something History used to isolate separately from byAltitude/byTime.
   applyModeUI(mode);
   buildAltList();
-  buildAltRange();
   buildTimeLegend();
   buildModelLegend();
   buildRateEditor();
@@ -623,14 +635,11 @@ function setMode(mode) {
   // onChange callback returns, for the mode-toggle click that triggers this.
 }
 
-// --- altitude range: coarse min/max filter in front of the per-row list below ---
-function altInRange(alt) { return alt >= state.altMin && alt <= state.altMax; }
 // Descending -- the row list and the slider beside it both read top-to-bottom
 // as high-to-low altitude, matching the real world (sky above, ground below)
 // rather than the ascending order DATA.altitudes/config.ALTITUDES_MASTER_FT
 // happen to store it in.
 function altitudesDescending() { return [...DATA.altitudes].sort((a, b) => b - a); }
-function altitudesInRange() { return altitudesDescending().filter(altInRange); }
 // Altitudes that actually have a zone for the current hour/deploy -- single
 // deploy is dropped above config.SINGLE_DEPLOY_MAX_ALT_FT (10,000ft)
 // pipeline-side, so a high-waiver site on Single has real zones for only
@@ -639,86 +648,344 @@ function altitudesWithZones() {
   return new Set(zonesFor(state.timeMinutes, state.deploy).map(z => z.altitude));
 }
 
-// Row centers, in px from the top of #alt-list's content, for whichever rows
-// are currently rendered there. offsetTop/offsetHeight (not
-// getBoundingClientRect()) deliberately -- they reflect position within the
-// full content box regardless of scroll, so this stays correct even if
-// .alt-list ever scrolls internally. Relies on buildAltList() having already
-// run for the current dataset/mode (every buildAltRange() call site calls it
-// first) so #alt-list's rows exist and are in the same order as
-// altitudesDescending().
-function altRowCentersPx() {
-  return [...document.getElementById('alt-list').children].map(row => row.offsetTop + row.offsetHeight / 2);
+// --- shared altitude control (2D + 3D): compact slider + fly-out ladder ---
+// Promoted 2026-08 from 3D's own bespoke compact slider (previously
+// path3dResolveAltFt()/path3dSetAlt() in descent3d.js, 3D-only) to one
+// shared implementation both frames use now -- lives in .map-view-wrap
+// (index.html), works identically whichever frame is showing. 2D's
+// byAltitude ladder can have several rungs toggled on at once now
+// (state.selectedAlts, a Set -- see buildAltList() below), but there's only
+// one slider thumb/readout/3D descent path, so this collapses that set down
+// to a single scalar the same way descent3d.js used to alone.
+const mapAltControl = document.getElementById('map-alt-control');
+const mapAltReadoutText = document.getElementById('map-alt-readout-text');
+const mapAltSlider = document.getElementById('map-alt-slider');
+const mapAltTicks = document.getElementById('map-alt-ticks');
+const mapAltThumb = document.getElementById('map-alt-thumb');
+
+// Set only by dragging/clicking this control's own slider -- null means
+// "follow whatever mode/selection is currently active" (see
+// resolveMapAltFt()). Mirrors descent3d.js's old path3dAltOverrideFt.
+let mapAltOverrideFt = null;
+let mapAltSliderJustMoved = false;
+let mapAltLastStateSig = null;
+// The altitude actually used by the most recent real resolve -- read by the
+// slider's own keyboard handler instead of calling resolveMapAltFt() a
+// second time mid-interaction (that function has side effects on the
+// override/sig above, meant to run at most once per update).
+let mapAltLastResolvedFt = null;
+
+function mapAltSliderMaxFt() {
+  return DATA.altitudes[DATA.altitudes.length - 1];
 }
 
-// Repositions the two thumbs/fill/readout from current state -- cheap, safe
-// to call on every altMin/altMax change (drag, keyboard, reset, permalink
-// load, real-flight snap). Drag/keyboard interaction itself is wired up once
-// in initAltRangeSlider() below, not rebuilt here, so an in-progress drag
-// never loses its listeners mid-gesture.
-function buildAltRange() {
-  const listEl = document.getElementById('alt-list');
-  const sliderEl = document.getElementById('alt-range-slider');
-  // Matches #alt-list's real content height exactly (not a formula/estimate)
-  // so each thumb's % position lines up with its row's actual center, not
-  // just a proportional guess -- see altRowCentersPx()'s own comment.
-  const listHeight = listEl.scrollHeight;
-  sliderEl.style.height = listHeight + 'px';
-
-  const alts = altitudesDescending(); // index 0 = highest (top), last = lowest (bottom)
-  const n = alts.length;
-  const maxIdx = alts.indexOf(state.altMax);
-  const minIdx = alts.indexOf(state.altMin);
-  const centers = altRowCentersPx();
-  const pct = i => listHeight > 0 ? (centers[i] / listHeight) * 100 : 50;
-
-  const maxThumb = document.getElementById('alt-max-thumb');
-  const minThumb = document.getElementById('alt-min-thumb');
-  const fill = document.getElementById('alt-range-fill');
-  maxThumb.style.top = pct(maxIdx) + '%';
-  minThumb.style.top = pct(minIdx) + '%';
-  fill.style.top = pct(maxIdx) + '%';
-  fill.style.height = (pct(minIdx) - pct(maxIdx)) + '%';
-
-  [[maxThumb, state.altMax], [minThumb, state.altMin]].forEach(([thumb, val]) => {
-    thumb.setAttribute('aria-valuemin', alts[n - 1]);
-    thumb.setAttribute('aria-valuemax', alts[0]);
-    thumb.setAttribute('aria-valuenow', val);
-    thumb.setAttribute('aria-valuetext', val.toLocaleString() + ' ft');
-  });
-
-  const full = state.altMin === alts[n - 1] && state.altMax === alts[0];
-  document.getElementById('alt-range-readout-text').textContent = full
-    ? 'All altitudes' : `${state.altMin.toLocaleString()}–${state.altMax.toLocaleString()} ft`;
-}
-
-function onAltRangeChanged() {
-  if (state.pinnedAlt !== null && !altInRange(state.pinnedAlt)) state.pinnedAlt = null;
-  if (state.isolatedAlt !== null && !altInRange(state.isolatedAlt)) state.isolatedAlt = null;
-  if (state.compareAlt !== null && !altInRange(state.compareAlt)) {
-    const inRange = altitudesInRange();
-    state.compareAlt = inRange.length ? inRange.reduce((best, a) =>
-      Math.abs(a - state.compareAlt) < Math.abs(best - state.compareAlt) ? a : best) : null;
+// Priority chain, highest first: this slider's own drag override, then
+// "Specific altitude" (customAlt), then per-mode -- byTime/byHistory read
+// compareAlt (their own single-select "which altitude to compare across
+// hours/captures," unchanged); byAltitude reads whichever altitude is
+// solo'd (state.selectedAlts has exactly one member, via double-click or by
+// manually unchecking every other one) -- with several checked and none
+// solo'd there's no single answer, so this falls back to the top of the
+// site's own ladder, same as when nothing used to be pinned under the old
+// single-select design. mapAltOverrideFt is cleared back to "follow the
+// current selection" as soon as any of those inputs changes from a source
+// OTHER than this slider's own drag (tracked via mapAltSliderJustMoved,
+// reset every call -- so it only "protects" the override for the one
+// update immediately following an actual drag).
+function resolveMapAltFt() {
+  const soloAlt = (state.mode === 'byAltitude' && state.selectedAlts && state.selectedAlts.size === 1)
+    ? [...state.selectedAlts][0] : null;
+  const sig = `${state.mode}|${state.customAlt}|${soloAlt}|${state.compareAlt}`;
+  if (mapAltOverrideFt !== null && !mapAltSliderJustMoved && sig !== mapAltLastStateSig) {
+    mapAltOverrideFt = null;
   }
-  buildAltList();
-  buildAltRange();
-  render();
+  mapAltLastStateSig = sig;
+  mapAltSliderJustMoved = false;
+  if (mapAltOverrideFt !== null) return mapAltOverrideFt;
+  if (state.customAlt !== null) return state.customAlt;
+  if (state.mode === 'byTime' || state.mode === 'byHistory') return state.compareAlt ?? mapAltSliderMaxFt();
+  if (soloAlt !== null) return soloAlt;
+  return mapAltSliderMaxFt();
 }
 
-document.getElementById('alt-range-reset').addEventListener('click', () => {
-  state.altMin = DATA.altitudes[0];
-  state.altMax = DATA.altitudes[DATA.altitudes.length - 1];
-  onAltRangeChanged();
+// "2k'"..."50k'" -- short enough to read centered inside a compact tick
+// hit-box; the flyout's own ladder rows show the full "2,000 ft" text
+// instead (see buildAltList()). Every value in the current master ladder
+// (config.ALTITUDES_MASTER_FT) is a clean multiple of 1,000ft, so this
+// never needs a fractional/rounded case.
+function shortAltLabel(alt) { return Math.round(alt / 1000) + "k'"; }
+
+function mapAltUpdateSliderUI(altFt) {
+  const max = mapAltSliderMaxFt();
+  const frac = max > 0 ? Math.max(0, Math.min(1, altFt / max)) : 0;
+  // `bottom` on .map-alt-thumb IS its own bottom EDGE, not its center
+  // (translateX-only, see its own CSS comment) -- inset by the thumb's 9px
+  // radius so its circle never spills past the track's ends.
+  const centerFromBottom = `calc(9px + (100% - 18px) * ${frac})`;
+  mapAltThumb.style.bottom = `calc(${centerFromBottom} - 9px)`;
+  mapAltSlider.setAttribute('aria-valuenow', String(Math.round(altFt)));
+  mapAltSlider.setAttribute('aria-valuemin', '0');
+  mapAltSlider.setAttribute('aria-valuemax', String(Math.round(max)));
+  mapAltRenderTicks();
+}
+
+// One tick per altitude in DATA.altitudes, colored via the SAME
+// ALT_COLORS_HEX ramp the flyout's own ladder rows use -- requested
+// directly, so the collapsed control's hit-boxes read as the same "which
+// altitude is which color" language as the expanded list. Rebuilt on every
+// call (cheap: DATA.altitudes is a handful of values) since the slider's
+// own live pixel height -- which mapAltTicksToShow() decimates against --
+// can change from a window resize independently of anything else that
+// would otherwise trigger a rebuild.
+function mapAltRenderTicks() {
+  const rect = mapAltSlider.getBoundingClientRect();
+  const trackPx = Math.max(0, rect.height - 18);
+  const max = mapAltSliderMaxFt();
+  mapAltTicks.innerHTML = '';
+  const shown = new Set(mapAltTicksToShow(trackPx));
+  shown.forEach(alt => {
+    const frac = max > 0 ? alt / max : 0;
+    const tick = document.createElement('button');
+    tick.type = 'button';
+    tick.className = 'map-alt-tick';
+    tick.title = `${alt.toLocaleString()} ft`;
+    tick.style.bottom = `calc(9px + (100% - 18px) * ${frac} - 9px)`;
+    tick.style.background = ALT_COLORS_HEX[alt] || zoneBaseColor;
+    tick.textContent = shortAltLabel(alt);
+    // pointerdown + stopPropagation, not a plain 'click' -- a tick sits
+    // inside #map-alt-slider, so an unstopped pointerdown would bubble up
+    // into the slider's OWN pointerdown handler first and jump the thumb to
+    // the click's raw Y before this corrects it to the exact tick value, a
+    // visible "jump then snap back." Does NOT open the flyout (reported
+    // directly: opening on every adjustment was unwanted) -- #map-alt-toggle
+    // is the one explicit trigger now, see toggleMapAltPanel().
+    tick.addEventListener('pointerdown', evt => {
+      evt.stopPropagation();
+      mapAltSetAlt(alt, true);
+    });
+    // Also a plain 'click' -- keyboard activation (Enter/Space on a focused
+    // button) fires that without a preceding pointerdown at all.
+    tick.addEventListener('click', () => mapAltSetAlt(alt, true));
+    mapAltTicks.appendChild(tick);
+  });
+  // Unlabeled reference ticks filling the gaps -- see mapAltMinorStep()'s
+  // own comment for the density reasoning. Excludes anything within
+  // MIN_SPACING_PX of an already-shown labeled tick (own decimation walk
+  // already keeps labeled ticks apart; this just also keeps minor ticks
+  // from landing directly on/under one).
+  mapAltMinorTicksToShow(trackPx, shown).forEach(alt => {
+    const frac = max > 0 ? alt / max : 0;
+    const tick = document.createElement('button');
+    tick.type = 'button';
+    tick.className = 'map-alt-tick-minor';
+    tick.title = `${alt.toLocaleString()} ft`;
+    tick.style.bottom = `calc(9px + (100% - 18px) * ${frac} - 1.5px)`;
+    tick.addEventListener('pointerdown', evt => { evt.stopPropagation(); mapAltSetAlt(alt, true); });
+    tick.addEventListener('click', () => mapAltSetAlt(alt, true));
+    mapAltTicks.appendChild(tick);
+  });
+}
+
+// Thins DATA.altitudes down to whatever actually fits `trackPx` without
+// crowding -- ticks closer together than MIN_SPACING_PX get dropped,
+// walking bottom-up so the kept set stays evenly spread. Always keeps the
+// top of the ladder even if that means dropping its nearest-below neighbor
+// instead. Taller minimum spacing than the old 3D-only dash ticks (22px) --
+// these ticks now hold real centered text ("2k'".."50k'"), which needs more
+// room than a bare dash did; the master ladder itself got sparser in the
+// same redesign (11 rungs max now, down from 24), so this rarely bites in
+// practice.
+function mapAltTicksToShow(trackPx) {
+  const all = DATA.altitudes;
+  const max = mapAltSliderMaxFt();
+  if (!all.length || max <= 0 || trackPx <= 0) return [];
+  const MIN_SPACING_PX = 26;
+  const kept = [];
+  let lastPx = -Infinity;
+  all.forEach((alt, i) => {
+    const px = (alt / max) * trackPx;
+    const isLast = i === all.length - 1;
+    if (isLast && kept.length && px - lastPx < MIN_SPACING_PX) kept.pop();
+    if (px - lastPx >= MIN_SPACING_PX || isLast) {
+      kept.push(alt);
+      lastPx = px;
+    }
+  });
+  return kept;
+}
+
+// Unlabeled reference ticks between the labeled master-ladder rungs --
+// requested directly ("on fields with lower ceilings, you can put the 1k'
+// marks, but don't label them"), then corrected twice more: 500ft is a
+// FLOOR on how fine these ever get, not a literal every-500ft grid
+// regardless of site ("I said minimum, not minor tick"), and a high-waiver
+// site's much taller real range can't fit that many marks in the same
+// physical slider height without collapsing into each other ("high waivers
+// can't have 100' increments, it may need to shrink on mobile too").
+// MAP_ALT_MINOR_TICK_CANDIDATES walks finest-to-coarsest and
+// mapAltMinorStep() picks the first one whose spacing actually fits --
+// the SAME real pixel-height-driven mechanism mapAltTicksToShow() already
+// uses for the labeled ticks, so this also coarsens for free on a short
+// mobile slider, not just a tall-waiver site's much longer range.
+const MAP_ALT_MINOR_TICK_CANDIDATES = [500, 1000, 2000, 2500, 5000, 10000];
+const MINOR_TICK_MIN_SPACING_PX = 10;
+
+function mapAltMinorStep(trackPx) {
+  const max = mapAltSliderMaxFt();
+  if (max <= 0 || trackPx <= 0) return null;
+  for (const step of MAP_ALT_MINOR_TICK_CANDIDATES) {
+    if ((step / max) * trackPx >= MINOR_TICK_MIN_SPACING_PX) return step;
+  }
+  return null; // even the coarsest candidate doesn't fit -- no minor ticks at all
+}
+
+function mapAltMinorTicksToShow(trackPx, labeledAlts) {
+  const step = mapAltMinorStep(trackPx);
+  if (!step) return [];
+  const max = mapAltSliderMaxFt();
+  const out = [];
+  for (let alt = step; alt < max; alt += step) {
+    if (!labeledAlts.has(alt)) out.push(alt);
+  }
+  return out;
+}
+
+function mapAltFromClientY(clientY) {
+  const rect = mapAltSlider.getBoundingClientRect();
+  const frac = 1 - Math.max(0, Math.min(1, (clientY - rect.top) / rect.height));
+  return Math.round(frac * mapAltSliderMaxFt());
+}
+
+// Pushes a new apogee into both this slider's own override (immediate) and
+// state.customAlt ("Specific altitude") -- unlike selectedAlts (which
+// altitude ZONES show on the 2D map, a persistent multi-select choice),
+// dragging this slider is a momentary "let me check one exact altitude"
+// excursion; selectedAlts is deliberately left untouched by it (once
+// customAlt clears again, the ladder's own checkbox selection resumes
+// controlling the map exactly as it was, not reset to whatever the drag
+// passed through -- a deliberate improvement over the old single-select
+// design, which used to clear pinnedAlt/isolatedAlt here since those had no
+// "set" concept to preserve). `commit` is false for the many intermediate
+// pointermove updates during a drag (cheap: this slider's own UI refresh
+// plus renderDescent3D(), no re-simulation), true for the drag's actual
+// endpoint (a tick click, an arrow-key step, or pointerup) -- the one point
+// a full render() runs.
+function mapAltSetAlt(altFt, commit) {
+  // Rounded to the nearest 100ft, not 1ft -- a freeform drag/keyboard step
+  // implies false precision at 1ft resolution. A no-op for tick clicks --
+  // every DATA.altitudes value is already a clean multiple of 1,000.
+  const rounded = Math.round(altFt / 100) * 100;
+  const clamped = Math.max(1, Math.min(mapAltSliderMaxFt(), rounded));
+  mapAltOverrideFt = clamped;
+  mapAltSliderJustMoved = true;
+  state.customAlt = clamped;
+  syncAltCustomUI();
+  if (commit) {
+    render();
+  } else {
+    mapAltUpdateSliderUI(clamped);
+    if (typeof renderDescent3D === 'function') renderDescent3D();
+  }
+}
+// No openMapAltPanel() call here any more -- reported directly, opening the
+// fly-out on every drag was unwanted. Dragging/clicking the slider only
+// ever sets the altitude now; #map-alt-toggle (below) is the one explicit
+// way to open or close the panel.
+mapAltSlider.addEventListener('pointerdown', evt => {
+  evt.preventDefault();
+  mapAltSlider.setPointerCapture(evt.pointerId);
+  const move = e => mapAltSetAlt(mapAltFromClientY(e.clientY), false);
+  const stop = () => {
+    document.removeEventListener('pointermove', move);
+    document.removeEventListener('pointerup', stop);
+    // Final commit -- see mapAltSetAlt()'s own comment on why the drag
+    // itself doesn't pay for a full render() on every intermediate step.
+    if (mapAltOverrideFt !== null) mapAltSetAlt(mapAltOverrideFt, true);
+  };
+  document.addEventListener('pointermove', move);
+  document.addEventListener('pointerup', stop);
+  move(evt);
+});
+mapAltSlider.addEventListener('keydown', evt => {
+  if (mapAltLastResolvedFt === null) return;
+  const max = mapAltSliderMaxFt();
+  const step = Math.max(1, Math.round(max / 50));
+  let next = null;
+  if (evt.key === 'ArrowUp' || evt.key === 'ArrowRight') next = Math.min(max, mapAltLastResolvedFt + step);
+  else if (evt.key === 'ArrowDown' || evt.key === 'ArrowLeft') next = Math.max(0, mapAltLastResolvedFt - step);
+  if (next !== null) {
+    evt.preventDefault();
+    mapAltSetAlt(next, true);
+  }
 });
 
+// #map-alt-panel is nested INSIDE #map-alt-slider now (see index.html's own
+// comment, for alignAltListToSlider()'s positioning math below) -- without
+// this, a pointerdown anywhere in the panel (a row click, the color picker,
+// etc.) would bubble up into the slider's OWN pointerdown handler just
+// above and jump the thumb to that click's raw Y, same class of fix the
+// tick buttons' own stopPropagation() already needed.
+document.getElementById('map-alt-panel').addEventListener('pointerdown', evt => evt.stopPropagation());
+
+// Explicit open/close -- replaced the old "any interaction opens it, click
+// outside closes it" behavior (mirrored from #rail-angle-control) after
+// direct feedback that opening on every slider adjustment was unwanted.
+// #map-alt-toggle is now the ONLY thing that opens or closes this panel;
+// outside-click-to-close is kept (same convenience #rail-angle-panel still
+// has), just no more auto-open.
+const mapAltToggleBtn = document.getElementById('map-alt-toggle');
+// Glyph points the direction the panel actually moves, not a generic
+// up/down caret (reported directly) -- "&laquo;" collapsed (opening grows
+// LEFT, into the map, matching .map-alt-panel's own right:calc(100% + 8px)
+// growth), "&raquo;" expanded (closing retracts back right).
+function setMapAltExpanded(expanded) {
+  mapAltControl.classList.toggle('expanded', expanded);
+  mapAltToggleBtn.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+  mapAltToggleBtn.textContent = expanded ? '»' : '«';
+  if (expanded) alignAltListToSlider(); // panel was display:none until now -- (re)align once it has a real box to measure
+}
+function toggleMapAltPanel() {
+  setMapAltExpanded(!mapAltControl.classList.contains('expanded'));
+}
+mapAltToggleBtn.addEventListener('click', toggleMapAltPanel);
+document.addEventListener('click', evt => {
+  if (!mapAltControl.contains(evt.target) && mapAltControl.classList.contains('expanded')) {
+    setMapAltExpanded(false);
+  }
+});
+
+// Runs the whole resolve-and-redraw pass for this control -- called once
+// per real update (from applyIsolation(), itself called at the end of every
+// render() and from the ladder's own cheap toggle path below), never
+// several times per pass (resolveMapAltFt() has side effects meant to run
+// exactly once per update, see its own comment).
+function updateMapAltControl() {
+  const altFt = resolveMapAltFt();
+  mapAltLastResolvedFt = altFt;
+  mapAltUpdateSliderUI(altFt);
+  if (state.customAlt === null) mapAltReadoutText.textContent = altFt.toLocaleString() + ' ft';
+}
+
+// Read-only for now (per direction) -- DATA.descent_params.main_deploy_altitude_ft
+// is already published/used for the phase construction every drift sim here
+// runs (simulateDriftPath()'s [drogue, apogee, mainAlt] / [main, mainAlt, 0]
+// phases); this just surfaces the same number in the flyout so it doesn't
+// have to be inferred from the sim. Fixed per-site, not per-selection -- set
+// once whenever a dataset loads, not on every render().
+function renderMapAltDeployReadout() {
+  const alt = DATA.descent_params.main_deploy_altitude_ft;
+  document.getElementById('map-alt-deploy-readout').textContent = `Main deploy: ${alt.toLocaleString()} ft`;
+}
+
 // --- direct-entry altitude ("Specific altitude") -- overrides the whole
-// range/ladder selection above in every mode, including History (see
-// render()/renderHistory()/historyPointsForAltitude()). No separate
-// checkbox -- clicking into the input *is* the request to use it (real user
-// feedback: a checkbox-then-type flow made people click twice for one
-// intent). Reflects state.customAlt into the input/status text and dims the
-// range row while active; safe to call any time state.customAlt, hour, or
-// deploy changes (cheap -- reads zoneFor()'s cache, doesn't re-simulate).
+// ladder/selectedAlts selection above in every mode, including History (see
+// render()/renderHistory()/historyPointsForAltitude()). Lives in the
+// readout above the compact slider now (2026-08) -- plain text
+// (mapAltReadoutText) showing the current resolved altitude until clicked,
+// then this same input in its place; previously a permanently-visible field
+// in the sidebar. No separate checkbox -- clicking the readout/focusing the
+// input *is* the request to use it (real user feedback: a checkbox-then-
+// type flow made people click twice for one intent).
 //
 // type="text" + inputmode="numeric" + pattern="[0-9]*" -- deliberately not
 // type="number": that shows a mobile keypad with decimal/minus keys anyway
@@ -731,6 +998,7 @@ document.getElementById('alt-range-reset').addEventListener('click', () => {
 // truth.
 const altCustomInput = document.getElementById('alt-custom-input');
 const altCustomClear = document.getElementById('alt-custom-clear');
+const altCustomInputRow = document.getElementById('alt-custom-input-row');
 // Strips anything that isn't a digit as it's typed (pasted content included,
 // since 'input' fires for that too) -- keeps the field itself always
 // integer-clean rather than only cleaning up on blur/Enter.
@@ -739,11 +1007,17 @@ altCustomInput.addEventListener('input', () => {
   if (digitsOnly !== altCustomInput.value) altCustomInput.value = digitsOnly;
 });
 
+// Swaps the readout between plain text (mapAltReadoutText) and this editable
+// row -- NOT responsible for the resolved-altitude TEXT itself while
+// inactive (updateMapAltControl() owns that, called once per real update);
+// this only toggles which element shows and reflects the active value/
+// status into the input, safe to call any time state.customAlt, hour, or
+// deploy changes (cheap -- reads zoneFor()'s cache, doesn't re-simulate).
 function syncAltCustomUI() {
   const active = state.customAlt !== null;
+  mapAltReadoutText.style.display = active ? 'none' : '';
+  altCustomInputRow.style.display = active ? '' : 'none';
   if (active) altCustomInput.value = state.customAlt;
-  altCustomClear.style.display = active ? '' : 'none';
-  document.querySelector('.alt-range-row').classList.toggle('alt-custom-dimmed', active);
   const statusEl = document.getElementById('alt-custom-status');
   if (!active) { statusEl.textContent = ''; return; }
   // zoneFor() itself already handles "no zone" gracefully (returns null --
@@ -765,17 +1039,18 @@ function syncAltCustomUI() {
 function activateAltCustom() {
   if (state.customAlt !== null) return; // already active, focus alone shouldn't re-seed over a real edit in progress
   const maxAlt = DATA.altitudes[DATA.altitudes.length - 1];
-  const seed = Number(altCustomInput.value) || state.compareAlt || Math.round(maxAlt / 2);
+  const seed = Number(altCustomInput.value) || mapAltLastResolvedFt || state.compareAlt || Math.round(maxAlt / 2);
   state.customAlt = Math.min(maxAlt, Math.max(1, Math.round(seed)));
-  // Isolate/pin among the ladder rows stops meaning anything once a single
-  // specific-altitude zone is the whole view -- clear rather than leave a
-  // dangling selection that resurfaces confusingly if this gets cleared
-  // later.
-  state.pinnedAlt = null;
-  state.isolatedAlt = null;
   syncAltCustomUI();
   render();
 }
+// Neither of these opens the fly-out any more either -- #map-alt-toggle is
+// the one explicit trigger (see its own comment); editing "Specific
+// altitude" and browsing the ladder are independent actions now.
+mapAltReadoutText.addEventListener('click', () => {
+  activateAltCustom();
+  altCustomInput.focus();
+});
 altCustomInput.addEventListener('focus', activateAltCustom);
 altCustomInput.addEventListener('change', () => {
   // Clearing the field (deleting all digits, then blur/Enter) turns the
@@ -803,121 +1078,80 @@ altCustomClear.addEventListener('click', () => {
   render();
 });
 
-// Drag (pointer events, so mouse/touch/pen share one code path) + keyboard
-// wiring for the two thumbs -- attached once at load, not rebuilt per
-// dataset (buildAltRange() above only repositions). Always reads
-// altitudesDescending()/state fresh rather than closing over a snapshot, so
-// it stays correct across site/date switches without needing to be re-armed.
-function initAltRangeSlider() {
-  const maxThumb = document.getElementById('alt-max-thumb');
-  const minThumb = document.getElementById('alt-min-thumb');
-
-  // Nearest row *center* to the pointer, not a linear fraction of the
-  // slider's own height -- the two aren't the same thing (a naive
-  // index/(n-1) fraction puts index 0 at the slider's top edge, not the
-  // first row's center, which is exactly the misalignment this was built to
-  // fix). Measures the live rows directly rather than re-deriving their
-  // positions, so it's automatically correct for whatever's currently
-  // rendered.
-  function indexFromClientY(clientY) {
-    const rows = [...document.getElementById('alt-list').children];
-    const listRect = document.getElementById('alt-list').getBoundingClientRect();
-    let bestIdx = 0, bestDist = Infinity;
-    rows.forEach((row, i) => {
-      const center = listRect.top + row.offsetTop + row.offsetHeight / 2;
-      const dist = Math.abs(clientY - center);
-      if (dist < bestDist) { bestDist = dist; bestIdx = i; }
-    });
-    return bestIdx;
-  }
-
-  // which thumb's index moves to idx, clamped so the two thumbs can never
-  // cross (max-thumb's index can't exceed min-thumb's, and vice versa --
-  // remember higher index = lower altitude, since the array is descending).
-  function commitIndex(which, idx) {
-    const alts = altitudesDescending();
-    const n = alts.length;
-    const maxIdx = alts.indexOf(state.altMax);
-    const minIdx = alts.indexOf(state.altMin);
-    if (which === 'max') {
-      idx = Math.max(0, Math.min(idx, minIdx));
-      if (idx === maxIdx) return;
-      state.altMax = alts[idx];
-    } else {
-      idx = Math.min(n - 1, Math.max(idx, maxIdx));
-      if (idx === minIdx) return;
-      state.altMin = alts[idx];
-    }
-    onAltRangeChanged();
-  }
-
-  function startDrag(which, thumbEl) {
-    return evt => {
-      evt.preventDefault();
-      thumbEl.setPointerCapture(evt.pointerId);
-      const move = e => commitIndex(which, indexFromClientY(e.clientY));
-      const stop = () => {
-        document.removeEventListener('pointermove', move);
-        document.removeEventListener('pointerup', stop);
-      };
-      document.addEventListener('pointermove', move);
-      document.addEventListener('pointerup', stop);
-      commitIndex(which, indexFromClientY(evt.clientY));
-    };
-  }
-  maxThumb.addEventListener('pointerdown', startDrag('max', maxThumb));
-  minThumb.addEventListener('pointerdown', startDrag('min', minThumb));
-
-  function keyStep(which) {
-    return evt => {
-      const alts = altitudesDescending();
-      const maxIdx = alts.indexOf(state.altMax);
-      const minIdx = alts.indexOf(state.altMin);
-      const cur = which === 'max' ? maxIdx : minIdx;
-      if (evt.key === 'Home') { commitIndex(which, which === 'max' ? 0 : maxIdx); evt.preventDefault(); return; }
-      if (evt.key === 'End') { commitIndex(which, which === 'max' ? minIdx : alts.length - 1); evt.preventDefault(); return; }
-      const delta = { ArrowUp: -1, ArrowLeft: -1, ArrowDown: 1, ArrowRight: 1, PageUp: -3, PageDown: 3 }[evt.key];
-      if (delta === undefined) return;
-      evt.preventDefault();
-      commitIndex(which, cur + delta);
-    };
-  }
-  maxThumb.addEventListener('keydown', keyStep('max'));
-  minThumb.addEventListener('keydown', keyStep('min'));
-}
-initAltRangeSlider();
-
-// --- altitude list: hover-isolate in "by altitude" mode, single-select in "by time" mode ---
-// Always renders every altitude in the site's full ladder (descending), never
-// just the in-range subset -- the slider beside it positions its stops
-// against the full list too (see altRangeSliderHeightPx()), and removing
-// rows as the range narrows made the list reflow/shift, breaking that visual
-// alignment. Out-of-range rows get the same dimmed/non-interactive treatment
-// as a real no-zone row (.unavailable) instead of disappearing.
+// --- altitude list (the flyout's own ladder): byAltitude mode gets Models'
+// own checkbox + double-click-solo/revert pattern (state.selectedAlts/
+// preSoloAlts, mirrors buildModelLegend() exactly -- see that function's own
+// comment for the full click/dblclick mechanics); byTime/byHistory keep the
+// original single-select click-toggle (state.compareAlt), unchanged --
+// those modes render exactly one altitude at a time, so there's no "set" to
+// toggle a member of. Always renders every altitude with a real zone (no
+// range filter any more -- that dual-thumb slider was removed 2026-08);
+// unchecking one just hides its already-built zone-group (applyIsolation())
+// rather than removing the row -- every rung's zone-group is built
+// unconditionally now (see render()), so there's always something to
+// re-show if it's checked again later.
 function buildAltList() {
   const el = document.getElementById('alt-list');
   el.innerHTML = '';
   const withZones = altitudesWithZones();
+  const isByAlt = state.mode === 'byAltitude';
+  if (isByAlt) {
+    if (state.selectedAlts === null) {
+      state.selectedAlts = new Set(withZones);
+    } else {
+      // Drop anything selected that isn't actually available here (e.g. a
+      // deploy switch that drops an altitude above SINGLE_DEPLOY_MAX_ALT_FT)
+      // -- falls back to "all available" rather than leaving a confusing
+      // empty map if that drops every selected altitude.
+      const stillValid = new Set([...state.selectedAlts].filter(a => withZones.has(a)));
+      state.selectedAlts = stillValid.size ? stillValid : new Set(withZones);
+    }
+  }
   altitudesDescending().forEach(alt => {
+    const available = withZones.has(alt);
+    const selected = isByAlt && state.selectedAlts.has(alt);
     const row = document.createElement('div');
-    const available = withZones.has(alt) && altInRange(alt);
-    row.className = 'alt-row' + (available ? '' : ' unavailable');
+    row.className = 'alt-row' + (!available ? ' unavailable' : (isByAlt ? (selected ? ' pinned' : ' deselected') : ''));
+    row.dataset.alt = alt; // read back by alignAltListToSlider() below
     row.innerHTML = `<div class="alt-swatch" style="background:${ALT_COLORS_HEX[alt]}"></div><span>${alt.toLocaleString()} ft</span>`;
     if (!available) { el.appendChild(row); return; }
 
-    if (state.mode === 'byAltitude') {
-      row.addEventListener('mouseenter', () => { state.isolatedAlt = alt; applyIsolation(); });
-      row.addEventListener('mouseleave', () => { state.isolatedAlt = null; applyIsolation(); });
+    if (isByAlt) {
+      // click vs dblclick: a browser fires click on both presses of a
+      // double-click before the dblclick event itself, so the single-click
+      // toggle is delayed briefly -- if a second click lands within the
+      // window, it's a dblclick instead and the pending toggle is dropped.
+      // Identical mechanics to buildModelLegend()'s own per-row timer.
+      let clickTimer = null;
       row.addEventListener('click', () => {
-        state.pinnedAlt = (state.pinnedAlt === alt) ? null : alt;
-        [...el.children].forEach(r => r.classList.remove('pinned'));
-        if (state.pinnedAlt === alt) row.classList.add('pinned');
+        if (clickTimer) return;
+        clickTimer = setTimeout(() => {
+          clickTimer = null;
+          if (state.selectedAlts.has(alt)) state.selectedAlts.delete(alt);
+          else state.selectedAlts.add(alt);
+          state.preSoloAlts = null; // a manual toggle supersedes any pending solo-undo
+          buildAltList();
+          applyIsolation(); // cheap show/hide -- every zone-group already exists, see render()
+        }, 250);
+      });
+      row.addEventListener('dblclick', () => {
+        if (clickTimer) { clearTimeout(clickTimer); clickTimer = null; }
+        // Second double-click on the altitude that's currently soloed undoes
+        // it back to whatever was selected right before -- otherwise this is
+        // a fresh solo, so stash the pre-solo selection for that undo.
+        if (state.preSoloAlts && state.selectedAlts.size === 1 && state.selectedAlts.has(alt)) {
+          state.selectedAlts = state.preSoloAlts;
+          state.preSoloAlts = null;
+        } else {
+          state.preSoloAlts = new Set(state.selectedAlts);
+          state.selectedAlts = new Set([alt]);
+        }
+        buildAltList();
         applyIsolation();
       });
-      if (state.pinnedAlt === alt) row.classList.add('pinned');
     } else {
       row.addEventListener('click', () => {
-        // Toggle, same as byAltitude's pinnedAlt above -- clicking the
+        // Toggle, same as byAltitude's selectedAlts above -- clicking the
         // already-selected altitude again clears it rather than being stuck
         // permanently selected.
         state.compareAlt = (state.compareAlt === alt) ? null : alt;
@@ -929,6 +1163,65 @@ function buildAltList() {
     }
     el.appendChild(row);
   });
+  alignAltListToSlider();
+}
+
+// Positions each #alt-list row at the same alt/max fraction position the
+// slider's own ticks use (relative to #map-alt-slider's live pixel height,
+// not just evenly stacked top-to-bottom) -- reported directly ("fix the
+// panel... so the labels are aligned to the slider"). A no-op while the
+// panel is collapsed (display:none -- its rect is all-zero, nothing is
+// visible anyway); toggleMapAltPanel() calls this again right after adding
+// .expanded so it's correct the moment it actually matters. Rows are
+// ordered descending (altitudesDescending()), so a single top-down pass
+// pushes any row that would land closer than MIN_ROW_PX to the one already
+// placed above it -- keeps every row readable without ever reordering
+// them, at the cost of drifting off the "true" fraction position only
+// where the ladder's own real rungs are packed close together (unavoidable
+// -- text needs real height a bare tick doesn't).
+function alignAltListToSlider() {
+  const listEl = document.getElementById('alt-list');
+  const rows = [...listEl.children];
+  if (!rows.length) return;
+  const sliderRect = mapAltSlider.getBoundingClientRect();
+  const listRect = listEl.getBoundingClientRect();
+  if (!listRect.height) return; // collapsed -- nothing visible to align yet
+  const max = mapAltSliderMaxFt();
+  const usable = sliderRect.height - 18; // matches the 9px-inset-each-end convention every tick uses
+  const MIN_ROW_PX = 24;
+
+  // Clamped to >=0 -- #alt-list sits BELOW the panel's own title/color-
+  // picker/deploy-readout content, not flush with the slider's own top, so
+  // the highest altitude's "true" fraction position (closest to the
+  // slider's top) can compute to a negative offset here. An unclamped
+  // negative top rendered that row overlapping the header content above it
+  // (confirmed directly, screenshot showed "10,000 ft" painted over "Main
+  // deploy: 800 ft") -- pinning it to 0 trades a little alignment accuracy
+  // at the very top for never overlapping real content, and the collision
+  // loop below still cascades correctly from whatever this clamps to.
+  const idealTops = rows.map(row => {
+    const alt = Number(row.dataset.alt);
+    const frac = max > 0 ? alt / max : 0;
+    const bottomFromSliderBottom = 9 + usable * frac;
+    const topFromSliderTop = sliderRect.height - bottomFromSliderBottom;
+    return Math.max(0, (sliderRect.top + topFromSliderTop) - listRect.top);
+  });
+
+  const tops = [...idealTops];
+  for (let i = 1; i < tops.length; i++) {
+    if (tops[i] - tops[i - 1] < MIN_ROW_PX) tops[i] = tops[i - 1] + MIN_ROW_PX;
+  }
+
+  rows.forEach((row, i) => { row.style.top = `${tops[i]}px`; });
+
+  // #alt-list is position:relative with absolutely-positioned children now
+  // (see its own CSS comment) -- it won't grow to fit them on its own, so
+  // give it enough real height to hold the lowest (possibly collision-
+  // pushed) row, and let it scroll internally (.map-alt-panel's own
+  // overflow-y) if that pushes past the panel's available space on an
+  // especially packed ladder.
+  const lastBottom = tops[tops.length - 1] + MIN_ROW_PX;
+  listEl.style.height = Math.max(lastBottom, listRect.height) + 'px';
 }
 
 // Which models published a usable wind profile at any hour -- a model beyond
@@ -1236,10 +1529,27 @@ function buildTimeLegend() {
 
 function applyIsolation() {
   if (state.mode === 'byAltitude') {
-    const active = state.isolatedAlt ?? state.pinnedAlt;
+    // Checkbox multi-select now (state.selectedAlts, a Set), not a single
+    // isolate/pin value -- every zone-group whose altitude is in the set
+    // shows, the rest hide. selectedAlts is only ever null before
+    // buildAltList() has resolved its sentinel (see that function's own
+    // comment); guarded the same defensive way just in case this runs
+    // first.
+    //
+    // customAlt (Specific altitude) bypasses selectedAlts entirely -- when
+    // it's active, render() builds exactly one zone-group, at whatever
+    // arbitrary value the slider was dragged to (see render()'s own
+    // altitudeZones branch), which is essentially never a member of
+    // selectedAlts (that Set only ever holds the discrete ladder's own
+    // rungs). Filtering it against selectedAlts anyway hid it unless the
+    // drag happened to land exactly on a ladder value -- real bug, reported
+    // directly ("the splash zone isn't being rendered unless it's on a 2k'
+    // marker"). null here (not selectedAlts) so the one real zone-group
+    // always shows, same as "nothing to filter against."
+    const selected = state.customAlt !== null ? null : state.selectedAlts;
     document.querySelectorAll('.zone-group').forEach(g => {
       const alt = parseInt(g.dataset.alt, 10);
-      g.style.display = (active === null || alt === active) ? '' : 'none';
+      g.style.display = (selected === null || selected.has(alt)) ? '' : 'none';
     });
   } else {
     const active = state.isolatedHour ?? state.pinnedHour;
@@ -1249,12 +1559,18 @@ function applyIsolation() {
     });
   }
   syncUrl();
-  // Hover/pin on the altitude ladder only ever triggered this lightweight
-  // SVG-visibility toggle before, not a full render() -- without this the
-  // 3D view (descent3d.js) would go stale on every hover, since that's one
-  // of the altitude-resolution chain's own inputs (see its own comment).
-  // Guarded, not a hard reference, so app.js doesn't break if that file is
-  // ever missing/fails to load.
+  // The compact map-anchored altitude control's own slider/readout is one
+  // of the things whose resolved value depends on this same isolation state
+  // (see resolveMapAltFt()) -- refreshed here so a checkbox toggle's cheap
+  // path (buildAltList() -> applyIsolation(), no full render()) still keeps
+  // it in sync, not just a full render() pass.
+  updateMapAltControl();
+  // A checkbox toggle on the altitude ladder only ever triggered this
+  // lightweight SVG-visibility toggle before, not a full render() -- without
+  // this the 3D view (descent3d.js) would go stale on every toggle, since
+  // that's one of the altitude-resolution chain's own inputs (see its own
+  // comment). Guarded, not a hard reference, so app.js doesn't break if that
+  // file is ever missing/fails to load.
   if (typeof renderDescent3D === 'function') renderDescent3D();
 }
 
@@ -1946,8 +2262,15 @@ const PROXIMITY_PX = 22; // a bit more than 2x the marker radius (9)
 
 function isPointVisible(rp) {
   if (state.mode === 'byAltitude') {
-    const active = state.isolatedAlt ?? state.pinnedAlt;
-    return active === null || rp.altitude === active;
+    // Same selectedAlts Set applyIsolation() checks (including the same
+    // customAlt bypass -- see that function's own comment for the bug this
+    // fixed: a Specific-altitude point's own altitude is essentially never
+    // a member of selectedAlts, since that Set only ever holds the
+    // discrete ladder's own rungs). A point whose altitude got unchecked
+    // shouldn't still show a tooltip on hover just because its zone-group
+    // is hidden, not removed -- but that's only a real concept when
+    // selectedAlts is actually what's driving visibility.
+    return state.customAlt !== null || state.selectedAlts === null || state.selectedAlts.has(rp.altitude);
   } else {
     const active = state.isolatedHour ?? state.pinnedHour;
     return active === null || rp.hour === active;
@@ -4404,13 +4727,10 @@ function drawRealFlightMarker() {
         hourExplicitlyChosen = true;
         // Nearest-match, not exact equality -- the published bucket may not
         // exist verbatim in DATA.altitudes if this date's zone JSON predates
-        // a master-ladder change (see config.ALTITUDES_MASTER_FT). Widen the
-        // range filter to include it if the current selection excludes it.
+        // a master-ladder change (see config.ALTITUDES_MASTER_FT).
         const bucket = flight.delta_from_predictions.altitude_bucket_used_ft;
         state.compareAlt = DATA.altitudes.reduce((best, a) =>
           Math.abs(a - bucket) < Math.abs(best - bucket) ? a : best, DATA.altitudes[0]);
-        if (state.compareAlt < state.altMin) state.altMin = state.compareAlt;
-        if (state.compareAlt > state.altMax) state.altMax = state.compareAlt;
         // A pinned real flight compares against its own published altitude
         // bucket specifically -- a specific-altitude override active from
         // before would show an unrelated zone instead, so clear it.
@@ -4422,7 +4742,6 @@ function drawRealFlightMarker() {
         // refresh its active button.
         renderWeatherPanel();
         buildAltList();
-        buildAltRange();
         render();
       } else {
         restorePadFromRealFlightSnap();
@@ -4842,23 +5161,23 @@ function buildPermalinkParams(includeDate) {
     p.set('pad', `${lat.toFixed(6)},${lon.toFixed(6)}`);
   }
   // Altitude is a URL param on every view -- just under a different state
-  // field/param name depending which one that view actually uses: byAltitude's
-  // pin/isolate selection (pinnedAlt) via `alt`, or the "which altitude to
-  // compare across hours" selection byTime and byHistory both use
-  // (compareAlt, see buildAltList()) via `compare`.
-  if (state.mode === 'byAltitude' && state.pinnedAlt !== null) p.set('alt', state.pinnedAlt);
+  // field/param name depending which one that view actually uses:
+  // byAltitude's multi-select ladder (selectedAlts, see buildAltList()) via
+  // `alts` (comma-joined, only when a real subset -- same "don't pin
+  // defaults into the URL" convention as `models` above; legacy single-value
+  // `alt=` is still read on load for backward compat, but never written any
+  // more), or the "which altitude to compare across hours/captures"
+  // selection byTime and byHistory both use (compareAlt) via `compare`.
+  if (state.mode === 'byAltitude' && state.selectedAlts) {
+    const withZones = altitudesWithZones();
+    if (state.selectedAlts.size !== withZones.size) {
+      p.set('alts', [...state.selectedAlts].join(','));
+    }
+  }
   if ((state.mode === 'byTime' || state.mode === 'byHistory') && state.compareAlt !== null) p.set('compare', state.compareAlt);
   if (state.mode === 'byHistory' && state.pinnedCapture !== null) p.set('capture', state.pinnedCapture);
-  // Altitude range filter (see buildAltRange()) -- emitted only when actually
-  // narrowed from this site's full ladder, same "don't pin defaults into the
-  // URL" reasoning as hour/deploy/boost above. Real ft values, not list
-  // indices, so a link survives the master ladder changing (as it did
-  // 2026-08) and resolves sanely against a different site's shorter list.
-  if (state.altMin !== DATA.altitudes[0]) p.set('altmin', state.altMin);
-  if (state.altMax !== DATA.altitudes[DATA.altitudes.length - 1]) p.set('altmax', state.altMax);
   // Direct-entry altitude (see syncAltCustomUI()) -- a real ft value, always
-  // worth sharing when set (there's no "default" for it to differ from,
-  // unlike altmin/altmax's ladder-derived defaults).
+  // worth sharing when set (there's no "default" for it to differ from).
   if (state.customAlt !== null) p.set('customalt', state.customAlt);
   // Editable rate (see buildRateEditor()) -- emitted only when it differs
   // from the 'fast' default, same convention as altmin/altmax above. Prefers
@@ -4922,15 +5241,23 @@ function render() {
   // drifts past the pull's own default-rate sweep still gets a correctly
   // sized background instead of being clipped.
   // state.customAlt (the "Specific altitude" field) overrides the whole
-  // ladder/range selection in every mode -- byAltitude/byTime read it here
-  // via zoneFor(); byHistory reads it inside renderHistory()/
+  // ladder/selectedAlts selection in every mode -- byAltitude/byTime read it
+  // here via zoneFor(); byHistory reads it inside renderHistory()/
   // renderAccuracyTable() themselves (via historyPointsForAltitude()) since
   // that branch doesn't build zones the same way, so it's untouched below.
   let altitudeZones = [], timeZones = [];
   if (state.mode === 'byAltitude') {
+    // Every rung's zone-group is built unconditionally now, not filtered by
+    // a range (removed 2026-08 along with the old dual-thumb slider) --
+    // applyIsolation() toggles which ones are actually visible afterward
+    // (state.selectedAlts), a cheap show/hide against DOM that already
+    // exists. Building only the selected subset here would work for the
+    // FIRST toggle but break re-checking a previously-unchecked altitude --
+    // applyIsolation() doesn't rebuild, so there'd be nothing in the DOM
+    // left to un-hide.
     altitudeZones = state.customAlt !== null
       ? [zoneFor(state.timeMinutes, state.deploy, state.customAlt)].filter(Boolean)
-      : zonesFor(state.timeMinutes, state.deploy).filter(z => altInRange(z.altitude));
+      : zonesFor(state.timeMinutes, state.deploy);
     growBaseViewBox(altitudeZones);
   } else if (state.mode === 'byTime') {
     // Unaffected by the time slider -- this mode shows every DATA.hours
@@ -5175,10 +5502,9 @@ function initFromData() {
   buildToggle('deploy-toggle', DATA.deploys, DEPLOY_LABELS, 'deploy', () => {
     deployExplicitlyChosen = true;
     // Which altitudes have a real zone changes with deploy (single-deploy
-    // drops above SINGLE_DEPLOY_MAX_ALT_FT pipeline-side) -- refresh both the
-    // row list's unavailable rows and the slider's thumb positions.
+    // drops above SINGLE_DEPLOY_MAX_ALT_FT pipeline-side) -- refresh the row
+    // list's unavailable rows/selectedAlts revalidation.
     buildAltList();
-    buildAltRange();
     // Single deploy's phase construction (zoneFor()) never reads the drogue
     // rate at all -- disable those inputs rather than leave them editable
     // and silently ignored.
@@ -5187,9 +5513,9 @@ function initFromData() {
   });
   buildTimeLegend();
   buildAltList();
-  buildAltRange();
   buildModelLegend();
   buildRateEditor();
+  renderMapAltDeployReadout();
   syncAltCustomUI(); // reflects a URL-loaded ?customalt= on first render
   banDismissed = false; // a dismiss on a previous site/date shouldn't suppress a genuinely new ban
   renderWeatherPanel();
