@@ -3913,6 +3913,27 @@ function historyPathsForCapture(captureDate, timeMinutes, deploy, altitudeFt) {
 // isolatedCapture) -- it's the target date's own single post-flight
 // analysis, not a forecast tied to any particular capture, so this shows
 // regardless of which forecast date is currently active.
+// HISTORY.actual_wind_profile, blended to timeMinutes the same circular-mean
+// way every model's own forecast profile already is (blendProfilesForTime())
+// -- null if no analysis has been published for this target date yet.
+// Shared by historyActualPathForAltitude() (the full apogee-to-ground path)
+// and descent3d.js's own hover tooltip (path3dHandleHover(), which only
+// needs the profile itself to interpWind() at one altitude, not a whole
+// simulated path) -- both need the identical blend, not two independent
+// copies of the wrap-and-blend step.
+function actualProfileForTime(timeMinutes) {
+  const rawProfile = HISTORY?.actual_wind_profile;
+  const hours = rawProfile ? Object.keys(rawProfile).map(Number).sort((a, b) => a - b) : [];
+  if (!hours.length) return null;
+  // Wrapped as a single-key {actual: profile} dict per hour so
+  // blendProfilesForTime() -- built for {model: profile} -- blends this one
+  // real source the exact same circular-mean way, no separate blend
+  // implementation to keep correct.
+  const wrapped = {};
+  for (const h of hours) wrapped[h] = { actual: rawProfile[h] };
+  return blendProfilesForTime(wrapped, hours, timeMinutes)?.actual || null;
+}
+
 function historyActualPathForAltitude(timeMinutes, deploy, altitudeFt) {
   const cacheKey = `${timeMinutes}_${deploy}_${altitudeFt}`;
   if (historyActualPathCache.has(cacheKey)) return historyActualPathCache.get(cacheKey);
@@ -3920,23 +3941,13 @@ function historyActualPathForAltitude(timeMinutes, deploy, altitudeFt) {
   const dp = DATA.descent_params;
   let path = null;
   if (!(deploy === 'single' && altitudeFt > dp.single_deploy_max_alt_ft)) {
-    const rawProfile = HISTORY?.actual_wind_profile;
-    const hours = rawProfile ? Object.keys(rawProfile).map(Number).sort((a, b) => a - b) : [];
-    if (hours.length) {
-      // Wrapped as a single-key {actual: profile} dict per hour so
-      // blendProfilesForTime() -- built for {model: profile} -- blends this
-      // one real source the exact same circular-mean way, no separate
-      // blend implementation to keep correct.
-      const wrapped = {};
-      for (const h of hours) wrapped[h] = { actual: rawProfile[h] };
-      const blended = blendProfilesForTime(wrapped, hours, timeMinutes);
-      if (blended?.actual) {
-        const r = groundEquivalentRateFps(state.rateFps, dp.site_elev_ft);
-        const phases = deploy === 'dual'
-          ? [[r.drogue, altitudeFt, dp.main_deploy_altitude_ft], [r.main, dp.main_deploy_altitude_ft, 0]]
-          : [[r.main, altitudeFt, 0]];
-        path = simulateDriftPath(blended.actual, altitudeFt, phases, dp.site_elev_ft, dp.descent_step_ft);
-      }
+    const profile = actualProfileForTime(timeMinutes);
+    if (profile) {
+      const r = groundEquivalentRateFps(state.rateFps, dp.site_elev_ft);
+      const phases = deploy === 'dual'
+        ? [[r.drogue, altitudeFt, dp.main_deploy_altitude_ft], [r.main, dp.main_deploy_altitude_ft, 0]]
+        : [[r.main, altitudeFt, 0]];
+      path = simulateDriftPath(profile, altitudeFt, phases, dp.site_elev_ft, dp.descent_step_ft);
     }
   }
   historyActualPathCache.set(cacheKey, path);

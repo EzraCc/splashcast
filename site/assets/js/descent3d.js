@@ -504,8 +504,17 @@ function path3dHandleHover(evt) {
   // invented for this view.
   if (!best || bestDist > PROXIMITY_PX) { hideTooltip(); return; }
 
+  // 'actual' (3D History's T+1 flight) has no entry in DATA.wind_profiles --
+  // that's only ever forecast models, keyed off the currently-selected
+  // capture. Its own profile lives separately (HISTORY.actual_wind_profile,
+  // independent of which capture is pinned -- see historyActualPathForAltitude()'s
+  // own comment) and needs actualProfileForTime() (app.js), not
+  // profilesForTime(), to blend it the same way -- without this branch the
+  // wind row below silently never appeared for actual's own points.
   const timeProfiles = profilesForTime(state.timeMinutes);
-  const profile = timeProfiles && timeProfiles[best.model];
+  const profile = best.model === 'actual'
+    ? actualProfileForTime(state.timeMinutes)
+    : timeProfiles && timeProfiles[best.model];
   // modelNameHTML() (app.js) -- same per-model-colored name every other
   // tooltip on the page uses now, not a plain bolded --accent-blue name.
   const rows = [`<div class="tt-row">${modelNameHTML(best.model)}</div>`,
