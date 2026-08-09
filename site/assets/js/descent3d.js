@@ -100,7 +100,14 @@ function path3dAltSliderMaxFt() {
 // every call -- so it only "protects" the override for the one render
 // immediately following an actual drag).
 function path3dResolveAltFt() {
-  const sig = `${state.customAlt}|${state.pinnedAlt}|${state.isolatedAlt}|${state.altMax}`;
+  // byHistory reads compareAlt (History's own altitude-ladder selection,
+  // renderHistory()'s "state.customAlt !== null ? state.customAlt :
+  // state.compareAlt" -- mirrored here), not pinnedAlt/isolatedAlt (the
+  // byAltitude ladder's own hover/pin, always null while in History mode
+  // since that's a different legend entirely). state.mode included in the
+  // signature too, so switching modes always re-evaluates this instead of
+  // getting stuck on an override signature that happened to match.
+  const sig = `${state.mode}|${state.customAlt}|${state.pinnedAlt}|${state.isolatedAlt}|${state.compareAlt}|${state.altMax}`;
   if (path3dAltOverrideFt !== null && !path3dSliderJustMoved && sig !== path3dLastSidebarAltSig) {
     path3dAltOverrideFt = null;
   }
@@ -108,6 +115,7 @@ function path3dResolveAltFt() {
   path3dSliderJustMoved = false;
   if (path3dAltOverrideFt !== null) return path3dAltOverrideFt;
   if (state.customAlt !== null) return state.customAlt;
+  if (state.mode === 'byHistory') return state.compareAlt ?? state.altMax;
   if (state.pinnedAlt !== null) return state.pinnedAlt;
   if (state.isolatedAlt !== null) return state.isolatedAlt;
   return state.altMax;
@@ -631,13 +639,42 @@ function renderDescent3D() {
   path3dLastResolvedAltFt = altFt;
   path3dUpdateAltSliderUI(altFt);
 
-  if (state.mode !== 'byAltitude') {
-    path3dShowEmpty('Switch to "By altitude" view to see a descent path here.');
+  if (state.mode !== 'byAltitude' && state.mode !== 'byHistory') {
+    path3dShowEmpty('Switch to "By altitude" or "History" view to see a descent path here.');
     return;
   }
 
-  const pathsRaw = descentPathsFor(state.timeMinutes, state.deploy, altFt);
-  const paths = pathsRaw.filter(p => state.selectedModels === null || state.selectedModels.has(p.model));
+  let paths;
+  if (state.mode === 'byHistory') {
+    // First time landing on 3D+History with nothing hovered/pinned yet --
+    // default to the most recent forecast (T-0, or whatever's closest),
+    // requested directly rather than showing an empty "pick a date" dead
+    // end. A REAL pin (state.pinnedCapture), not a 3D-only concept, so 2D's
+    // own hull/trend-line and the Age legend's own highlighted row land on
+    // the same date -- both views agree on "what am I looking at" by
+    // default, and the existing legend (hover or click) still changes it
+    // for both, same mechanism as always ("user should still be able to
+    // select through the other forecast days").
+    if (state.isolatedCapture === null && state.pinnedCapture === null && HISTORY?.captures?.length) {
+      state.pinnedCapture = HISTORY.captures[HISTORY.captures.length - 1];
+      // Re-render from the top (not just this canvas) so the 2D hull/Age
+      // legend catch up to the pin THIS render, not one render behind --
+      // render() calls renderDescent3D() again at its own end, and by then
+      // pinnedCapture is already set, so this branch doesn't re-trigger.
+      render();
+      return;
+    }
+    const activeCapture = state.isolatedCapture ?? state.pinnedCapture;
+    const pathsRaw = historyPathsForCapture(activeCapture, state.timeMinutes, state.deploy, altFt);
+    paths = pathsRaw.filter(p => state.selectedModels === null || state.selectedModels.has(p.model));
+    // Independent of activeCapture/selectedModels -- see
+    // historyActualPathForAltitude()'s own comment for why.
+    const actualPath = historyActualPathForAltitude(state.timeMinutes, state.deploy, altFt);
+    if (actualPath) paths.push({ model: 'actual', path: actualPath });
+  } else {
+    const pathsRaw = descentPathsFor(state.timeMinutes, state.deploy, altFt);
+    paths = pathsRaw.filter(p => state.selectedModels === null || state.selectedModels.has(p.model));
+  }
 
   if (!paths.length) {
     path3dShowEmpty('No wind profile available for this hour/deploy/altitude -- try a different combination, or select at least one model.');
@@ -677,17 +714,31 @@ function path3dDrawScene(paths, altFt) {
   // cosmetic one -- the origin marker and ground-plane image both move
   // with it, same as the 2D map's own pad crosshair does.
   //
-  // railShiftFt(pt.alt_ft) (app.js) is the same rail-heading/angle shift
-  // the 2D map applies per-altitude via ftToPxShifted() -- grows with
-  // altitude, so it's evaluated per-point here (not once at apogee) to
-  // match the 2D view's own per-altitude treatment exactly. At alt_ft=0
-  // it's always {0,0}, so the pad/ground-plane origin (toScreen(...,0))
-  // is naturally unaffected without any special-casing.
+  // railShiftFt(altFt) (app.js) is the same rail-heading/angle shift the
+  // 2D map applies via ftToPxShifted() -- computed ONCE here, from the
+  // path's own apogee altitude, not per-point along the descent. The
+  // boost-phase deviation this represents finishes accumulating at
+  // burnout/apogee; everything from apogee down to the ground is a rigid
+  // wind-drift descent starting from that already-offset point, not a
+  // second thing that keeps growing as altitude changes during descent --
+  // descent is apogee-based, not rail-based (reported directly: landing
+  // points weren't shifting in 3D, because the old per-point-altitude
+  // version decayed the shift back toward 0 as each point's OWN altitude
+  // fell toward the ground, which is backwards). Matches how the 2D map
+  // already did this -- drawZone() passes zone.altitude (the zone's own
+  // apogee), not each landing point's own altitude (always ~0 anyway,
+  // landing points are ground-level by definition), to ftToPxShifted().
+  // Applied explicitly at the path/apogee-marker draw sites below via
+  // toScreenPath(), NOT baked into the shared toScreen() -- the ground
+  // plane, axes, and origin marker are the FIXED map/coordinate grid the
+  // path is plotted against, not the path itself, and must stay put
+  // regardless of rail angle (only padOffsetFt, a real "what if the pad
+  // were somewhere else" scene translation, legitimately moves those too).
+  const railShift = railShiftFt(altFt);
   let maxXY = 1;
   const maxZ = Math.max(1, altFt);
   paths.forEach(p => p.path.forEach(pt => {
-    const shift = railShiftFt(pt.alt_ft);
-    maxXY = Math.max(maxXY, Math.abs(pt.x_ft + padOffsetFt.x + shift.x), Math.abs(pt.y_ft + padOffsetFt.y + shift.y));
+    maxXY = Math.max(maxXY, Math.abs(pt.x_ft + padOffsetFt.x + railShift.x), Math.abs(pt.y_ft + padOffsetFt.y + railShift.y));
   }));
   const maxX = maxXY, maxY = maxXY;
 
@@ -741,9 +792,15 @@ function path3dDrawScene(paths, altFt) {
   const radius = Math.min(rect.width, rect.height) * 0.34 * path3dZoom;
 
   function toScreen(xFt, yFt, zFt) {
-    const shift = railShiftFt(zFt);
-    const r = path3dRotate((xFt + padOffsetFt.x + shift.x) / scaleFt, (yFt + padOffsetFt.y + shift.y) / scaleFt, zFt / scaleFt);
+    const r = path3dRotate((xFt + padOffsetFt.x) / scaleFt, (yFt + padOffsetFt.y) / scaleFt, zFt / scaleFt);
     return [cx + r.sx * radius, cy - r.sy * radius, r.depth];
+  }
+  // Same as toScreen(), plus the constant rail-angle shift computed above
+  // -- used only for the actual flight path/apogee marker (path3dDrawPath
+  // below), never for the ground plane/axes/origin, which stay anchored
+  // to the real, unshifted coordinate grid.
+  function toScreenPath(xFt, yFt, zFt) {
+    return toScreen(xFt + railShift.x, yFt + railShift.y, zFt);
   }
 
   // Ground plane first, before axes/paths, so it reads as a floor
@@ -757,14 +814,33 @@ function path3dDrawScene(paths, altFt) {
 
   path3dDrawAxes(toScreen, maxX, maxY, maxZ, rect.width, rect.height);
 
+  // Boost-phase line: pad (real, unshifted origin) to apogee (the rail-
+  // shifted point every model's own descent path actually starts from) --
+  // makes the thing railAngleDeg/railHeadingDeg control visible as an
+  // actual flight segment, not just an offset the descent paths happen to
+  // start from. One line, not per-model -- boost phase finishes before any
+  // wind-profile data comes into play, so every model shares the exact
+  // same apogee point regardless of rail angle; there's nothing per-model
+  // to show here the way there is for the wind-driven descent below.
+  // Dashed, not solid -- unlike the descent paths (a real wind-vector
+  // integration), this is a straight-line stand-in for a boost trajectory
+  // this app was never asked to simulate (a real rail-tip has some curve
+  // to it under thrust); the dash pattern is a deliberate "approximate/
+  // stand-in" signal, matching this app's usual care about not presenting
+  // a derived/simplified value as if it were a measurement or a sim.
+  path3dDrawBoostLine(toScreen, toScreenPath, altFt);
+
   // Depth-sort so nearer lines draw over farther ones -- purely visual
   // (disentangles overlapping model lines when orbited), touches no data.
+  // toScreenPath(), not toScreen() -- sorting by the ACTUAL (shifted)
+  // rendered depth, not the unshifted one, so the sort matches what's
+  // actually drawn a few lines down.
   const ordered = paths
-    .map(p => ({ p, depth: p.path.reduce((s, pt) => s + toScreen(pt.x_ft, pt.y_ft, pt.alt_ft)[2], 0) / p.path.length }))
+    .map(p => ({ p, depth: p.path.reduce((s, pt) => s + toScreenPath(pt.x_ft, pt.y_ft, pt.alt_ft)[2], 0) / p.path.length }))
     .sort((a, b) => a.depth - b.depth)
     .map(o => o.p);
 
-  ordered.forEach(p => path3dDrawPath(p, toScreen, altFt));
+  ordered.forEach(p => path3dDrawPath(p, toScreenPath, altFt));
 }
 
 function path3dDrawAxes(toScreen, maxX, maxY, maxZ, canvasW, canvasH) {
@@ -840,9 +916,50 @@ function path3dDrawAxes(toScreen, maxX, maxY, maxZ, canvasW, canvasH) {
   ctx.restore();
 }
 
+// See path3dDrawScene()'s own call-site comment for why this is one
+// dashed line (not per-model, not solid) rather than folded into
+// path3dDrawPath(). toScreen(0,0,0) for the pad end (the real, unshifted
+// origin -- NOT toScreenPath, which would wrongly apply the full apogee-
+// level shift there too, since it adds a CONSTANT offset regardless of
+// the zFt it's called with); toScreenPath(0,0,altFt) for the apogee end,
+// same shifted point path3dDrawPath()'s own apogee marker lands on for
+// every model.
+//
+// Color: NOT var(--accent) (a first pass used it) -- reported directly
+// that it visually overlapped a real model's own color, and checking
+// confirmed why: --accent is #2a78d6 in light mode, byte-identical to
+// MODEL_COLORS_HEX.gfs (app.js) -- the boost line was rendering in
+// literally the same blue as the GFS descent line right next to it.
+// #06b6d4 (cyan) matches PREDICTED_LANDING_COLOR (app.js's own "this is a
+// derived reference point, not a model result" color, used for the 2D
+// map's predicted-landing star) -- reused here for the same reason, and
+// confirmed to sit clearly outside every hue MODEL_COLORS_HEX/the pad-
+// marker/projection-marker already use (blue, purple, red, orange, two
+// greens, amber).
+const RAIL_BOOST_LINE_COLOR = '#06b6d4';
+function path3dDrawBoostLine(toScreen, toScreenPath, altFt) {
+  const ctx = path3dCtx;
+  const [px, py] = toScreen(0, 0, 0);
+  const [ax, ay] = toScreenPath(0, 0, altFt);
+  ctx.save();
+  ctx.strokeStyle = RAIL_BOOST_LINE_COLOR;
+  ctx.lineWidth = 2;
+  ctx.setLineDash([5, 4]);
+  ctx.beginPath();
+  ctx.moveTo(px, py);
+  ctx.lineTo(ax, ay);
+  ctx.stroke();
+  ctx.restore();
+}
+
 function path3dDrawPath(p, toScreen, altFt) {
   const ctx = path3dCtx;
-  const color = MODEL_COLORS_HEX[p.model] || '#888';
+  // 'actual' (3D History's T+1 flight, renderDescent3D()) isn't a real
+  // model -- reuses PROJECTION_MARKER_COLOR (app.js), the same amber the
+  // 2D History star already draws this exact concept in, rather than
+  // falling through to the generic '#888' every other unrecognized model
+  // key gets.
+  const color = p.model === 'actual' ? PROJECTION_MARKER_COLOR : (MODEL_COLORS_HEX[p.model] || '#888');
   ctx.save();
   ctx.strokeStyle = color;
   ctx.lineWidth = 1.75;

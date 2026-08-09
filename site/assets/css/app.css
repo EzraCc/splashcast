@@ -1067,9 +1067,13 @@
   }
   #pad-reset-btn:hover { background: var(--surface-2); }
 
-  /* Map-corner overlay, same convention .zoom-btns/.layer-toggle already
-     use -- left:10px/bottom:10px, the opposite corner from .zoom-btns
-     (bottom-right) so the two never collide; .zoom-hint (touch-only) is
+  /* Positioned against .map-view-wrap (shared by both the 2D and 3D
+     frames -- see this element's own placement comment in index.html), NOT
+     .map-wrap, so it stays in the corner of whichever frame is actually
+     showing rather than only ever existing inside the 2D one. Same
+     left:10px/bottom:10px corner-overlay convention .zoom-btns/.layer-
+     toggle use, opposite corner from .zoom-btns (bottom-right, 2D-only) so
+     the two never collide; .zoom-hint (touch-only, still 2D-only) is
      bumped up out of the way below since it shares this same corner. */
   .rail-angle-control { position: absolute; left: 10px; bottom: 10px; z-index: 5; }
   /* Circular drag target: angle from center = heading (0deg/N = up, like a
@@ -1109,6 +1113,24 @@
   }
   .rail-dial::before { left: 50%; top: 4px; bottom: 4px; width: 1px; transform: translateX(-50%); }
   .rail-dial::after { top: 50%; left: 4px; right: 4px; height: 1px; transform: translateY(-50%); }
+  /* Safety-limit ring at 20deg (80% of the dial's own radius, since the
+     dial's own edge = RAIL_ANGLE_MAX_DEG = 25deg in app.js -- 20/25 =
+     0.8, so a plain 80% width/height lands exactly on it with no JS
+     needed to position it, and it scales for free with the dial's own
+     collapsed/expanded size change). Requested directly, to make it
+     visually obvious the dial's 0-25deg range exceeds the real safety-
+     code rail-tilt limit (config.py's own comment: "the safety code's
+     20-degree HP limit") -- see this control's own hint text for why
+     that's correct, not a bug: this dial models overall weathercocking
+     drift, not a physically tilted rail, so it's allowed to go further
+     than a rail itself legally could. Faded/dashed, deliberately more
+     muted than the solid crosshair/dial border -- a reference marker,
+     not another interactive element. */
+  .rail-dial-safety-ring {
+    position: absolute; left: 50%; top: 50%; width: 80%; height: 80%; border-radius: 50%;
+    border: 1px dashed var(--text-muted); opacity: 0.45; transform: translate(-50%, -50%);
+    pointer-events: none;
+  }
   /* Reference ray -- ALWAYS points at the live ground-wind heading
      (independent of the thumb/user's own choice), so "drag to match the
      wind" has something concrete to align against, especially when the
@@ -1150,19 +1172,27 @@
   .rail-angle-control.expanded .rail-angle-panel { display: block; }
   .rail-angle-readouts { display: flex; flex-direction: column; gap: var(--sp-1); font-size: var(--fs-sm); color: var(--text-secondary); min-width: 0; margin-top: var(--sp-2); }
   .rail-angle-readouts label { display: flex; align-items: center; gap: var(--sp-2); }
-  .rail-angle-readouts input[type="number"] {
+  /* type="text" + inputmode="numeric" + pattern="[0-9]*", not
+     type="number" -- same reasoning/pattern #alt-custom-input already
+     established (see that input's own comment in app.js): type="number"
+     shows an inconsistent mobile keypad (decimal/minus keys included)
+     across real browsers, some of which ignore inputmode once type=number
+     is set. Real validation happens in JS (digit-stripping on 'input',
+     clamped on 'change'), same as that field -- the input type here is
+     just the mobile-keyboard hint. */
+  .rail-angle-readouts input[type="text"] {
     width: 52px; box-sizing: border-box; padding: 3px 6px;
     border: 1px solid var(--border); border-radius: 5px;
     background: var(--surface-1); color: var(--text-primary); font-size: var(--fs-sm);
   }
   /* Same touch-target floor as .zone-color-reset-btn/.info-btn (see that
-     rule's own comment) -- a plain-number <input> isn't a good fit for
+     rule's own comment) -- a plain text <input> isn't a good fit for
      the invisible-::before trick those use (it would sit on top of the
      real text-editing hit area), so this just grows the visible box
      directly instead, tall enough to tap reliably alongside the two
      reset buttons in the same row. */
   @media (pointer: coarse) {
-    .rail-angle-readouts input[type="number"] { min-height: 40px; padding: 8px 6px; font-size: var(--fs-base); }
+    .rail-angle-readouts input[type="text"] { min-height: 40px; padding: 8px 6px; font-size: var(--fs-base); }
   }
   .rail-wind-readout { font-size: var(--fs-xs); color: var(--text-muted); display: flex; align-items: center; gap: 4px; }
   .rail-wind-readout .wind-vane { font-size: var(--fs-sm); }

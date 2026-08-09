@@ -13,7 +13,35 @@
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
 <link rel="icon" type="image/x-icon" href="favicon.ico">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
-<link rel="stylesheet" href="assets/css/app.css">
+<script>
+// Local dev (python -m http.server etc.) has zero cache-busting of its
+// own -- pages.yml's ?v=<commit-sha> query string only ever gets sed'd
+// into a COPY of this file at deploy time (see that workflow's own
+// comment), never into the committed site/index.html itself, so app.js's
+// own CURRENT_VERSION is always null here by design. A real hard refresh
+// should still bypass any ordinary browser cache regardless of that --
+// confirmed directly NOT reliable enough in practice (reported: Ctrl+
+// Shift+R kept serving a stale app.js, a fresh incognito window didn't).
+// writeLocalBustedTag() forces a real cache-busted fetch on every local
+// load instead; on the real deployed site (any hostname other than
+// localhost/127.0.0.1) it's a no-op, leaving that already-correct ?v=<sha>
+// mechanism completely untouched. document.write(), not a later DOM
+// rewrite -- by the time any script running AFTER a tag could intervene,
+// the browser's already started fetching it under its un-busted URL; this
+// has to run BEFORE the parser reaches the real tag, writing the busted
+// one directly in its place instead. Reused below for the two JS tags too
+// (same file, still in scope) -- '<' + '/script>' split there so the
+// literal closing tag never appears as a real substring in this element's
+// own raw text, which would otherwise end IT early during HTML parsing,
+// before any of this JS ever runs.
+function writeLocalBustedTag(prefix, url, suffix) {
+  const busted = (location.hostname === 'localhost' || location.hostname === '127.0.0.1')
+    ? url + '?_=' + Date.now()
+    : url;
+  document.write(prefix + busted + suffix);
+}
+writeLocalBustedTag('<link rel="stylesheet" href="', 'assets/css/app.css', '">');
+</script>
 </head>
 <body>
 
@@ -86,36 +114,6 @@
             <button data-layer="road" title="Roads/labels only -- less visual noise on sites with no real terrain features to avoid">Road</button>
           </div>
           <div class="zoom-hint">drag or pinch to pan/zoom</div>
-
-          <div class="rail-angle-control" id="rail-angle-control">
-            <!-- The dial itself -- not a stand-in icon -- is always visible
-                 and always draggable, collapsed or not. It's a real,
-                 distinctive circular widget (not another 30px square button
-                 like the zoom controls) specifically so it reads as a major
-                 feature of the map rather than a minor map-navigation
-                 control -- click it to reveal the numeric readouts below;
-                 dragging works identically whether that panel is open or
-                 not (see the dial's own pointerdown handler in app.js). -->
-            <div id="rail-dial" class="rail-dial" tabindex="0" role="slider" aria-label="Rail angle: heading and magnitude -- click to see readouts" aria-valuemin="0" aria-valuemax="25">
-              <div id="rail-dial-wind-ray" class="rail-dial-wind-ray"></div>
-              <div id="rail-dial-thumb" class="rail-dial-thumb"></div>
-            </div>
-            <div class="rail-angle-panel" id="rail-angle-panel">
-              <div class="alt-list-title">
-                Rail angle <button class="info-btn" type="button" data-hint="rail-angle-hint" title="Show details">i</button>
-              </div>
-              <div class="rail-angle-readouts">
-                <label>Heading <input type="number" id="rail-heading-input" min="0" max="359" step="1">&deg;
-                  <button id="rail-heading-reset" class="zone-color-reset-btn" type="button" title="Track live ground wind" style="display:none;">&#8635;</button>
-                </label>
-                <label>Angle <input type="number" id="rail-angle-input" min="0" max="25" step="1">&deg;
-                  <button id="rail-angle-reset" class="zone-color-reset-btn" type="button" title="Reset angle to 0&deg; (no shift)" style="display:none;">&#8635;</button>
-                </label>
-                <span id="rail-wind-readout" class="rail-wind-readout"></span>
-              </div>
-              <div class="alt-hint" id="rail-angle-hint">Drag the dial (or type exact values) to set how far off vertical the rail is tipped and which way. The faint ray marks the current ground wind's own direction as a reference. Defaults to 0&deg; (no shift) -- the &#8635; next to Heading returns an explicitly-set heading to live-tracking that wind. This shifts each zone's point directly rather than widening it into a band; a rail intentionally angled a different way than the ground wind argues for something other than weathercocking.</div>
-            </div>
-          </div>
           <div class="burn-ban-chip" id="burn-ban-chip" style="display:none;"></div>
           <div class="ban-overlay" id="ban-overlay">
             <div class="flame">&#128293;</div>
@@ -163,11 +161,52 @@
           </div>
         </div>
       </div>
+
+      <!-- Lives in .map-view-wrap (shared by both frames), not inside
+           .map-frame -- per direction, the rail angle affects both the 2D
+           hull and the 3D descent path (railShiftFt() is already threaded
+           through both, see app.js/descent3d.js), so the control that sets
+           it needs to stay reachable in both modes instead of vanishing
+           whenever #map-frame-2d is display:none'd. Bottom-left anchors to
+           whichever frame's box is actually visible (.map-view-wrap's own
+           box always matches it exactly, since the two frames are mutually
+           exclusive display:none siblings with no extra padding around
+           them) -- no per-mode positioning logic needed. -->
+      <div class="rail-angle-control" id="rail-angle-control">
+        <!-- The dial itself -- not a stand-in icon -- is always visible
+             and always draggable, collapsed or not. It's a real,
+             distinctive circular widget (not another 30px square button
+             like the zoom controls) specifically so it reads as a major
+             feature of the map rather than a minor map-navigation
+             control -- click it to reveal the numeric readouts below;
+             dragging works identically whether that panel is open or
+             not (see the dial's own pointerdown handler in app.js). -->
+        <div id="rail-dial" class="rail-dial" tabindex="0" role="slider" aria-label="Weathercocking angle (heading and magnitude, not a physical rail tilt) -- click to see readouts" aria-valuemin="0" aria-valuemax="25">
+          <div id="rail-dial-safety-ring" class="rail-dial-safety-ring" title="20&deg; -- the safety code's rail-tilt limit. This dial can go past it because it models overall weathercocking drift, not a physically tilted rail; see the note below."></div>
+          <div id="rail-dial-wind-ray" class="rail-dial-wind-ray"></div>
+          <div id="rail-dial-thumb" class="rail-dial-thumb"></div>
+        </div>
+        <div class="rail-angle-panel" id="rail-angle-panel">
+          <div class="alt-list-title">
+            Rail/weather angle <button class="info-btn" type="button" data-hint="rail-angle-hint" title="Show details">i</button>
+          </div>
+          <div class="rail-angle-readouts">
+            <label>Heading <input type="text" inputmode="numeric" pattern="[0-9]*" id="rail-heading-input">&deg;
+              <button id="rail-heading-reset" class="zone-color-reset-btn" type="button" title="Track live ground wind" style="display:none;">&#8635;</button>
+            </label>
+            <label>Angle <input type="text" inputmode="numeric" pattern="[0-9]*" id="rail-angle-input">&deg;
+              <button id="rail-angle-reset" class="zone-color-reset-btn" type="button" title="Reset angle to 0&deg; (no shift)" style="display:none;">&#8635;</button>
+            </label>
+            <span id="rail-wind-readout" class="rail-wind-readout"></span>
+          </div>
+          <div class="alt-hint" id="rail-angle-hint">Sets how far off vertical the flight travels during boost due to weathercocking or intentional rail tilt. Don't tilt a rail without clearing with the RSO first. The faint ray marks the predicted ground wind's direction; the Heading &#8635; returns to that direction.</div>
+        </div>
+      </div>
       </div>
       <div class="alt-list-title descent3d-hint-title" id="descent3d-hint-title" style="display:none; margin-top:12px;">
         3D Descent Path <button class="info-btn" type="button" data-hint="descent3d-hint" title="Show details">i</button>
       </div>
-      <div class="alt-hint" id="descent3d-hint" style="display:none;">X/Y are relative feet east/north from the pad (not tied to true map coordinates) &mdash; Z is altitude AGL in feet. Dots mark each model's own real reported wind levels (GFS reports far more than ICON, for example); the rest of each line is a smooth interpolation between them. Altitude bands are placed via a standard-atmosphere pressure-to-height conversion, not this forecast's own real temperature profile &mdash; on a hot day, real bands can sit a few hundred feet higher than shown here (same math used everywhere else in this app). Gust is only ever real data at the ground end of each path &mdash; Open-Meteo has no gust field at any other altitude. Drag the vertical slider to explore a different apogee; drag the canvas to orbit, scroll/pinch to zoom.</div>
+      <div class="alt-hint" id="descent3d-hint" style="display:none;">X/Y are relative feet east/north from the pad (not tied to true map coordinates) &mdash; Z is altitude AGL in feet. Dots mark each model's own real reported wind levels (GFS reports far more than ICON, for example); the rest of each line is a smooth interpolation between them. Altitude bands are placed via a standard-atmosphere pressure-to-height conversion, not this forecast's own real temperature profile &mdash; on a hot day, real bands can sit a few hundred feet higher than shown here (same math used everywhere else in this app). Gust is only ever real data at the ground end of each path &mdash; Open-Meteo has no gust field at any other altitude. Drag the vertical slider to explore a different apogee; drag the canvas to orbit, scroll/pinch to zoom. Also available in <b>History</b> &mdash; defaults to the most recent forecast, pick another from the Age legend the same way you would in 2D. The gold star path (once recorded) is the real post-flight HRRR analysis, not a forecast &mdash; same "Actual" concept as the 2D History star, just plotted as a full path here instead of a single point.</div>
 
       <!-- Rain/temperature/clouds combined into one panel, below the map so
            the map itself is what you see first -- clouds used to be a
@@ -292,7 +331,7 @@
   <div class="real-flight-box" id="real-flight-box"></div>
 </div>
 
-<script src="assets/js/app.js"></script>
-<script src="assets/js/descent3d.js"></script>
+<script>writeLocalBustedTag('<script src="', 'assets/js/app.js', '"><' + '/script>');</script>
+<script>writeLocalBustedTag('<script src="', 'assets/js/descent3d.js', '"><' + '/script>');</script>
 </body>
 </html>

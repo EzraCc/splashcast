@@ -23,18 +23,24 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/configure-pages@v5
-      - name: Minify app.js for the deployed copy
-        # app.js itself stays the full, heavily-commented source -- that's
-        # what's actually edited -- app.min.js is a build artifact of this
-        # step alone, never committed, so it can't go stale relative to
-        # app.js the way a hand-maintained/pre-committed copy could.
-        # scripts/minify_js.py (rjsmin: comment/whitespace stripping only,
-        # no renaming) measured ~57% smaller raw / ~65% smaller gzipped on
-        # this file, verified 2026-08-08.
+      - name: Minify app.js/descent3d.js for the deployed copy
+        # app.js/descent3d.js themselves stay the full, heavily-commented
+        # source -- that's what's actually edited -- the .min.js files are
+        # build artifacts of this step alone, never committed, so they
+        # can't go stale relative to their own source the way a hand-
+        # maintained/pre-committed copy could. scripts/minify_js.py
+        # (rjsmin: comment/whitespace stripping only, no renaming -- safe
+        # regardless of the plain-global-scope sharing between these two
+        # files) measured ~57% smaller raw / ~65% smaller gzipped on
+        # app.js, verified 2026-08-08. descent3d.js added to this script
+        # 2026-08-09 -- it existed unminified AND unversioned in production
+        # until now, confirmed directly (the sed below never had a
+        # descent3d.js pattern at all), found while chasing an unrelated
+        # local-dev caching report.
         run: |
           pip install rjsmin
           python3 scripts/minify_js.py
-      - name: Version app.js/app.css for reliable cache-busting
+      - name: Version app.js/descent3d.js/app.css for reliable cache-busting
         # GitHub Pages sends the same Cache-Control: max-age=600 on every
         # file regardless of type (no per-path header control here, unlike
         # Netlify/Cloudflare Pages' _headers) -- fine for index.html itself
@@ -52,7 +58,7 @@ jobs:
         # actually live and reload itself.
         run: |
           V="${GITHUB_SHA:0:12}"
-          sed -i "s|assets/js/app.js|assets/js/app.min.js?v=$V|; s|assets/css/app.css|assets/css/app.css?v=$V|" site/index.html
+          sed -i "s|assets/js/app.js|assets/js/app.min.js?v=$V|; s|assets/js/descent3d.js|assets/js/descent3d.min.js?v=$V|; s|assets/css/app.css|assets/css/app.css?v=$V|" site/index.html
           echo "{\"version\": \"$V\"}" > site/version.json
       - uses: actions/upload-pages-artifact@v3
         with:

@@ -241,6 +241,13 @@ const MODEL_COLORS_HEX = {
 // sitting right next to it in the same tooltip. Inline style, not a class,
 // since the color is per-model data, not a themeable design token.
 function modelNameHTML(m) {
+  // 'actual' isn't a real model (the T+1 HRRR-analysis path, 3D History) --
+  // special-cased rather than added to MODEL_COLORS_HEX/MODEL_LABELS
+  // themselves, since both of those ARE iterated elsewhere as "every real
+  // model" (CLOUD_MODELS, the ?models= URL validator) and a bogus 'actual'
+  // entry would leak into both. PROJECTION_MARKER_COLOR matches the same
+  // concept's own color in the 2D History star/legend.
+  if (m === 'actual') return `<b style="color:${PROJECTION_MARKER_COLOR}">Actual (HRRR analysis)</b>`;
   return `<b style="color:${MODEL_COLORS_HEX[m] || 'var(--accent)'}">${MODEL_LABELS[m] || m.toUpperCase()}</b>`;
 }
 // Longest published forecast horizon first, shortest last (GFS 16 days,
@@ -272,6 +279,15 @@ const MODEL_LEGEND_ORDER = ['gfs', 'ecmwf', 'gem', 'icon', 'arpege', 'hrrr'];
 // just different sizes" per direction) despite being a genuinely different
 // model. 'x' shares no silhouette family with 'square' at all.
 const MODEL_SHAPES = { gfs: 'circle', ecmwf: 'square', gem: 'triangle-up', icon: 'x', arpege: 'triangle-down', hrrr: 'plus' };
+// Not a real model -- the T+1 HRRR-analysis "actual" path (3D History,
+// historyActualPathForAltitude()) reuses path3dDrawPath()'s own per-model
+// shape/color lookup rather than a separate code path, so it needs an
+// entry here too. Star, matching the same shape the 2D History star
+// (PROJECTION_MARKER_COLOR) already uses for this exact concept. Safe to
+// add here specifically -- unlike MODEL_COLORS_HEX/MODEL_LABELS, this dict
+// is never iterated as "the list of every real model" (only ever indexed
+// by a single already-known key), confirmed directly before adding this.
+MODEL_SHAPES.actual = 'star';
 // A circle radius=size / square half-width=size / triangle circumradius=
 // size / diamond circumradius=size / plus-or-x arm-reach=size don't come
 // out to the same visual area at the same `size` (a square is ~4x a
@@ -565,15 +581,15 @@ function buildToggle(containerId, options, labels, stateKey, onChange) {
 }
 
 function setMode(mode) {
-  // 3D only supports byAltitude (renderDescent3D() shows an empty-state
-  // hint for the other two, see its own guard) -- switching to byTime/
-  // History while in 3D left the map area genuinely blank instead of
-  // falling back to something useful. Auto-switch to 2D instead, per
-  // direction, rather than leaving that half-broken until 3D supports
-  // every mode. Deliberately one-way -- going back to byAltitude does NOT
+  // 3D only supports byAltitude and byHistory (renderDescent3D() shows an
+  // empty-state hint for byTime, see its own guard) -- switching to byTime
+  // while in 3D left the map area genuinely blank instead of falling back
+  // to something useful. Auto-switch to 2D instead, per direction, rather
+  // than leaving that half-broken until 3D supports every mode.
+  // Deliberately one-way -- going back to byAltitude/byHistory does NOT
   // auto-restore 3D, so a user isn't surprised by the view silently
   // switching back on its own; they'd click 3D again if they want it.
-  if (mode !== 'byAltitude' && mapViewMode === '3d') {
+  if (mode !== 'byAltitude' && mode !== 'byHistory' && mapViewMode === '3d') {
     mapViewMode = '2d';
     updateMapViewModeUI();
   }
@@ -1543,10 +1559,17 @@ updateLayerToggleUI();
 // 2D (satellite/road hull view) and 3D (descent-path view) share one slot
 // in .map-col-map now instead of living in two disconnected places on the
 // page -- this is the single source of truth for which one is visible.
-// Not persisted across reloads (unlike mapLayer) -- no established
+// Not persisted in localStorage (unlike mapLayer) -- no established local
 // preference for this yet, and 2D is the safer, lighter-weight default to
-// land on for a first paint regardless of what was picked last session.
-let mapViewMode = '2d';
+// land on for a plain revisit regardless of what was picked last session.
+// URL-shareable though (?view=3d, see buildPermalinkParams()) -- explicit
+// only, same "don't pin defaults into a link" convention as deploy/hour/
+// railangle, not read against any stored fallback the way mapLayer is.
+// Corrected against the real state.mode once it's known (initFromData()
+// below) -- 3D only supports byAltitude, same one-way fallback a live
+// setMode() click already applies, kept consistent for a URL landing
+// directly on an unsupported combination.
+let mapViewMode = URL_PARAMS.get('view') === '3d' ? '3d' : '2d';
 const mapViewToggleEl = document.getElementById('map-view-toggle');
 const mapFrame2d = document.getElementById('map-frame-2d');
 const mapFrame3d = document.getElementById('map-frame-3d');
@@ -1574,6 +1597,12 @@ mapViewToggleEl.querySelectorAll('button').forEach(btn => {
     if (btn.dataset.mode === mapViewMode) return;
     mapViewMode = btn.dataset.mode;
     updateMapViewModeUI();
+    // Not part of a full render() (mapViewMode doesn't affect the 2D SVG's
+    // own content, just which frame + the 3D canvas, both already handled
+    // above) -- just the address-bar sync, same minimal call the layer
+    // toggle would need too if it didn't already ride along on its own
+    // render() call for an unrelated reason (swapping ground imagery).
+    syncUrl();
   });
 });
 updateMapViewModeUI();
@@ -1619,15 +1648,14 @@ const railHeadingResetBtn = document.getElementById('rail-heading-reset');
 const railAngleResetBtn = document.getElementById('rail-angle-reset');
 const railWindReadout = document.getElementById('rail-wind-readout');
 
-// This whole control now lives inside .map-wrap (a corner overlay, like
-// .zoom-btns/.layer-toggle), which means every pointerdown inside it also
-// reaches #map-wrap's own pan handler and gets setPointerCapture()'d to
-// `wrap` -- same fix the pad marker/altitude ticks/color-picker popover
-// already need (see their own stopPropagation() calls). One delegated
-// listener on the container, not one per child (the dial, both inputs,
-// both reset buttons) -- captured pointer capture would otherwise reroute
-// the dial's own 'click' event to `wrap` instead of the dial that was
-// actually pressed, and would turn every dial drag into a map pan.
+// Lives in .map-view-wrap now (shared by both the 2D and 3D frames, not
+// nested inside #map-wrap), so #map-wrap's own pan handler can't capture
+// its pointerdowns any more the way it originally could -- but this guard
+// is kept anyway, defensively, as one delegated listener on the container
+// (not one per child: the dial, both inputs, both reset buttons) rather
+// than removed on the assumption the DOM structure never moves again. See
+// the pad marker/altitude ticks/color-picker popover for the same class of
+// fix where it's still load-bearing.
 railAngleControl.addEventListener('pointerdown', evt => evt.stopPropagation());
 
 // The readouts panel opens (not toggles) on any interaction with the dial
@@ -1767,7 +1795,20 @@ railDial.addEventListener('keydown', evt => {
 });
 
 // Typed numeric entry -- same "widget + typed number" pattern
-// alt-custom-input already establishes alongside the altitude ladder.
+// alt-custom-input already establishes alongside the altitude ladder,
+// type="text"/inputmode="numeric" included (see that input's own comment
+// for why, not type="number"). Same digit-stripping on every keystroke
+// (pasted content included, since 'input' fires for that too) keeping the
+// field always integer-clean rather than only cleaning up on commit;
+// real clamping/validation still happens in the 'change' handlers below.
+railHeadingInput.addEventListener('input', () => {
+  const digitsOnly = railHeadingInput.value.replace(/\D/g, '');
+  if (digitsOnly !== railHeadingInput.value) railHeadingInput.value = digitsOnly;
+});
+railAngleInput.addEventListener('input', () => {
+  const digitsOnly = railAngleInput.value.replace(/\D/g, '');
+  if (digitsOnly !== railAngleInput.value) railAngleInput.value = digitsOnly;
+});
 railHeadingInput.addEventListener('change', () => {
   const v = Number(railHeadingInput.value);
   if (!Number.isNaN(v)) setRailAngle(railAngleDeg, v, true, false);
@@ -3676,7 +3717,16 @@ let historyZoneCache = new Map();
 // below zonesFor()), cleared here too since it depends on state.rateFps
 // exactly like the other two.
 let pathCache = new Map();
-function invalidateZones() { zoneCache.clear(); historyZoneCache.clear(); pathCache.clear(); }
+// 3D History's own two path caches -- historyPathsForCapture() (one
+// specific capture's forecast paths) and historyActualPathForAltitude()
+// (the single T+1 analysis path, independent of capture) -- both depend on
+// state.rateFps exactly like the three above, cleared alongside them.
+let historyPathCache = new Map();
+let historyActualPathCache = new Map();
+function invalidateZones() {
+  zoneCache.clear(); historyZoneCache.clear(); pathCache.clear();
+  historyPathCache.clear(); historyActualPathCache.clear();
+}
 
 // One altitude's zone at the given time/deploy, computed just-in-time from
 // DATA.wind_profiles at the current state.rateFps -- returns the same
@@ -3800,6 +3850,78 @@ function historyPointsForAltitude(timeMinutes, deploy, altitudeFt) {
   }
   historyZoneCache.set(cacheKey, points);
   return points;
+}
+
+// 3D History's data source (descent3d.js) -- descentPathsFor()'s full-path
+// treatment (simulateDriftPath(), not historyPointsForAltitude()'s
+// landing-point-only simulateDrift()), but scoped to ONE specific capture
+// date instead of looping every one of them. Unlike the 2D trend line
+// (historyPointsForAltitude(), above), 3D can only show one path per model
+// at a time -- there's no equivalent of "every capture superimposed" here,
+// the caller picks a capture (state.isolatedCapture ?? state.pinnedCapture)
+// the same way renderHistory() already does for the 2D hull.
+function historyPathsForCapture(captureDate, timeMinutes, deploy, altitudeFt) {
+  const cacheKey = `${captureDate}_${timeMinutes}_${deploy}_${altitudeFt}`;
+  if (historyPathCache.has(cacheKey)) return historyPathCache.get(cacheKey);
+
+  const dp = DATA.descent_params;
+  const out = [];
+  if (!(deploy === 'single' && altitudeFt > dp.single_deploy_max_alt_ft)) {
+    const captureProfiles = HISTORY?.wind_profiles_by_capture?.[captureDate];
+    const captureHours = captureProfiles ? Object.keys(captureProfiles).map(Number).sort((a, b) => a - b) : [];
+    const timeProfiles = captureHours.length ? blendProfilesForTime(captureProfiles, captureHours, timeMinutes) : null;
+    if (timeProfiles) {
+      const r = groundEquivalentRateFps(state.rateFps, dp.site_elev_ft);
+      const phases = deploy === 'dual'
+        ? [[r.drogue, altitudeFt, dp.main_deploy_altitude_ft], [r.main, dp.main_deploy_altitude_ft, 0]]
+        : [[r.main, altitudeFt, 0]];
+      for (const [model, profile] of Object.entries(timeProfiles)) {
+        out.push({ model, path: simulateDriftPath(profile, altitudeFt, phases, dp.site_elev_ft, dp.descent_step_ft) });
+      }
+    }
+  }
+  historyPathCache.set(cacheKey, out);
+  return out;
+}
+
+// The T+1 HRRR-analysis "actual" flight, as a real path -- HISTORY.actuals
+// (build_points_history()) already publishes this hour's landing POINT
+// (the 2D star, unaffected by any of this), HISTORY.actual_wind_profile is
+// the raw profile behind it, published alongside for exactly this: running
+// the same simulateDriftPath() every model gets, so the actual result
+// plots as a real apogee-to-ground path in 3D, not just a terminal dot.
+// Independent of which capture is selected (state.pinnedCapture/
+// isolatedCapture) -- it's the target date's own single post-flight
+// analysis, not a forecast tied to any particular capture, so this shows
+// regardless of which forecast date is currently active.
+function historyActualPathForAltitude(timeMinutes, deploy, altitudeFt) {
+  const cacheKey = `${timeMinutes}_${deploy}_${altitudeFt}`;
+  if (historyActualPathCache.has(cacheKey)) return historyActualPathCache.get(cacheKey);
+
+  const dp = DATA.descent_params;
+  let path = null;
+  if (!(deploy === 'single' && altitudeFt > dp.single_deploy_max_alt_ft)) {
+    const rawProfile = HISTORY?.actual_wind_profile;
+    const hours = rawProfile ? Object.keys(rawProfile).map(Number).sort((a, b) => a - b) : [];
+    if (hours.length) {
+      // Wrapped as a single-key {actual: profile} dict per hour so
+      // blendProfilesForTime() -- built for {model: profile} -- blends this
+      // one real source the exact same circular-mean way, no separate
+      // blend implementation to keep correct.
+      const wrapped = {};
+      for (const h of hours) wrapped[h] = { actual: rawProfile[h] };
+      const blended = blendProfilesForTime(wrapped, hours, timeMinutes);
+      if (blended?.actual) {
+        const r = groundEquivalentRateFps(state.rateFps, dp.site_elev_ft);
+        const phases = deploy === 'dual'
+          ? [[r.drogue, altitudeFt, dp.main_deploy_altitude_ft], [r.main, dp.main_deploy_altitude_ft, 0]]
+          : [[r.main, altitudeFt, 0]];
+        path = simulateDriftPath(blended.actual, altitudeFt, phases, dp.site_elev_ft, dp.descent_step_ft);
+      }
+    }
+  }
+  historyActualPathCache.set(cacheKey, path);
+  return path;
 }
 
 // Draggable launch pad: capped at DATA.max_pad_move_ft from the surveyed GPS
@@ -4655,6 +4777,11 @@ function buildPermalinkParams(includeDate) {
   if (includeDate && dateSelect.value) p.set('date', dateSelect.value);
   p.set('mode', state.mode);
   p.set('layer', mapLayer);
+  // Explicit-only, unlike mode/layer just above -- 2D is the fixed default
+  // (no stored-preference fallback to override the way layer's is), so
+  // there's nothing for an unconditional write to protect against; only
+  // worth spending the query-string space when it's actually 3D.
+  if (mapViewMode === '3d') p.set('view', '3d');
   // t=HH:MM, not the legacy hour=N int -- carries the slider's own 15-min
   // precision. freshState() still reads a bare ?hour=N link too (as N*60),
   // so an old shared permalink keeps working, just without that precision.
@@ -4938,6 +5065,16 @@ function initFromData() {
   // runs via setMode(), but the initial mode here can come from a permalink
   // (see freshState()) rather than always being the 'byAltitude' default.
   applyModeUI(state.mode);
+  // Same one-way 3D-only-supports-byAltitude/byHistory fallback setMode()
+  // applies on a live click (see its own comment) -- a URL combining
+  // ?view=3d with ?mode=byTime would otherwise land on a combination
+  // renderDescent3D() already tolerates gracefully (its own empty-state
+  // hint), but correcting it here keeps first-load behavior identical to
+  // what clicking those buttons in that order already does live.
+  if (mapViewMode === '3d' && state.mode !== 'byAltitude' && state.mode !== 'byHistory') {
+    mapViewMode = '2d';
+    updateMapViewModeUI();
+  }
   // Altitude count varies 5-9 per site (scaled to that site's own waiver --
   // see config.altitudes_for_site()), so the ramp is rebuilt against this
   // dataset's real list every time, not just when the picker changes.
@@ -5228,3 +5365,5 @@ fetch(withVersion('maps/regional/sites.json'))
     console.error('failed to load maps/regional/sites.json', err);
     loadSiteManifest('data/hutto/manifest.json');
   });
+window.__CACHEBUST_TEST_MARKER__ = 'v2';
+window.__CACHEBUST_TEST_MARKER__ = 'v2';

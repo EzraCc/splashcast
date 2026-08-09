@@ -275,21 +275,30 @@ def build_actual_profile(hour_df: pd.DataFrame, site_elev_ft: float) -> list[tup
     return sorted(points)
 
 
-def compute_actual_points(site_id: str, target_date: date) -> dict[str, dict]:
+def compute_actual_points(site_id: str, target_date: date) -> tuple[dict[str, dict], dict[str, list]]:
     """One simulated point per hour/deploy/rate/altitude -- same grid
     compute_splash_points() iterates, just against the single HRRR-analysis
     profile per hour instead of every live model -- keyed exactly like
-    points_by_key so the viewer can look either up the same way. Returns {}
-    if pull_historical.py hasn't pulled this site/date yet (most target
-    dates won't have this -- it's a manually-run backfill, not part of the
-    daily live-pull path)."""
+    points_by_key so the viewer can look either up the same way. Returns
+    ({}, {}) if pull_historical.py hasn't pulled this site/date yet (most
+    target dates won't have this -- it's a manually-run backfill, not part
+    of the daily live-pull path).
+
+    Second return value is the raw per-hour wind profile itself (same
+    [[alt_ft, speed_mph, dir_deg], ...] shape build_viewer_data() publishes
+    for each live model in DATA.wind_profiles) -- previously computed here
+    and discarded once simulate() ran, now also returned so the viewer can
+    run its own simulateDriftPath() against it and draw a real apogee-to-
+    ground path for the "actual" flight in 3D, not just the single landing
+    point simulate() itself produces."""
     raw_path = Path(config.DATA_DIR) / site_id / "raw" / f"{target_date}_actual.parquet"
     if not raw_path.exists():
-        return {}
+        return {}, {}
     raw = pd.read_parquet(raw_path)
     site_elev_ft = config.elev_ft_for_site(site_id)
     altitudes = config.altitudes_for_site(site_id)
     actuals = {}
+    wind_profile_by_hour = {}
     for h in config.WIND_PROFILE_HOURS_LOCAL:
         # raw["valid_time"] is UTC-naive (straight from the GRIB2 files via
         # Herbie, which does no timezone conversion) -- NOT local like the
@@ -305,6 +314,17 @@ def compute_actual_points(site_id: str, target_date: date) -> dict[str, dict]:
         profile = build_actual_profile(hour_df, site_elev_ft)
         if len(profile) < 2:
             continue
+        # float() before round() -- build_actual_profile()'s tuples carry
+        # numpy float32/64 scalars (sourced from a pandas DataFrame, unlike
+        # build_profile_single()'s already-native-float return), and
+        # round(numpy_float, ndigits) returns that SAME numpy type rather
+        # than coercing to a plain Python float -- confirmed directly (a
+        # bare `round(a)` with no ndigits DOES coerce to Python int, which
+        # is why this wasn't caught by the no-ndigits altitude case, only
+        # the two round(..., 2) calls). json.dump() can't serialize a
+        # numpy scalar; explicit float() first guarantees a native type
+        # regardless of what round() does to it.
+        wind_profile_by_hour[str(h)] = [[round(float(a)), round(float(s), 2), round(float(d), 2)] for a, s, d in profile]
         for alt in altitudes:
             if alt <= config.SINGLE_DEPLOY_MAX_ALT_FT:
                 for rate_name, rate in config.SINGLE_DEPLOY_RATES_FPS.items():
@@ -314,7 +334,7 @@ def compute_actual_points(site_id: str, target_date: date) -> dict[str, dict]:
                 phases = [(drogue, float(alt), config.MAIN_DEPLOY_ALTITUDE_FT), (main, config.MAIN_DEPLOY_ALTITUDE_FT, 0)]
                 x, y = simulate(profile, float(alt), phases, site_elev_ft)
                 actuals[f"{h}_dual_{rate_name}_{alt}"] = {"x_ft": round(float(x), 1), "y_ft": round(float(y), 1)}
-    return actuals
+    return actuals, wind_profile_by_hour
 
 
 def hull_of(points_xy: list[tuple[float, float]]) -> list[list[float]]:
@@ -845,6 +865,7 @@ def build_points_history(target_dir: Path, target_date: date, site_id: str = "hu
                 for r in rows.itertuples()
             ]
 
+    actuals, actual_wind_profile = compute_actual_points(site_id, target_date)
     return {
         "target_date": str(target_date),
         "captures": [str(c) for c in captures],
@@ -858,7 +879,15 @@ def build_points_history(target_dir: Path, target_date: date, site_id: str = "hu
         # the discrete ladder's own altitudes (same as points_by_key) -- a
         # "Specific altitude" override has no actual/star marker to show,
         # same tri-state UX users already see on dates with no actuals at all.
-        "actuals": compute_actual_points(site_id, target_date),
+        "actuals": actuals,
+        # The raw profile behind the points above -- {} whenever actuals is
+        # too (same backfill gate). Lets the viewer run its own
+        # simulateDriftPath() and plot the actual flight as a real
+        # apogee-to-ground path (3D) rather than only a landing point (2D's
+        # existing star, unaffected by this -- see actuals above), at ANY
+        # altitude/rate, not just the discrete ladder actuals itself is
+        # limited to.
+        "actual_wind_profile": actual_wind_profile,
     }
 
 
