@@ -39,20 +39,10 @@
         <div class="toggle-btns" id="mode-toggle"></div>
       </div>
       <div class="toggle-group">
-        <label class="group-label" for="boost-angle-slider">Rail angle</label>
-        <input type="range" id="boost-angle-slider" min="0" max="25" step="1" value="10">
-        <span class="boost-angle-readout" id="boost-angle-readout">10&deg;</span>
-      </div>
-      <div class="toggle-group buffer-note">
-        <div class="buffer-swatch" id="buffer-swatch"></div>
-        <span>Rail-buffer band <button class="info-btn" type="button" data-hint="buffer-hint" title="Show details">i</button></span>
-      </div>
-      <div class="toggle-group">
         <button id="copy-link-btn" type="button" class="copy-link-btn" title="Copy a link to exactly this site/date/view">Copy link</button>
       </div>
     </div>
   </div>
-  <div class="alt-hint" id="buffer-hint" style="margin: -10px 0 var(--sp-6);">Faint outer band = a launch-rail/weathercock buffer added to the wind-only zone (grows with altitude), angle adjustable via "Rail angle" just to its left. Starts zoomed to Chandler Road (south) / TX 29 East (north); zoom out for real satellite imagery of the wider area &mdash; some slower/higher scenarios drift well past the close view.</div>
 
   <div class="site-empty-state" id="site-empty-state" style="display:none;"></div>
 
@@ -88,13 +78,44 @@
           <div class="zoom-btns">
             <button id="zoom-in" title="Zoom in">+</button>
             <button id="zoom-out" title="Zoom out">&minus;</button>
-            <button id="zoom-reset" title="Reset view" style="font-size:0.7rem;">Reset</button>
+            <button id="zoom-reset" title="Reset view">&#8635;</button>
+            <button id="copy-view-btn" title="Copy a link to this exact pan/zoom (for setting this site's default view)">&#9678;</button>
           </div>
           <div class="layer-toggle" id="layer-toggle">
             <button data-layer="sat" title="Satellite imagery">Satellite</button>
             <button data-layer="road" title="Roads/labels only -- less visual noise on sites with no real terrain features to avoid">Road</button>
           </div>
           <div class="zoom-hint">drag or pinch to pan/zoom</div>
+
+          <div class="rail-angle-control" id="rail-angle-control">
+            <!-- The dial itself -- not a stand-in icon -- is always visible
+                 and always draggable, collapsed or not. It's a real,
+                 distinctive circular widget (not another 30px square button
+                 like the zoom controls) specifically so it reads as a major
+                 feature of the map rather than a minor map-navigation
+                 control -- click it to reveal the numeric readouts below;
+                 dragging works identically whether that panel is open or
+                 not (see the dial's own pointerdown handler in app.js). -->
+            <div id="rail-dial" class="rail-dial" tabindex="0" role="slider" aria-label="Rail angle: heading and magnitude -- click to see readouts" aria-valuemin="0" aria-valuemax="25">
+              <div id="rail-dial-wind-ray" class="rail-dial-wind-ray"></div>
+              <div id="rail-dial-thumb" class="rail-dial-thumb"></div>
+            </div>
+            <div class="rail-angle-panel" id="rail-angle-panel">
+              <div class="alt-list-title">
+                Rail angle <button class="info-btn" type="button" data-hint="rail-angle-hint" title="Show details">i</button>
+              </div>
+              <div class="rail-angle-readouts">
+                <label>Heading <input type="number" id="rail-heading-input" min="0" max="359" step="1">&deg;
+                  <button id="rail-heading-reset" class="zone-color-reset-btn" type="button" title="Track live ground wind" style="display:none;">&#8635;</button>
+                </label>
+                <label>Angle <input type="number" id="rail-angle-input" min="0" max="25" step="1">&deg;
+                  <button id="rail-angle-reset" class="zone-color-reset-btn" type="button" title="Reset angle to 0&deg; (no shift)" style="display:none;">&#8635;</button>
+                </label>
+                <span id="rail-wind-readout" class="rail-wind-readout"></span>
+              </div>
+              <div class="alt-hint" id="rail-angle-hint">Drag the dial (or type exact values) to set how far off vertical the rail is tipped and which way. The faint ray marks the current ground wind's own direction as a reference. Defaults to 0&deg; (no shift) -- the &#8635; next to Heading returns an explicitly-set heading to live-tracking that wind. This shifts each zone's point directly rather than widening it into a band; a rail intentionally angled a different way than the ground wind argues for something other than weathercocking.</div>
+            </div>
+          </div>
           <div class="burn-ban-chip" id="burn-ban-chip" style="display:none;"></div>
           <div class="ban-overlay" id="ban-overlay">
             <div class="flame">&#128293;</div>

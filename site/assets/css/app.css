@@ -186,18 +186,6 @@
     flex: 1 1 0; border: 1px solid var(--border); border-radius: 6px; text-align: center; padding: 7px 0;
   }
   .rate-toggle-row .toggle-btns button:last-child { border-right: 1px solid var(--border); }
-  /* Rail angle moved up into the controls bar from its old home below the
-     map (.map-col-notes). A fixed 100px here (rather than the flex:1 1 auto
-     it used when it had a wide standalone row to itself) turned out too
-     narrow to drag precisely on a touchscreen -- 25 steps packed into 100px
-     is ~4px per step. min() instead of a flat value: grows to a real drag
-     range (up to 220px) on anything wider than a phone, but on a narrow
-     phone -- where .controls wraps this into its own row with plenty of
-     width to spare -- caps at 60% of the viewport rather than a fixed px
-     figure, so it can't overflow a viewport narrower than 220px/0.6 (367px)
-     the way a flat 220px would. */
-  #boost-angle-slider { width: min(220px, 60vw); accent-color: var(--accent); }
-  .boost-angle-readout { color: var(--text-primary); font-weight: 600; font-size: var(--fs-base); }
   .copy-link-btn {
     border: 1px solid var(--border); border-radius: 8px; background: var(--surface-1); color: var(--text-primary);
     padding: 7px 14px; font-size: var(--fs-base); cursor: pointer;
@@ -266,6 +254,11 @@
     box-shadow: 0 1px 4px rgba(0,0,0,0.15);
   }
   .zoom-btns button:hover { background: var(--surface-2); }
+  /* Same accent-fill "copied" flash .copy-link-btn.copied uses, just scoped
+     to this 30x30px square button -- there's no room here for the word
+     "Copied!" the wider button shows, so this one swaps to a checkmark
+     glyph instead (see copyViewBtn's own click handler, app.js). */
+  #copy-view-btn.copied { background: var(--accent); color: #fff; border-color: var(--accent); }
   /* Touch-only -- "pinch" means nothing with a mouse, and dragging to pan
      is discoverable enough on desktop without a persistent hint (the zoom
      +/-/Reset buttons are already visible there). Hidden by default,
@@ -273,7 +266,10 @@
      .descent3d-alt-thumb's own coarse-pointer rule already uses. */
   .zoom-hint { display: none; }
   @media (pointer: coarse) {
-    .zoom-hint { display: block; position: absolute; left: 10px; bottom: 10px; font-size: var(--fs-xs); color: var(--text-muted); background: var(--surface-1); padding: 3px 8px; border-radius: 6px; border: 1px solid var(--border); opacity: 0.85; }
+    /* left:10px/bottom:66px, not the corner's own 10px -- .rail-angle-dial
+       (56px + its own 10px inset) now occupies that exact spot, this sits
+       just above it instead of overlapping. */
+    .zoom-hint { display: block; position: absolute; left: 10px; bottom: 66px; font-size: var(--fs-xs); color: var(--text-muted); background: var(--surface-1); padding: 3px 8px; border-radius: 6px; border: 1px solid var(--border); opacity: 0.85; }
   }
 
   .layer-toggle {
@@ -858,7 +854,6 @@
   }
 
 
-  .zone-buffer { stroke: none; pointer-events: none; }
   .zone-core { stroke-width: 3; pointer-events: none; }
   /* fill is set per-point in JS (by model) -- deliberately not declared here,
      since a CSS class rule would beat the element's own fill attribute in the
@@ -1064,8 +1059,6 @@
     font-size: var(--fs-sm); line-height: 1.4;
   }
 
-  .buffer-note { display: flex; align-items: center; gap: var(--sp-4); font-size: var(--fs-base); color: var(--text-secondary); max-width: 620px; }
-  .buffer-swatch { width: 20px; height: 14px; border-radius: 3px; flex-shrink: 0; background: #4a3aa7; opacity: 0.30; border: 1px solid #4a3aa7; }
   .pad-move-control { display: flex; align-items: center; gap: var(--sp-4); margin-top: var(--sp-3); max-width: 620px; font-size: var(--fs-base); color: var(--text-secondary); flex-wrap: wrap; }
   #pad-readout { font-weight: 600; color: var(--text-primary); }
   #pad-reset-btn {
@@ -1073,6 +1066,106 @@
     padding: 3px 10px; font-size: var(--fs-sm); cursor: pointer;
   }
   #pad-reset-btn:hover { background: var(--surface-2); }
+
+  /* Map-corner overlay, same convention .zoom-btns/.layer-toggle already
+     use -- left:10px/bottom:10px, the opposite corner from .zoom-btns
+     (bottom-right) so the two never collide; .zoom-hint (touch-only) is
+     bumped up out of the way below since it shares this same corner. */
+  .rail-angle-control { position: absolute; left: 10px; bottom: 10px; z-index: 5; }
+  /* Circular drag target: angle from center = heading (0deg/N = up, like a
+     compass), distance from center = magnitude, capped at the 25deg max --
+     see railDialFromClientXY() in app.js. touch-action:none stops the
+     browser's own pan/scroll gesture from fighting the pointer drag on
+     mobile, same reason .alt-range-slider needs it.
+     Always visible (not hidden behind a separate icon -- a first pass did
+     that; reported directly that dragging the icon did nothing, since it
+     wasn't the dial at all), but only DRAGGABLE once expanded -- see
+     app.js's own pointerdown handler. Collapsed at 56px (bigger than
+     .zoom-btns' 30px squares on purpose, so it still reads as a real
+     feature of the map rather than a minor navigation control) is
+     readable but too small to drag precisely with a finger; expanded it
+     grows to a real touch target sized for that (160px -- well past the
+     ~44px minimum, since this is a continuous 2D drag needing real travel
+     distance to resolve 25deg of magnitude AND 360deg of heading
+     accurately, not a single tap target). width/height transition makes
+     the grow-on-open a visible, deliberate motion rather than a jump-cut,
+     reinforcing that this is a distinct "now interactive" state. */
+  .rail-dial {
+    position: relative; width: 56px; height: 56px; border-radius: 50%; flex-shrink: 0;
+    background: var(--surface-1); border: 2px solid var(--border); cursor: pointer; touch-action: none;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.2);
+    transition: width 0.15s ease, height 0.15s ease;
+  }
+  .rail-angle-control.expanded .rail-dial {
+    width: 160px; height: 160px; border-color: var(--accent); cursor: grab;
+  }
+  .rail-angle-control.expanded .rail-dial:active { cursor: grabbing; }
+  .rail-dial:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  /* Faint crosshair marking "straight up the rail" (dead center = 0deg
+     angle) so the thumb's displacement from center reads as a deviation,
+     not just a dot floating in a circle. */
+  .rail-dial::before, .rail-dial::after {
+    content: ''; position: absolute; background: var(--border);
+  }
+  .rail-dial::before { left: 50%; top: 4px; bottom: 4px; width: 1px; transform: translateX(-50%); }
+  .rail-dial::after { top: 50%; left: 4px; right: 4px; height: 1px; transform: translateY(-50%); }
+  /* Reference ray -- ALWAYS points at the live ground-wind heading
+     (independent of the thumb/user's own choice), so "drag to match the
+     wind" has something concrete to align against, especially when the
+     magnitude is 0 and the thumb itself sits dead center with no heading
+     of its own to show. A "clock hand" anchored at its own bottom-center
+     (the dial's own center point), unrotated pointing straight up (0deg =
+     north) -- rotate() alone repositions it, no per-frame trig needed
+     here (updateRailDialUI() only ever sets the rotation, not left/top).
+     Set to display:none in JS when there's no ground wind data at all
+     (nothing real to reference). */
+  .rail-dial-wind-ray {
+    position: absolute; left: 50%; bottom: 50%; width: 2px; height: 50%;
+    background: var(--text-muted); opacity: 0.55; transform-origin: 50% 100%;
+    transform: translateX(-50%) rotate(0deg); pointer-events: none;
+  }
+  .rail-dial-thumb {
+    position: absolute; left: 50%; top: 50%; width: 12px; height: 12px; border-radius: 50%;
+    background: var(--accent); border: 2px solid var(--surface-1); transform: translate(-50%, -50%);
+    pointer-events: none; box-shadow: 0 0 0 1px var(--border);
+    transition: width 0.15s ease, height 0.15s ease;
+  }
+  /* Bigger dot on the bigger dial -- 12px reads fine against a 56px
+     circle but disappears against a 160px one. */
+  .rail-angle-control.expanded .rail-dial-thumb { width: 22px; height: 22px; }
+  /* Readouts panel -- collapsed by default (a real feature deserves the
+     always-visible dial above, but the numeric detail doesn't need to sit
+     on the map permanently). Floats above the dial (bottom:calc(100% +
+     8px)) so opening it can't run off the bottom edge; left:0 keeps its
+     own left edge flush with the dial's, growing rightward into the map
+     since this corner is now the LEFT one (a right-anchored panel here
+     would grow off-screen to the left instead). */
+  .rail-angle-panel {
+    display: none;
+    position: absolute; left: 0; bottom: calc(100% + 8px); z-index: 6;
+    width: 220px; max-width: calc(100vw - 40px); box-sizing: border-box;
+    background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px;
+    padding: 10px 12px; box-shadow: 0 2px 10px rgba(0,0,0,0.25);
+  }
+  .rail-angle-control.expanded .rail-angle-panel { display: block; }
+  .rail-angle-readouts { display: flex; flex-direction: column; gap: var(--sp-1); font-size: var(--fs-sm); color: var(--text-secondary); min-width: 0; margin-top: var(--sp-2); }
+  .rail-angle-readouts label { display: flex; align-items: center; gap: var(--sp-2); }
+  .rail-angle-readouts input[type="number"] {
+    width: 52px; box-sizing: border-box; padding: 3px 6px;
+    border: 1px solid var(--border); border-radius: 5px;
+    background: var(--surface-1); color: var(--text-primary); font-size: var(--fs-sm);
+  }
+  /* Same touch-target floor as .zone-color-reset-btn/.info-btn (see that
+     rule's own comment) -- a plain-number <input> isn't a good fit for
+     the invisible-::before trick those use (it would sit on top of the
+     real text-editing hit area), so this just grows the visible box
+     directly instead, tall enough to tap reliably alongside the two
+     reset buttons in the same row. */
+  @media (pointer: coarse) {
+    .rail-angle-readouts input[type="number"] { min-height: 40px; padding: 8px 6px; font-size: var(--fs-base); }
+  }
+  .rail-wind-readout { font-size: var(--fs-xs); color: var(--text-muted); display: flex; align-items: center; gap: 4px; }
+  .rail-wind-readout .wind-vane { font-size: var(--fs-sm); }
 
   /* Distance-from-actual accuracy table (History mode only). Cell
      backgrounds use the four fixed status-scale colors (not a
