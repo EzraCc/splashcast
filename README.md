@@ -76,7 +76,7 @@ pipeline/                Python: pulls data, runs the simulation, publishes JSON
   config.py                 Per-site config (coordinates, waiver, elevation, cron cutoff) + shared constants.
   launch_calendar.json       Per-club recurring launch-day rules + one-off cancel/move/add/flag exceptions (data, not code).
   launch_schedule.py         Generic interpreter for launch_calendar.json; the cron jobs' entry point.
-  pull_live_forecast.py      Live Open-Meteo pull -- one capture per day, building forecast-drift history.
+  pull_live_forecast.py      Live Open-Meteo pull -- one capture per day, building forecast-drift history. Also freezes a same-day snapshot from the closest pull before 9am local (config.MORNING_SNAPSHOT_HOUR_LOCAL), so History's T-0 row reflects what was checked before flying, not a later same-day re-pull.
   pull_historical.py         NOAA HRRR-analysis "actual" pull + a separate multi-week backfill mode.
   splash_zones.py            Wind capture -> drift simulation -> convex-hull zone JSON for the viewer.
   fetch_site_maps.py         Satellite/road map imagery fetch, per site.

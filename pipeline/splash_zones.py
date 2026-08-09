@@ -805,9 +805,20 @@ def build_points_history(target_dir: Path, target_date: date, site_id: str = "hu
     frames = []
     wind_profiles_by_capture: dict[str, dict] = {}
     for capture_date in captures:
-        df = pd.read_parquet(target_dir / f"captured_{capture_date}.parquet")
+        # T-0's own row should reflect "what did the forecast look like
+        # before launch" (the frozen morning snapshot pull_live_forecast.py
+        # writes when a T-0 pull lands before MORNING_SNAPSHOT_HOUR_LOCAL --
+        # see save_capture()'s comment), not whatever the ongoing same-day
+        # file has since been overwritten to by a pull hours after flying
+        # was done. Only capture_date == target_date can even have a
+        # same-day overwrite at all -- T-1..T-7 rows are one capture per
+        # day regardless, so this never applies to them. Older target dates
+        # captured before this feature existed have no _morning file, so
+        # they silently keep the prior (ongoing-file) behavior.
+        suffix = "_morning" if capture_date == target_date and (target_dir / f"captured_{capture_date}_morning.parquet").exists() else ""
+        df = pd.read_parquet(target_dir / f"captured_{capture_date}{suffix}.parquet")
 
-        points_path = target_dir / f"splash_points_captured_{capture_date}.parquet"
+        points_path = target_dir / f"splash_points_captured_{capture_date}{suffix}.parquet"
         pts = pd.read_parquet(points_path) if points_path.exists() else None
         # A stored points parquet is keyed by whatever altitude ladder/rate
         # names were current when it was written -- recompute when either no

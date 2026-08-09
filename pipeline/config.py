@@ -275,6 +275,18 @@ LAUNCH_WINDOW_END_HOUR_LOCAL = 17
 RAIN_WINDOW_START_HOUR_LOCAL = 8
 RAIN_WINDOW_END_HOUR_LOCAL = 17
 
+# The hour (local) treated as "just before people start flying" -- a T-0
+# same-day pull captured before this hour gets additionally frozen as a
+# standalone morning snapshot (pull_live_forecast.py's save_capture()) so
+# History mode's T-0 row (splash_zones.py's build_points_history()) can show
+# "what the forecast looked like before launch" instead of whatever the
+# continuously-updated same-day capture has drifted to by the time someone
+# looks at it after flying. Deliberately its own constant, not
+# RAIN_WINDOW_START_HOUR_LOCAL -- that one's about when rain accumulation
+# starts mattering for go/no-go, a different question from "when did
+# someone last check the forecast before flying."
+MORNING_SNAPSHOT_HOUR_LOCAL = 9
+
 # Wind-agreement thresholds: a model's wind for a given hour/level is called
 # out separately (not folded into the consensus group) unless mutually within
 # this of every other model in that group -- see _split_consensus() in

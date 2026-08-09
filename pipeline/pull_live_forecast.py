@@ -25,6 +25,13 @@ each day's snapshot has to survive the next day's run. If a prior capture
 exists for the same target, a delta report against the most recent one is
 printed automatically.
 
+A T-0 (capture_date == target_date) pull that lands before
+config.MORNING_SNAPSHOT_HOUR_LOCAL local time also gets frozen as a second
+captured_{capture_date}_morning.parquet (save_capture()) -- the last one
+written before that hour is what splash_zones.py's History mode uses for
+T-0, so it reflects what a launch director actually saw before flying
+rather than whichever same-day pull happened to run last.
+
 Data-pull only, per the expansion spec: no go/no-go thresholds or
 landing-zone math yet. Default target date is the coming Saturday; pass an
 explicit YYYY-MM-DD to override (launches sometimes move to Sunday).
@@ -39,6 +46,7 @@ import warnings
 from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
 from time import sleep as _sleep
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 import requests
@@ -587,12 +595,30 @@ def capture_dir(target_date: date, site_id: str = "hutto") -> Path:
     return d
 
 
-def save_capture(df: pd.DataFrame, burn_ban: dict | None, target_date: date, capture_date: date, site_id: str = "hutto") -> Path:
+def save_capture(
+    df: pd.DataFrame, burn_ban: dict | None, target_date: date, capture_date: date,
+    site_id: str = "hutto", is_morning_snapshot: bool = False,
+) -> Path:
     d = capture_dir(target_date, site_id)
     out_path = d / f"captured_{capture_date}.parquet"
     df.to_parquet(out_path)
     with open(d / f"captured_{capture_date}_burnban.json", "w") as f:
         json.dump(burn_ban, f, default=str)
+    if is_morning_snapshot:
+        # A second, distinctly-named copy -- deliberately re-written by
+        # every T-0 pull that still lands before MORNING_SNAPSHOT_HOUR_LOCAL
+        # (so the latest of those wins: "closest point before launch
+        # start"), then left untouched by every later-in-the-day pull once
+        # local time passes that hour. The out_path file above keeps
+        # getting overwritten all day regardless, same as always -- that's
+        # what keeps the live/current maps fresh "as people fly." This copy
+        # exists so History mode's T-0 row (build_points_history() in
+        # splash_zones.py) has something to read that wasn't clobbered by a
+        # pull that happened hours after launches were already over. Caller
+        # (this module's __main__) decides is_morning_snapshot -- it needs
+        # real wall-clock "now," which only makes sense for a live pull, not
+        # backfill_capture()'s retrospective one.
+        df.to_parquet(d / f"captured_{capture_date}_morning.parquet")
     return out_path
 
 
@@ -971,8 +997,15 @@ if __name__ == "__main__":
     df, burn_ban, capture_date = run(target_date, site_id)
     log.info(f"[{site_id}] Pulling live forecast for {target_date} (captured {capture_date}, T-{(target_date - capture_date).days}d)")
 
-    out_path = save_capture(df, burn_ban, target_date, capture_date, site_id)
-    log.info(f"Wrote {len(df)} rows to {out_path}")
+    # Real wall-clock "now" -- only meaningful here (the live path), not in
+    # the --backfill branch above, which reads archived model-run times with
+    # no "did I check before 9am" question to ask. See save_capture()'s
+    # is_morning_snapshot comment for what this gates.
+    now_local_hour = datetime.now(ZoneInfo(config.SITE_TZ)).hour
+    is_morning_snapshot = capture_date == target_date and now_local_hour < config.MORNING_SNAPSHOT_HOUR_LOCAL
+
+    out_path = save_capture(df, burn_ban, target_date, capture_date, site_id, is_morning_snapshot=is_morning_snapshot)
+    log.info(f"Wrote {len(df)} rows to {out_path}" + (" (+ morning snapshot)" if is_morning_snapshot else ""))
 
     print(summarize(df, target_date, burn_ban))
 
