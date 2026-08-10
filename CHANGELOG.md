@@ -2,6 +2,19 @@
 
 Dated, terse log of notable changes. For the full design rationale and decision history, see [docs/spec.md](docs/spec.md).
 
+## 2026-08-10
+
+**Verified client-side (JS) drift simulation numerically matches the server-side (Python) original**
+- Reported directly: concern that `simulateDrift()` (app.js), the direct JS port that took over live map simulation 2026-08-05, might have drifted from `simulate()` (pipeline/splash_zones.py), which still runs server-side for History mode's ladder view and viewbox sizing.
+- Compared both against 10 real samples pulled from the last 2 weeks of actual captures (5 sites, 4 capture dates, all 6 wind models, both deploy types, both rate presets, altitudes 2,000-50,000ft): identical phase/profile/site-elevation/step inputs into Python's `simulate()` (invoked directly) and JS's `simulateDrift()` (invoked in a real headless Chromium against the running app, via Playwright) — landing x_ft/y_ft agreed to <1e-6 ft on every sample, effectively bit-identical.
+- Confirmed as a real, documented, unrelated divergence rather than a bug: the live map's `zoneFor()` wraps `simulateDrift()` with `groundEquivalentRateFps()`, reinterpreting Fast/Slow as anchored at a realistic sampling altitude rather than literally 0ft AGL -- the Python server-side path still uses the old direct-at-0ft interpretation, so the two can report slightly different landing points for the same nominal preset even though the underlying integration math (what was being verified here) is identical.
+
+**Fixed: local dev server could serve stale data JSON (manifest/splash-zones/points-history) indefinitely**
+- Reported directly: a real T-5 hutto/2026-08-15 capture existed in `points_history.json` and rendered correctly in a fresh browser, but a long-running local tab kept showing only the older T-7 capture in the History tab, requiring incognito to see the fix.
+- Root cause: `withVersion()`'s `?v=<commit-sha>` cache-busting (added for `app.js`'s own `CURRENT_VERSION`, see that constant's comment) only ever gets a real value on the deployed site, where `pages.yml` seds it into a copy of `index.html` at deploy time -- locally it's always `null`, so every data fetch (manifest.json and everything a manifest entry points at) used a stable URL with no busting at all, at the mercy of the browser's own heuristic freshness window (confirmed directly: `python -m http.server` sends `Last-Modified` but no `Cache-Control`, so a browser can go a long time before ever re-asking).
+- New `fetchData()` wraps every one of those fetches; locally (`!CURRENT_VERSION`) it adds `{cache: 'no-cache'}`, forcing the browser to always send a conditional request rather than trust its own freshness heuristic -- confirmed directly `python -m http.server` DOES honor `If-Modified-Since` with a real 304 when unchanged, so this is a cheap headers-only round trip on every load when nothing changed and a real re-fetch the moment a cron or local pipeline run rewrites the file. Deliberately not the same `Date.now()`-forced-unconditional-refetch trick `writeLocalBustedTag()` already uses for `app.js`/`app.css` -- per direction, that's fine for JS/CSS being actively hand-edited, but would mean re-downloading the full data payload on every single page load here even when the 6-hourly cron hasn't produced anything new. No behavior change in production, where `withVersion()`'s real per-deploy `?v=` was already doing the right thing.
+- Verified in-browser (Playwright): mutating `manifest.json` on disk mid-session (simulating a cron/pipeline write) and re-invoking `loadSiteManifest()` in the same already-loaded tab picked up the new content immediately, with no page reload; zero console errors across a normal load/History-mode load.
+
 ## 2026-08-09
 
 **Four requested UI changes: hide-controls toggle, 3D pinch-to-zoom, Model legend moved to a horizontal row, title/subtitle hidden**

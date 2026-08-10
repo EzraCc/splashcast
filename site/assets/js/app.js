@@ -32,6 +32,28 @@ function withVersion(url) {
   return url + (url.includes('?') ? '&' : '?') + 'v=' + CURRENT_VERSION;
 }
 
+// Every data fetch (manifest.json and everything a manifest entry points at)
+// goes through this instead of a bare fetch(withVersion(...)) -- in
+// production withVersion()'s ?v=<sha> already does the real cache-busting
+// (a new deploy is a new URL), so this is a plain passthrough there. Locally
+// CURRENT_VERSION is null (see withVersion()'s own comment) and the URL
+// never changes, so the browser's default heuristic caching can serve a
+// splash_zones/manifest/points_history response from well before the last
+// pipeline run indefinitely -- confirmed directly: python -m http.server
+// sends Last-Modified but no Cache-Control, and DOES honor a conditional
+// If-Modified-Since with a real 304 when the file is unchanged. `cache:
+// 'no-cache'` (NOT 'no-store') asks the browser to always send that
+// conditional request rather than trusting its own heuristic freshness
+// window -- a cheap 304/headers-only round trip on every load when nothing
+// changed, a real re-fetch the moment a cron/local pipeline run rewrites the
+// file, and no unconditional full re-download the way tying this to
+// Date.now() (writeLocalBustedTag()'s approach for app.js/app.css, chosen
+// there because those need to reflect an in-progress local edit instantly)
+// would cause for these -- deliberately not applied to app.js/app.css.
+function fetchData(url) {
+  return fetch(withVersion(url), CURRENT_VERSION ? undefined : { cache: 'no-cache' });
+}
+
 async function checkForUpdate() {
   if (!CURRENT_VERSION) return;
   try {
@@ -5496,7 +5518,7 @@ function describeEntry(entry) {
 
 async function loadDataset(entry) {
   subtitleEl.textContent = 'Loading…';
-  const resp = await fetch(withVersion(entry.data_path));
+  const resp = await fetchData(entry.data_path);
   DATA = await resp.json();
   // wind_profiles/descent_params landed 2026-08, replacing precomputed
   // per-rate points -- everything downstream (freshState()'s rateFps seed,
@@ -5513,13 +5535,13 @@ async function loadDataset(entry) {
   // history_path is null for a target processed before this feature existed
   // -- HISTORY just stays null and the History view mode shows its own
   // "nothing published yet" state (see renderHistory()) instead of erroring.
-  HISTORY = entry.history_path ? await (await fetch(withVersion(entry.history_path))).json() : null;
+  HISTORY = entry.history_path ? await (await fetchData(entry.history_path)).json() : null;
   // Empty for the overwhelming majority of targets -- a real GPS-tracked
   // flight is a rare, manually-fed-in thing (see analyze_real_flight.py),
   // not something every launch has. Usually 0 or 1 paths, occasionally more
   // than one (a site can fly more than one rocket the same day).
   REAL_FLIGHTS = entry.real_flight_paths?.length
-    ? await Promise.all(entry.real_flight_paths.map(p => fetch(withVersion(p)).then(r => r.json())))
+    ? await Promise.all(entry.real_flight_paths.map(p => fetchData(p).then(r => r.json())))
     : [];
   pinnedRealFlightIndex = null;
   hoveredRealFlightIndex = null;
@@ -5544,7 +5566,7 @@ dateSelect.addEventListener('change', () => {
 let urlDateApplied = false;
 
 function loadSiteManifest(manifestPath) {
-  fetch(withVersion(manifestPath))
+  fetchData(manifestPath)
     .then(r => r.json())
     .then(manifest => {
       manifestEntries = manifest.launch_dates;
@@ -5652,7 +5674,7 @@ function selectSite(siteId) {
 
 siteSelect.addEventListener('change', () => selectSite(siteSelect.value));
 
-fetch(withVersion('maps/regional/sites.json'))
+fetchData('maps/regional/sites.json')
   .then(r => r.json())
   .then(data => {
     regionalSites = data;
