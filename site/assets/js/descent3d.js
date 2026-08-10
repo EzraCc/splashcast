@@ -180,17 +180,29 @@ path3dGroundToggle.querySelector('button').addEventListener('click', evt => {
 // its own trigger. Right-click-drag on desktop (evt.button === 2, with the
 // browser's own context menu suppressed below), or a second simultaneous
 // touch point on mobile (path3dActiveTouches, tracked because pointer
-// events don't otherwise expose "how many fingers are down right now" --
-// there's no pinch-to-zoom on this canvas yet to conflict with).
+// events don't otherwise expose "how many fingers are down right now").
+// Two-finger touch ALSO pinch-zooms now (2026-08, reported directly:
+// "does not zoom with pinch/pull, ends up translating on 2 fingers") --
+// same combined pan+pinch-zoom gesture #map-wrap's own 2D pan/zoom
+// (app.js) already uses: the pair's midpoint drives pan, the change in
+// distance between the two fingers drives zoom, both computed from the
+// same two tracked points every move, not two separate gestures to
+// disambiguate.
 let path3dDragging = false, path3dLastX = 0, path3dLastY = 0, path3dDragDistPx = 0;
 let path3dPanMode = false;
 let path3dPanPxX = 0, path3dPanPxY = 0;
 const path3dActiveTouches = new Map(); // pointerId -> {x, y}, touch pointers only
+let path3dPinchDist = null; // distance between the two touches as of the last move -- null unless a real 2-finger touch is in progress
 
 function path3dTouchMidpoint() {
   const pts = [...path3dActiveTouches.values()];
   if (pts.length < 2) return null;
   return [(pts[0].x + pts[1].x) / 2, (pts[0].y + pts[1].y) / 2];
+}
+function path3dTouchDist() {
+  const pts = [...path3dActiveTouches.values()];
+  if (pts.length < 2) return null;
+  return Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
 }
 
 path3dCanvas.addEventListener('contextmenu', evt => evt.preventDefault()); // right-click is "pan" here, not a menu
@@ -205,6 +217,7 @@ path3dCanvas.addEventListener('pointerdown', evt => {
   path3dCanvas.setPointerCapture(evt.pointerId);
   const mid = twoFingerPan ? path3dTouchMidpoint() : [evt.clientX, evt.clientY];
   path3dLastX = mid[0]; path3dLastY = mid[1];
+  path3dPinchDist = twoFingerPan ? path3dTouchDist() : null;
 });
 path3dCanvas.addEventListener('pointermove', evt => {
   if (evt.pointerType === 'touch' && path3dActiveTouches.has(evt.pointerId)) {
@@ -214,11 +227,12 @@ path3dCanvas.addEventListener('pointermove', evt => {
     path3dHandleHover(evt);
     return;
   }
+  const twoFingerPan = path3dPanMode && path3dActiveTouches.size >= 2;
   // Tracks the touch pair's own midpoint while panning with two fingers,
   // not each finger's individual movement separately -- averaging two
   // independently-updating pointers through one shared lastX/lastY would
   // otherwise mix their deltas together into an erratic combined motion.
-  const mid = (path3dPanMode && path3dActiveTouches.size >= 2) ? path3dTouchMidpoint() : [evt.clientX, evt.clientY];
+  const mid = twoFingerPan ? path3dTouchMidpoint() : [evt.clientX, evt.clientY];
   const dx = mid[0] - path3dLastX, dy = mid[1] - path3dLastY;
   path3dLastX = mid[0]; path3dLastY = mid[1];
   path3dDragDistPx += Math.abs(dx) + Math.abs(dy);
@@ -228,6 +242,19 @@ path3dCanvas.addEventListener('pointermove', evt => {
   if (path3dDragDistPx > 4) path3dClearViewPreset();
   if (path3dPanMode) {
     path3dPanPxX += dx; path3dPanPxY += dy;
+    if (twoFingerPan) {
+      // Fingers spreading apart -> dist grows -> zoom in -- same direction
+      // the mouse wheel handler below already uses (scrolling "up"/away
+      // zooms in). Ratio against the LAST move's distance, not the
+      // pointerdown-time distance, so the zoom rate stays proportional to
+      // how fast the pinch is actually moving right now, same idea
+      // path3dSetAlt()'s per-move updates use elsewhere in this file.
+      const dist = path3dTouchDist();
+      if (path3dPinchDist != null && dist != null) {
+        path3dZoom = Math.max(0.4, Math.min(20, path3dZoom * (dist / path3dPinchDist)));
+      }
+      path3dPinchDist = dist;
+    }
   } else {
     path3dYaw += dx * 0.008;
     // Pitch clamped to [0, 90deg] -- NOT allowed to go negative. A negative
@@ -252,6 +279,7 @@ function path3dEndDrag(evt) {
   if (evt && evt.pointerType === 'touch') path3dActiveTouches.delete(evt.pointerId);
   path3dDragging = false;
   path3dPanMode = false;
+  path3dPinchDist = null;
   path3dCanvas.classList.remove('dragging');
 }
 path3dCanvas.addEventListener('pointerup', path3dEndDrag);

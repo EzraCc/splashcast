@@ -147,6 +147,18 @@
     margin: 0 0 14px;
   }
 
+  /* Own row above .controls, not a map overlay -- see index.html's own
+     comment on why. Same bordered-button look .copy-link-btn already uses,
+     just smaller -- this is a secondary/utility action, not sized to
+     compete with the real controls it toggles. */
+  .controls-toggle-row { margin-bottom: var(--sp-3); }
+  .controls-toggle-btn {
+    display: inline-flex; align-items: center; gap: 6px;
+    border: 1px solid var(--border); border-radius: 8px; background: var(--surface-1); color: var(--text-secondary);
+    padding: 6px 12px; font-size: var(--fs-sm); cursor: pointer;
+  }
+  .controls-toggle-btn:hover { background: var(--surface-2); color: var(--text-primary); }
+
   .controls {
     display: flex;
     flex-wrap: wrap;
@@ -884,23 +896,26 @@
     }
   }
 
-  /* Fly-out panel -- opens/closes ONLY via #map-alt-toggle now (see that
-     button's own comment) -- .expanded still lives on .map-alt-control
-     (the same outside-click-closes listener as before, toggleMapAltPanel()
-     in app.js), this is just a descendant-selector match regardless of
-     nesting depth. Nested INSIDE .map-alt-slider in the HTML now (not a
-     sibling) specifically so its own position:absolute anchors to the
-     SLIDER's box -- lets #alt-list's rows below be positioned at the same
-     alt/max fraction the slider's own ticks use (alignAltListToSlider(),
-     app.js), landing at each tick's real height instead of an evenly-
-     spaced guess. Grows LEFTWARD into the map (this control sits at the
-     right edge, unlike the dial's bottom-left corner spot) --
-     right:calc(100% + 8px) keeps its own right edge flush with the
-     slider's, growing left instead of off-screen right. */
+  /* Fly-out panel -- opens/closes ONLY via #map-alt-toggle (see that
+     button's own comment) -- .expanded lives on .map-alt-control,
+     toggleMapAltPanel() in app.js. Sibling of .map-alt-slider again (not
+     nested inside it) -- a slider-tick-aligned row layout was tried and
+     reverted 2026-08 (reported directly: broke on mobile, iPhone 15 Pro
+     Max) specifically because that approach forced this panel to match the
+     slider's own top:0/bottom:0 full height regardless of how many rows
+     actually needed showing, which a short mobile map frame has nowhere
+     near enough room for. Sized to its own content now (no top/bottom
+     inset), capped by max-height/overflow-y so a site with a lot of rungs
+     (Argonia's 11) scrolls internally instead of either overflowing the
+     viewport or stretching the whole map to fit. Grows LEFTWARD (this
+     control sits at the right edge, unlike the dial's bottom-left corner
+     spot) -- right:calc(100% + 8px) keeps its own right edge flush with
+     .map-alt-control's, growing left instead of off-screen right. */
   .map-alt-panel {
     display: none;
-    position: absolute; right: calc(100% + 8px); top: 0; bottom: 0; z-index: 6;
-    width: 260px; max-width: calc(100vw - 40px); box-sizing: border-box;
+    position: absolute; right: calc(100% + 8px); top: 0; z-index: 6;
+    width: 260px; max-width: calc(100vw - 40px); max-height: calc(100vh - 100px);
+    box-sizing: border-box;
     background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px;
     padding: 10px 12px; box-shadow: 0 2px 10px rgba(0,0,0,0.25);
     overflow-y: auto;
@@ -992,22 +1007,11 @@
      ladder (e.g. "No wind data for this altitude/hour") when the Specific
      altitude readout is active -- see app.js's syncAltCustomUI(). */
   .alt-custom-status { font-size: var(--fs-xs); color: var(--hot-text); margin-bottom: var(--sp-1); }
-  /* Ladder rows, inside #map-alt-panel -- position:relative anchors each
-     row's own position:absolute below (JS-computed, not a flex/gap flow
-     any more) -- reported directly ("fix the panel... so the labels are
-     aligned to the slider"): each row is placed at the same alt/max
-     fraction the slider's own tick for that altitude uses
-     (alignAltListToSlider(), app.js), not just stacked evenly top-to-
-     bottom. min-height is a floor, not a fixed height -- the JS sets a
-     real inline height once it knows how tall the (possibly collision-
-     adjusted) row stack actually needs to be. */
-  .alt-list { position: relative; min-width: 0; min-height: 100%; }
-  /* Scoped to #alt-list specifically, not the bare .alt-row class --
-     #model-legend reuses .alt-row too and stays a normal top-to-bottom
-     flex list; only the altitude ladder's own rows get slider-aligned
-     absolute positioning. `top` is set inline per row (app.js); left/
-     right:0 here so each row spans the panel's full width regardless. */
-  #alt-list .alt-row { position: absolute; left: 0; right: 0; }
+  /* Ladder rows, inside #map-alt-panel -- plain top-to-bottom flex list.
+     A slider-tick-aligned absolute-positioned layout was tried and
+     reverted 2026-08 (see .map-alt-panel's own comment for why) -- back to
+     just stacking rows evenly, same as #model-legend already does. */
+  .alt-list { position: relative; min-width: 0; display: flex; flex-direction: column; gap: var(--sp-1); }
   .alt-list-title {
     font-size: var(--fs-sm); color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.03em;
     margin-bottom: 4px; display: flex; align-items: center; gap: 5px;
@@ -1083,6 +1087,19 @@
      just visually receded so selected models read as "in the picture". */
   .alt-row.deselected { opacity: 0.45; }
   .alt-swatch { width: 16px; height: 16px; border-radius: 4px; flex-shrink: 0; }
+
+  /* Model legend: horizontal row below the map now, not a vertical stack in
+     the right sidebar (moved 2026-08, requested directly) -- flex-wrap, not
+     a fixed column count, so 6 models fit one row at desktop widths and
+     wrap on their own as the viewport narrows, capped at 2 rows in
+     practice (6 short chips) without a dedicated breakpoint to maintain.
+     #model-legend .alt-row overrides the base .alt-row's block-level
+     flex-item sizing (which fills its OLD vertical-stack parent's full
+     width) down to "only as wide as its own content" -- requested
+     directly -- plus a bit less vertical padding, tuned for a chip in a
+     row rather than a full-width list row. */
+  #model-legend { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
+  #model-legend .alt-row { flex: 0 0 auto; padding: 5px 10px; }
   .alt-hint { font-size: var(--fs-sm); color: var(--text-muted); margin-top: var(--sp-2); line-height: 1.5; display: none; }
   .alt-hint.open { display: block; }
 
@@ -1395,6 +1412,15 @@
        had shifted down instead, taking the still-unmoved-relative-to-it
        header row along with it). Padding never collapses like this. */
     .descent3d-header-controls { padding-left: 0; padding-right: 0; padding-top: 85px; }
+    /* Requested directly: fit in no more than 2 rows on mobile -- 6 chips'
+       real content width doesn't quite clear that at this app's own
+       390px-tuned floor with the desktop padding/gap, confirmed directly.
+       Tighter padding/gap and a smaller swatch (not a smaller font -- the
+       label text itself is already the shorter "N/A" now, see
+       buildModelLegend()'s own comment; shrinking it further would hurt
+       legibility for not much width back) closes the gap. */
+    #model-legend { gap: 6px; }
+    #model-legend .alt-row { padding: 4px 8px; gap: 6px; }
   }
 
   /* --- launch-site picker: plain <select> --- */

@@ -919,14 +919,6 @@ mapAltSlider.addEventListener('keydown', evt => {
   }
 });
 
-// #map-alt-panel is nested INSIDE #map-alt-slider now (see index.html's own
-// comment, for alignAltListToSlider()'s positioning math below) -- without
-// this, a pointerdown anywhere in the panel (a row click, the color picker,
-// etc.) would bubble up into the slider's OWN pointerdown handler just
-// above and jump the thumb to that click's raw Y, same class of fix the
-// tick buttons' own stopPropagation() already needed.
-document.getElementById('map-alt-panel').addEventListener('pointerdown', evt => evt.stopPropagation());
-
 // Explicit open/close -- replaced the old "any interaction opens it, click
 // outside closes it" behavior (mirrored from #rail-angle-control) after
 // direct feedback that opening on every slider adjustment was unwanted.
@@ -942,7 +934,6 @@ function setMapAltExpanded(expanded) {
   mapAltControl.classList.toggle('expanded', expanded);
   mapAltToggleBtn.setAttribute('aria-expanded', expanded ? 'true' : 'false');
   mapAltToggleBtn.textContent = expanded ? '»' : '«';
-  if (expanded) alignAltListToSlider(); // panel was display:none until now -- (re)align once it has a real box to measure
 }
 function toggleMapAltPanel() {
   setMapAltExpanded(!mapAltControl.classList.contains('expanded'));
@@ -1112,7 +1103,6 @@ function buildAltList() {
     const selected = isByAlt && state.selectedAlts.has(alt);
     const row = document.createElement('div');
     row.className = 'alt-row' + (!available ? ' unavailable' : (isByAlt ? (selected ? ' pinned' : ' deselected') : ''));
-    row.dataset.alt = alt; // read back by alignAltListToSlider() below
     row.innerHTML = `<div class="alt-swatch" style="background:${ALT_COLORS_HEX[alt]}"></div><span>${alt.toLocaleString()} ft</span>`;
     if (!available) { el.appendChild(row); return; }
 
@@ -1163,65 +1153,6 @@ function buildAltList() {
     }
     el.appendChild(row);
   });
-  alignAltListToSlider();
-}
-
-// Positions each #alt-list row at the same alt/max fraction position the
-// slider's own ticks use (relative to #map-alt-slider's live pixel height,
-// not just evenly stacked top-to-bottom) -- reported directly ("fix the
-// panel... so the labels are aligned to the slider"). A no-op while the
-// panel is collapsed (display:none -- its rect is all-zero, nothing is
-// visible anyway); toggleMapAltPanel() calls this again right after adding
-// .expanded so it's correct the moment it actually matters. Rows are
-// ordered descending (altitudesDescending()), so a single top-down pass
-// pushes any row that would land closer than MIN_ROW_PX to the one already
-// placed above it -- keeps every row readable without ever reordering
-// them, at the cost of drifting off the "true" fraction position only
-// where the ladder's own real rungs are packed close together (unavoidable
-// -- text needs real height a bare tick doesn't).
-function alignAltListToSlider() {
-  const listEl = document.getElementById('alt-list');
-  const rows = [...listEl.children];
-  if (!rows.length) return;
-  const sliderRect = mapAltSlider.getBoundingClientRect();
-  const listRect = listEl.getBoundingClientRect();
-  if (!listRect.height) return; // collapsed -- nothing visible to align yet
-  const max = mapAltSliderMaxFt();
-  const usable = sliderRect.height - 18; // matches the 9px-inset-each-end convention every tick uses
-  const MIN_ROW_PX = 24;
-
-  // Clamped to >=0 -- #alt-list sits BELOW the panel's own title/color-
-  // picker/deploy-readout content, not flush with the slider's own top, so
-  // the highest altitude's "true" fraction position (closest to the
-  // slider's top) can compute to a negative offset here. An unclamped
-  // negative top rendered that row overlapping the header content above it
-  // (confirmed directly, screenshot showed "10,000 ft" painted over "Main
-  // deploy: 800 ft") -- pinning it to 0 trades a little alignment accuracy
-  // at the very top for never overlapping real content, and the collision
-  // loop below still cascades correctly from whatever this clamps to.
-  const idealTops = rows.map(row => {
-    const alt = Number(row.dataset.alt);
-    const frac = max > 0 ? alt / max : 0;
-    const bottomFromSliderBottom = 9 + usable * frac;
-    const topFromSliderTop = sliderRect.height - bottomFromSliderBottom;
-    return Math.max(0, (sliderRect.top + topFromSliderTop) - listRect.top);
-  });
-
-  const tops = [...idealTops];
-  for (let i = 1; i < tops.length; i++) {
-    if (tops[i] - tops[i - 1] < MIN_ROW_PX) tops[i] = tops[i - 1] + MIN_ROW_PX;
-  }
-
-  rows.forEach((row, i) => { row.style.top = `${tops[i]}px`; });
-
-  // #alt-list is position:relative with absolutely-positioned children now
-  // (see its own CSS comment) -- it won't grow to fit them on its own, so
-  // give it enough real height to hold the lowest (possibly collision-
-  // pushed) row, and let it scroll internally (.map-alt-panel's own
-  // overflow-y) if that pushes past the panel's available space on an
-  // especially packed ladder.
-  const lastBottom = tops[tops.length - 1] + MIN_ROW_PX;
-  listEl.style.height = Math.max(lastBottom, listRect.height) + 'px';
 }
 
 // Which models published a usable wind profile at any hour -- a model beyond
@@ -1295,7 +1226,12 @@ function buildModelLegend() {
     // Shape swatch everywhere now, not just History -- matches what's
     // actually drawn on the map in every mode (see MODEL_SHAPES's comment).
     const swatch = shapeSwatchSVG(MODEL_SHAPES[m], hasData ? MODEL_COLORS_HEX[m] : 'var(--text-muted)');
-    row.innerHTML = `${swatch}<span>${label}${hasData ? '' : ' (no data)'}</span>`;
+    // "N/A" not "no data" -- shorter (matters now that this legend is a
+    // horizontal row of chips, not a vertical list with room to spare; two
+    // models unavailable at once used to be enough to force a 3rd wrapped
+    // row at a real mobile width). The full explanation is still one hover
+    // away (row.title, just below) -- this is only the always-visible text.
+    row.innerHTML = `${swatch}<span>${label}${hasData ? '' : ' (N/A)'}</span>`;
     if (hasData) {
       // click vs dblclick: a browser fires click on both presses of a
       // double-click before the dblclick event itself, so the single-click
@@ -1928,6 +1864,28 @@ mapViewToggleEl.querySelectorAll('button').forEach(btn => {
   });
 });
 updateMapViewModeUI();
+
+// --- hide-controls toggle: requested directly, so mobile users can see
+// more of the map without scrolling past the Launch Site/Date/View row
+// first. Same chevron-toggle idea renderWeatherPanel()'s own
+// weatherPanelCollapsed already established for the Weather panel --
+// simpler here since #controls-panel's own content never changes based on
+// this, just a plain show/hide, no re-render needed. Not persisted across
+// reloads (session-only) -- same as weatherPanelCollapsed, a "just for
+// this look" preference, not something worth a URL param or localStorage
+// entry.
+let controlsCollapsed = false;
+const controlsToggleBtn = document.getElementById('controls-toggle-btn');
+const controlsPanel = document.getElementById('controls-panel');
+const controlsToggleLabel = document.getElementById('controls-toggle-label');
+const controlsChevron = document.getElementById('controls-chevron');
+controlsToggleBtn.addEventListener('click', () => {
+  controlsCollapsed = !controlsCollapsed;
+  controlsPanel.style.display = controlsCollapsed ? 'none' : '';
+  controlsToggleBtn.setAttribute('aria-expanded', String(!controlsCollapsed));
+  controlsToggleLabel.textContent = controlsCollapsed ? 'Show controls' : 'Hide controls';
+  controlsChevron.classList.toggle('collapsed', controlsCollapsed);
+});
 
 // --- permalink copy button: the URL bar is kept live-synced for
 // site/mode/hour/deploy/rate/alt (see syncUrl()), but NOT the launch date by
