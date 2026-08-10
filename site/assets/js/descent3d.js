@@ -672,7 +672,7 @@ function path3dDrawScene(paths, altFt) {
     .sort((a, b) => a.depth - b.depth)
     .map(o => o.p);
 
-  ordered.forEach(p => path3dDrawPath(p, toScreenPath, altFt));
+  ordered.forEach(p => path3dDrawPath(p, toScreenPath, altFt, railShift));
 
   // Drawn LAST -- on top of the ground plane, axes, and every model's own
   // path/apogee marker, so it's never occluded by any of them regardless
@@ -828,7 +828,7 @@ function path3dDrawBoostLine(toScreen, toScreenPath, altFt) {
   ctx.restore();
 }
 
-function path3dDrawPath(p, toScreen, altFt) {
+function path3dDrawPath(p, toScreen, altFt, railShift) {
   const ctx = path3dCtx;
   // 'actual' (3D History's T+1 flight, renderDescent3D()) isn't a real
   // model -- reuses PROJECTION_MARKER_COLOR (app.js), the same amber the
@@ -843,7 +843,19 @@ function path3dDrawPath(p, toScreen, altFt) {
   p.path.forEach((pt, i) => {
     const [sx, sy] = toScreen(pt.x_ft, pt.y_ft, pt.alt_ft);
     if (i === 0) ctx.moveTo(sx, sy); else ctx.lineTo(sx, sy);
-    path3dHitPoints.push({ sx, sy, model: p.model, alt_ft: pt.alt_ft, x_ft: pt.x_ft, y_ft: pt.y_ft });
+    // pt.x_ft/y_ft is cumulative drift SINCE APOGEE (simulateDriftPath()
+    // starts every path at x=0,y=0 there, see that function's own comment)
+    // -- reported directly as "apogee shows 0,0 from the pad, descent path
+    // reports distance from apogee, not the pad." Pad-relative feet needs
+    // + railShift (the rail-angle boost deviation apogee itself sits at,
+    // same shift toScreen() gets via the toScreenPath() closure this
+    // function is always called through) on top of the raw drift --
+    // deliberately NOT + padOffsetFt too: padOffsetFt translates the pad
+    // and every path point by the same constant (see toScreen()'s own
+    // comment), so it cancels out of a PAD-relative distance by
+    // construction, same as it cancels out of the boost line's own start-
+    // to-end geometry.
+    path3dHitPoints.push({ sx, sy, model: p.model, alt_ft: pt.alt_ft, x_ft: pt.x_ft + railShift.x, y_ft: pt.y_ft + railShift.y });
   });
   ctx.stroke();
 

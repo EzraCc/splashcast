@@ -626,9 +626,15 @@ function setMode(mode) {
   // switching back on its own; they'd click 3D again if they want it.
   if (mode !== 'byAltitude' && mode !== 'byHistory' && mapViewMode === '3d') {
     mapViewMode = '2d';
-    updateMapViewModeUI();
   }
   state.mode = mode;
+  // Unconditional (not just inside the forced-2d branch above) -- this also
+  // syncs the 3D button's own disabled state (see its own comment), which
+  // needs to update on every mode switch, not just the ones that force an
+  // active 3D view back to 2D (e.g. byAltitude -> byTime while already in
+  // 2D still needs the button to go from enabled to disabled). state.mode
+  // must already be set by this point -- updateMapViewModeUI() reads it.
+  updateMapViewModeUI();
   // fresh start on every mode switch -- a hidden zone-group carrying over from
   // the other mode's isolation state would reference a data-alt/data-hour that
   // doesn't apply here
@@ -1851,6 +1857,8 @@ updateLayerToggleUI();
 // directly on an unsupported combination.
 let mapViewMode = URL_PARAMS.get('view') === '3d' ? '3d' : '2d';
 const mapViewToggleEl = document.getElementById('map-view-toggle');
+const map3dToggleBtn = mapViewToggleEl.querySelector('button[data-mode="3d"]');
+const map3dToggleBtnTitle = map3dToggleBtn.title;
 const mapFrame2d = document.getElementById('map-frame-2d');
 const mapFrame3d = document.getElementById('map-frame-3d');
 const descent3dHintTitle = document.getElementById('descent3d-hint-title');
@@ -1858,6 +1866,22 @@ const descent3dHintEl = document.getElementById('descent3d-hint');
 function updateMapViewModeUI() {
   const is3d = mapViewMode === '3d';
   [...mapViewToggleEl.children].forEach(btn => btn.classList.toggle('active', btn.dataset.mode === mapViewMode));
+  // 3D has never supported byTime -- renderDescent3D()'s own guard
+  // (descent3d.js) already falls back to an explanatory empty state there,
+  // but that leaves the whole .map-view-wrap collapsed to almost nothing
+  // (neither frame has real content/height), which read as "the map
+  // disappeared" rather than "this combination isn't supported" (reported
+  // directly). Disabling the button here prevents ever reaching that state
+  // by clicking; the URL-bootstrap correction (initFromData()) and
+  // setMode()'s own forced-2d fallback below independently cover landing on
+  // or switching to byTime while already in 3D.
+  // state is still null at the one call site that runs before initFromData()
+  // has set it up (line ~1900, below) -- optional chaining, not a truthy
+  // guard block, since "not yet loaded" and "loaded, not byTime" both mean
+  // the same thing here (not disabled).
+  const timeDisabled = state?.mode === 'byTime';
+  map3dToggleBtn.disabled = timeDisabled;
+  map3dToggleBtn.title = timeDisabled ? 'Not available in "By time of day" mode' : map3dToggleBtnTitle;
   mapFrame2d.style.display = is3d ? 'none' : '';
   mapFrame3d.style.display = is3d ? '' : 'none';
   descent3dHintTitle.style.display = is3d ? '' : 'none';
@@ -5326,6 +5350,7 @@ function render() {
   }
 
   drawPadMarker();
+  drawPredictedApogeeMarker();
 
   applyIsolation();
   setViewBox();
@@ -5369,6 +5394,37 @@ function drawPadMarker() {
   svg.appendChild(g);
 }
 
+// Where apogee actually ends up, ground-projected -- pad + the rail-angle
+// boost deviation (railShiftFt(), same math the 3D view's own dashed boost
+// line uses for its apogee end, see path3dDrawBoostLine()'s comment).
+// Requested directly: at any nonzero rail angle, every zone/point already
+// silently starts its descent sim from this shifted point (see
+// railShiftFt()'s own comment), but the 2D map itself never showed WHERE
+// that was, unlike 3D -- only the pad marker (always at padOffsetFt, never
+// shifted by rail angle) and the zones themselves (descent drift already
+// mixed in, not a clean "here's just the boost deviation" reference point).
+// Reuses the exact same triangle-up marker style
+// (APOGEE_MARKER_COLOR/APOGEE_MARKER_STROKE) the real-flight overlay's own
+// apogee marker already uses elsewhere in this file -- same concept (a
+// rocket's apogee position), same visual language, not a new color/shape
+// invented for this. resolveMapAltFt() (shared with the map-anchored
+// altitude slider/3D) picks ONE representative altitude regardless of mode
+// -- same "one shared boost deviation, not per-model/per-hour/per-capture"
+// reasoning path3dDrawBoostLine() already established, since the boost
+// phase finishes before any wind data (or capture-date choice) comes into
+// play at all. Not interactive (pointer-events:none) -- purely
+// informational, same treatment the real-flight version already gets.
+// Hidden at rail angle 0 -- apogee sits directly above the pad then, and a
+// second marker stacked exactly on top of the pad's own crosshair would be
+// pure clutter with nothing new to show.
+function drawPredictedApogeeMarker() {
+  if (!(railAngleDeg ?? 0)) return;
+  const altFt = resolveMapAltFt();
+  const [sx, sy] = ftToPxShifted(0, 0, altFt);
+  const marker = drawMarker(svg, 'triangle-up', sx, sy, 9, APOGEE_MARKER_COLOR, APOGEE_MARKER_STROKE);
+  marker.style.pointerEvents = 'none';
+}
+
 function updatePadReadout() {
   const moved = padOffsetFt.x || padOffsetFt.y;
   padResetBtn.style.display = moved ? '' : 'none';
@@ -5410,8 +5466,14 @@ function initFromData() {
   // what clicking those buttons in that order already does live.
   if (mapViewMode === '3d' && state.mode !== 'byAltitude' && state.mode !== 'byHistory') {
     mapViewMode = '2d';
-    updateMapViewModeUI();
   }
+  // Unconditional, not just inside the branch above -- also syncs the 3D
+  // button's own disabled-in-byTime state (updateMapViewModeUI()'s own
+  // comment) for a plain ?mode=byTime landing that never had mapViewMode
+  // set to '3d' in the first place (confirmed as a real gap: the button
+  // stayed enabled on a direct byTime load with no ?view=3d in the URL,
+  // since nothing had called this function since state.mode became real).
+  updateMapViewModeUI();
   // Altitude count varies 5-9 per site (scaled to that site's own waiver --
   // see config.altitudes_for_site()), so the ramp is rebuilt against this
   // dataset's real list every time, not just when the picker changes.

@@ -249,6 +249,12 @@ def refresh_regional_sites_metadata() -> Path:
         meta["sites"][site_id] = {
             "name": site["name"], "club": site["club"],
             "lat": site["lat"], "lon": site["lon"], "waiver_ft": site["waiver_ft"],
+            # Every site's real ground elevation, MSL -- not used by anything
+            # yet (2026-08-10), added so the future descent-rate site
+            # calculator (.claude/plans/descent-rate-site-calculator.md) has
+            # every site's elevation available client-side without a second
+            # fetch or lazily loading a whole other site's manifest.
+            "elev_ft": round(config.elev_ft_for_site(site_id), 1),
             "px": [round(px, 1), round(py, 1)],
             "has_data": _site_has_data(site_id),
         }

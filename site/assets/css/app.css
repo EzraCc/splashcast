@@ -185,6 +185,7 @@
   .toggle-btns button:last-child { border-right: none; }
   .toggle-btns button.active { background: var(--accent); color: #fff; font-weight: 600; }
   .toggle-btns button:hover:not(.active) { background: var(--surface-2); }
+  .toggle-btns button:disabled { opacity: 0.4; cursor: not-allowed; }
   .toggle-group.disabled { opacity: 0.4; pointer-events: none; }
   /* Deploy + Preset rows in the sidebar rate section: label left, toggle
      pushed to the row's right edge (rather than sitting right after the
