@@ -1,19 +1,37 @@
 name: Scheduled data pulls
 
-# Two independent jobs, gated to their own cron entry via github.event.schedule
-# (a workflow_dispatch run defaults to firing both, or pick one via the `job`
-# input):
-#   - open-meteo-live: the "leading up to launch" forecast pull. Runs every 6h
-#     for every site with a launch T-0..T-7 days out
-#     (pipeline/launch_schedule.py's run_live_pulls() -- per-site
-#     config.SITES[...]["cron_cutoff_hour_utc"] stops same-day pulls once a
-#     launch day is functionally over). Only ever produces one stored point
-#     per model per UTC day regardless of how often this fires.
+# Two independent jobs. noaa-actuals is gated to its own single cron entry
+# via github.event.schedule (a workflow_dispatch run defaults to firing both
+# jobs, or pick one via the `job` input). open-meteo-live now runs off THREE
+# cron entries at two different cadences, split by lead time (requested
+# directly, 2026-08-10 -- reduce Open-Meteo load on far-out dates without
+# losing freshness close to launch):
+#   - T-0..T-3 (pipeline/launch_schedule.py's run_live_pulls_near()): every 6h,
+#     unchanged from this job's original cadence -- per-site
+#     config.SITES[...]["cron_cutoff_hour_utc"] still stops same-day (T-0)
+#     pulls once a launch day is functionally over. Only ever produces one
+#     stored point per model per UTC day regardless of how often this fires.
+#   - T-4..T-7 (run_live_pulls_far()): twice daily, targeting real local
+#     06:00/18:00 America/Chicago rather than a fixed UTC hour -- this far
+#     out, one fresh pull covering the overnight model-run cycle and one
+#     covering the day's later runs is enough; the extra two daily pulls this
+#     replaces weren't buying meaningfully fresher data at that lead time.
+#     Since Chicago's UTC offset flips with DST, this fires at BOTH UTC times
+#     that could be 06:15/18:15 local (11:15 & 23:15 UTC are the two genuinely
+#     new entries below; the other two DST candidates, 12:15 & 00:15 UTC,
+#     already coincide with the near-tier's own 0,6,12,18 grid) -- the far
+#     tier's own local-hour check throws away whichever half of each pair is
+#     the wrong DST state for right now, so this never needs a manual edit
+#     across the March/November transitions.
+#   Every firing of this job runs the near-tier pull ONLY on the original
+#   0,6,12,18 grid (matched via github.event.schedule) and attempts the
+#   far-tier pull on every firing, letting run_live_pulls_far()'s own
+#   local-hour gate no-op it on the wrong 4 of 6 daily firings.
 #
-#     Fires at :15 past 0/6/12/18 UTC, not exactly on the boundary -- a buffer
-#     for Open-Meteo's own documented "eventually consistent" server sync
-#     (they recommend waiting 10min after a run's availability time). This is
-#     NOT an attempt to catch each model's own freshest run: real per-model
+#     Fires at :15 past the hour, not exactly on the boundary -- a buffer for
+#     Open-Meteo's own documented "eventually consistent" server sync (they
+#     recommend waiting 10min after a run's availability time). This is NOT
+#     an attempt to catch each model's own freshest run: real per-model
 #     publish lag (checked via api.open-meteo.com/data/<model>/static/
 #     meta.json) ranges ~80min (HRRR/NBM) to ~7h (ECMWF, longer than its own
 #     6h cycle) -- no single fixed offset can target that for every model in
@@ -38,7 +56,9 @@ name: Scheduled data pulls
 
 on:
   schedule:
-    - cron: "15 0,6,12,18 * * *"  # open-meteo-live, 4x daily
+    - cron: "15 0,6,12,18 * * *"  # open-meteo-live near-tier (T-0..T-3, 4x daily) + far-tier's winter-DST candidates
+    - cron: "15 11 * * *"         # open-meteo-live far-tier only (T-4..T-7): 0600 CDT / gated off outside CDT
+    - cron: "15 23 * * *"         # open-meteo-live far-tier only (T-4..T-7): 1800 CDT / gated off outside CDT
     - cron: "0 11 * * *"          # noaa-actuals, once daily
   workflow_dispatch:
     inputs:
@@ -63,7 +83,7 @@ permissions:
 jobs:
   open-meteo-live:
     if: >
-      (github.event_name == 'schedule' && github.event.schedule == '15 0,6,12,18 * * *') ||
+      (github.event_name == 'schedule' && github.event.schedule != '0 11 * * *') ||
       (github.event_name == 'workflow_dispatch' && github.event.inputs.job != 'actuals')
     runs-on: ubuntu-latest
     concurrency:
@@ -78,20 +98,39 @@ jobs:
       - name: Pull upcoming-launch forecasts (Open-Meteo)
         working-directory: pipeline
         # A manual dispatch with `site` set bypasses launch_schedule.py's own
-        # T-0..T-7 gate entirely (run_live_pulls()) and pulls that exact
-        # site/date directly -- for showing a club real forecast data before
-        # their own launch is within the normal window. Both steps, same
-        # order run_pulls_for() itself uses -- pull_live_forecast.py alone
-        # only writes the raw capture parquet; splash_zones.py is what
-        # actually builds the published site/data/ viewer JSON. The
-        # scheduled cron trigger never sets these inputs, so it always takes
-        # the normal gated path.
+        # T-0..T-7 gate entirely and pulls that exact site/date directly --
+        # for showing a club real forecast data before their own launch is
+        # within the normal window. Both steps, same order run_pulls_for()
+        # itself uses -- pull_live_forecast.py alone only writes the raw
+        # capture parquet; splash_zones.py is what actually builds the
+        # published site/data/ viewer JSON.
+        #
+        # A manual dispatch with no `site` set runs the plain, unconditional
+        # --run-live (full T-0..T-7, see run_live_pulls()'s own comment) --
+        # gating a deliberate manual trigger on local time of day the same
+        # way the scheduled far-tier pull below does would just be surprising
+        # UX for a one-off "pull now" request.
+        #
+        # The scheduled cron trigger instead runs the near/far split: near
+        # (T-0..T-3) only on the original 0,6,12,18 grid (this job also fires
+        # at 11:15/23:15 UTC now, purely for the far tier -- matching
+        # github.event.schedule keeps those two from ALSO running an extra
+        # near-tier pull outside the intended 6h cadence); far (T-4..T-7) is
+        # attempted on every firing and self-gates on local time internally
+        # (see run_live_pulls_far()'s own comment for why that's safe/cheap
+        # to just always attempt rather than also matching schedule strings
+        # here).
         run: |
           if [ -n "${{ github.event.inputs.site }}" ]; then
             python pull_live_forecast.py "${{ github.event.inputs.date }}" --site "${{ github.event.inputs.site }}"
             python splash_zones.py "${{ github.event.inputs.date }}" --site "${{ github.event.inputs.site }}"
-          else
+          elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             python launch_schedule.py --run-live
+          else
+            if [ "${{ github.event.schedule }}" = "15 0,6,12,18 * * *" ]; then
+              python launch_schedule.py --run-live-near
+            fi
+            python launch_schedule.py --run-live-far
           fi
       - name: Commit and push updated data
         id: commit

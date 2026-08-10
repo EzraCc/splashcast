@@ -38,8 +38,15 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from time import sleep as _sleep
+from zoneinfo import ZoneInfo
 
 import config
+
+# Same pattern as splash_zones.py's own _SITE_TZ -- used by run_live_pulls_far()
+# to tell real local morning/evening apart from whichever DST state happens
+# to be in effect, rather than a fixed UTC hour that would be off by one for
+# half the year.
+_SITE_TZ = ZoneInfo(config.SITE_TZ)
 
 MON, TUE, WED, THU, FRI, SAT, SUN = range(7)
 WEEKDAY_MAP = {"MON": MON, "TUE": TUE, "WED": WED, "THU": THU, "FRI": FRI, "SAT": SAT, "SUN": SUN}
@@ -354,23 +361,30 @@ def events_by_lead(today: date, min_lead: int, max_lead: int) -> list[LaunchEven
     return sorted([e for e in events if min_lead <= (e.event_date - today).days <= max_lead], key=lambda e: e.event_date)
 
 
-def run_live_pulls(today: date = None, dry_run: bool = False) -> None:
+def run_live_pulls(today: date = None, dry_run: bool = False, min_lead: int = 0, max_lead: int = None) -> None:
     """The Open-Meteo "leading up to launch" cron job: pulls the current
-    forecast for every site with a launch T-0..T-(config.LEAD_DAYS max) days
-    out, building that day's forecast-drift snapshot. Meant to run several
-    times a day (see .github/workflows/cron-pulls.yml) -- capture_date dedup
-    (UTC day, in pull_live_forecast.py's run()) keeps only one stored point
-    per model per day regardless of how often this fires.
+    forecast for every site with a launch min_lead..max_lead days out,
+    building that day's forecast-drift snapshot. capture_date dedup (UTC day,
+    in pull_live_forecast.py's run()) keeps only one stored point per model
+    per day regardless of how often this fires within that day.
+
+    Defaults to the full 0..config.LEAD_DAYS-max range -- the CLI's
+    --run-live and a manual workflow_dispatch both still want "everything,
+    right now," unconditionally. The scheduled cron entries instead go
+    through run_live_pulls_near()/run_live_pulls_far() below, which narrow
+    this to a lead-tier and (for the far tier) gate on local time of day --
+    see those functions' own comments for why the tiers exist and run at
+    different cadences.
 
     UTC throughout (today defaults to UTC-now). The one per-site local-time
     exception is config.SITES[...]["cron_cutoff_hour_utc"]: once a launch
     day (lead 0) is past that stored UTC hour, stop pulling for it.
     """
     today = today or datetime.now(timezone.utc).date()
-    max_lead = max(config.LEAD_DAYS)
-    events = events_by_lead(today, 0, max_lead)
+    max_lead = max(config.LEAD_DAYS) if max_lead is None else max_lead
+    events = events_by_lead(today, min_lead, max_lead)
     if not events:
-        print(f"no launches 0-{max_lead} days out from {today} (UTC)")
+        print(f"no launches {min_lead}-{max_lead} days out from {today} (UTC)")
         return
 
     now_hour_utc = datetime.now(timezone.utc).hour
@@ -385,6 +399,38 @@ def run_live_pulls(today: date = None, dry_run: bool = False) -> None:
 
     for i, (target_date, site_ids) in enumerate(sorted(by_date.items())):
         run_pulls_for(target_date, dry_run=dry_run, only_sites=site_ids, pause_before_first=i > 0)
+
+
+# T-3..T-0 tier: every 6h (unchanged cadence, see .github/workflows/
+# cron-pulls.yml's "15 0,6,12,18 * * *" entry) -- close enough to launch that
+# a fresher forecast every 6h is worth the extra Open-Meteo load.
+def run_live_pulls_near(today: date = None, dry_run: bool = False) -> None:
+    run_live_pulls(today, dry_run, min_lead=0, max_lead=3)
+
+
+# T-7..T-4 tier: twice a day at real local 0600/1800 (not a fixed UTC hour --
+# this far out, one fresh pull covering the whole overnight model-run cycle
+# plus one covering the day's later runs is enough; 4x/day was pure Open-
+# Meteo load with no meaningfully fresher data at that lead time). Requested
+# directly, "adjust for UTC" -- Chicago's UTC offset flips with DST, so a
+# fixed cron hour would silently drift an hour off local 6am/6pm for half the
+# year. Instead .github/workflows/cron-pulls.yml fires this at BOTH UTC times
+# that could possibly be 06:15/18:15 local (11:15 & 12:15 UTC for the AM
+# case, 23:15 & 00:15 UTC for the PM case -- 12:15 and 00:15 already coincide
+# with run_live_pulls_near()'s own grid, so only 11:15/23:15 needed adding),
+# and this function's own local-hour check throws away whichever of each
+# pair is the wrong DST state for right now -- self-correcting across the
+# March/November transitions with no twice-a-year workflow edit required.
+# Checking local_hour alone (not minute) is enough: of any firing pair, only
+# the DST-correct one ever lands on local hour 6 or 18 at all, regardless of
+# which of the paired UTC times actually triggered this run.
+def run_live_pulls_far(today: date = None, dry_run: bool = False) -> None:
+    local_hour = datetime.now(_SITE_TZ).hour
+    if local_hour not in (6, 18):
+        print(f"skip far-tier (T-4..T-7) pull: local hour is {local_hour}, not 6 or 18 -- "
+              f"this firing belongs to the other DST state's pair")
+        return
+    run_live_pulls(today, dry_run, min_lead=4, max_lead=max(config.LEAD_DAYS))
 
 
 def run_actual_pulls(today: date = None, dry_run: bool = False) -> None:
@@ -442,9 +488,11 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--days-ahead", type=int, default=60)
     parser.add_argument("--run-today", action="store_true", help="actually run pulls for today's scheduled launches only (not just list them)")
-    parser.add_argument("--run-live", action="store_true", help="cron entry point: Open-Meteo pulls for every site T-0..T-7 out (see run_live_pulls())")
+    parser.add_argument("--run-live", action="store_true", help="cron entry point: Open-Meteo pulls for every site T-0..T-7 out, unconditional (see run_live_pulls()) -- manual/workflow_dispatch use")
+    parser.add_argument("--run-live-near", action="store_true", help="cron entry point: Open-Meteo pulls for T-0..T-3, every 6h (see run_live_pulls_near())")
+    parser.add_argument("--run-live-far", action="store_true", help="cron entry point: Open-Meteo pulls for T-4..T-7, twice daily at local 0600/1800 (see run_live_pulls_far())")
     parser.add_argument("--run-actuals", action="store_true", help="cron entry point: NOAA actual pull for every site that launched yesterday (see run_actual_pulls())")
-    parser.add_argument("--dry-run", action="store_true", help="with --run-today/--run-live/--run-actuals, print what would run without pulling")
+    parser.add_argument("--dry-run", action="store_true", help="with --run-today/--run-live/--run-live-near/--run-live-far/--run-actuals, print what would run without pulling")
 
     parser.add_argument("--cancel", nargs=3, metavar=("SITE_ID", "DATE", "REASON"), help="mark a recurring event cancelled, e.g. --cancel gunter 2026-07-25 \"cancelled due to heat\"")
     parser.add_argument("--move", nargs=3, metavar=("SITE_ID", "DATE", "NEW_SITE_ID"), help="move a recurring event to a different site (and/or --new-date), e.g. --move apache_pass 2026-08-01 hutto --reason \"field plowed\"")
@@ -480,6 +528,10 @@ if __name__ == "__main__":
         _append_override({"action": "flag", "club": _site_club(site_id), "date": date_str, "site_id": site_id, "reason": reason, "status": "tentative"}, require_match=True)
     elif args.run_live:
         run_live_pulls(dry_run=args.dry_run)
+    elif args.run_live_near:
+        run_live_pulls_near(dry_run=args.dry_run)
+    elif args.run_live_far:
+        run_live_pulls_far(dry_run=args.dry_run)
     elif args.run_actuals:
         run_actual_pulls(dry_run=args.dry_run)
     elif args.run_today:
