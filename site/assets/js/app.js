@@ -5412,17 +5412,40 @@ function drawPadMarker() {
 // -- same "one shared boost deviation, not per-model/per-hour/per-capture"
 // reasoning path3dDrawBoostLine() already established, since the boost
 // phase finishes before any wind data (or capture-date choice) comes into
-// play at all. Not interactive (pointer-events:none) -- purely
-// informational, same treatment the real-flight version already gets.
-// Hidden at rail angle 0 -- apogee sits directly above the pad then, and a
-// second marker stacked exactly on top of the pad's own crosshair would be
-// pure clutter with nothing new to show.
+// play at all. Hidden at rail angle 0 -- apogee sits directly above the pad
+// then, and a second marker stacked exactly on top of the pad's own
+// crosshair would be pure clutter with nothing new to show.
+//
+// Interactive on hover (requested directly, 2026-08-10) -- own
+// mousemove/mouseleave pair directly on the marker element, same idiom
+// drawRealFlightMarker() already uses for its own fixed (non-drag) markers,
+// rather than routing through showTooltip()'s renderedPoints-proximity
+// system, which this marker isn't a member of. Content mirrors
+// showTooltip()'s own "offset:.../distance from pad:..." phrasing for a
+// consistent feel, plus heading (effectiveRailHeadingDeg() directly -- the
+// same value the shift itself was computed from, not re-derived via
+// atan2(shift.x, shift.y), which would just be a roundabout way of
+// recovering the same number).
 function drawPredictedApogeeMarker() {
   if (!(railAngleDeg ?? 0)) return;
   const altFt = resolveMapAltFt();
+  const shift = railShiftFt(altFt);
   const [sx, sy] = ftToPxShifted(0, 0, altFt);
   const marker = drawMarker(svg, 'triangle-up', sx, sy, 9, APOGEE_MARKER_COLOR, APOGEE_MARKER_STROKE);
-  marker.style.pointerEvents = 'none';
+  marker.style.cursor = 'help';
+
+  marker.addEventListener('mousemove', evt => {
+    const dist = Math.hypot(shift.x, shift.y);
+    const heading = effectiveRailHeadingDeg();
+    tooltip.style.display = 'block';
+    tooltip.innerHTML = `<div class="tt-row"><b>Predicted apogee</b><br>` +
+      `${Math.round(altFt).toLocaleString()} ft<br>` +
+      `offset: ${shift.x >= 0 ? '+' : ''}${shift.x.toFixed(0)} ft E, ${shift.y >= 0 ? '+' : ''}${shift.y.toFixed(0)} ft N<br>` +
+      `distance from pad: ${dist.toFixed(0)} ft<br>` +
+      `heading: ${Math.round(heading)}&deg; (${compassDir(heading)})</div>`;
+    positionTooltip(evt);
+  });
+  marker.addEventListener('mouseleave', hideTooltip);
 }
 
 function updatePadReadout() {
