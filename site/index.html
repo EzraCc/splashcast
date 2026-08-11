@@ -46,8 +46,17 @@ writeLocalBustedTag('<link rel="stylesheet" href="', 'assets/css/app.css', '">')
 <body>
 
 <div class="viz-root">
-  <div class="legal-disclaimer">
-    This tool is an aid for launch planning, not legal advice. Splash-zone estimates and burn-ban status shown here are informational only and may be wrong, stale, or incomplete &mdash; confirm current conditions and requirements with your local fire authority, land manager/club, and any other applicable regulations before you launch.
+  <!-- Collapsed to one line by default (2026-08, reported directly: the
+       full paragraph was "taking up way too much space") -- click the
+       summary to reveal the full text, same chevron-toggle idiom
+       renderWeatherPanel()'s own weatherPanelCollapsed already uses. -->
+  <div class="legal-disclaimer" id="legal-disclaimer">
+    <div class="legal-disclaimer-summary" id="legal-disclaimer-summary" role="button" tabindex="0" aria-expanded="false">
+      Not legal advice -- informational only. <span class="weather-chevron" id="legal-disclaimer-chevron">&#9660;</span>
+    </div>
+    <div class="legal-disclaimer-full">
+      This tool is an aid for launch planning, not legal advice. Splash-zone estimates and burn-ban status shown here are informational only and may be wrong, stale, or incomplete &mdash; confirm current conditions and requirements with your local fire authority, land manager/club, and any other applicable regulations before you launch.
+    </div>
   </div>
   <!-- Hidden for now (reported directly: "not doing anything userful," to
        be reworked later) -- kept in the DOM, not deleted, since
@@ -56,21 +65,7 @@ writeLocalBustedTag('<link rel="stylesheet" href="', 'assets/css/app.css', '">')
   <h1 style="display:none;">Splashcast &mdash; Splash Zones</h1>
   <p class="subtitle" id="subtitle" style="display:none;">Loading&hellip;</p>
 
-  <!-- Requested directly: let mobile users see more of the map without
-       scrolling past the Launch Site/Date/View row first. Its own row,
-       OUTSIDE the map (not a map-corner overlay like #layer-toggle etc.)
-       -- deliberately, so it stays reachable in one fixed, predictable
-       spot regardless of scroll position or which map view (2D/3D) is
-       active, rather than being buried on the map itself. Same chevron-
-       toggle idea renderWeatherPanel()'s own weatherPanelCollapsed already
-       established for the Weather panel, see updateControlsToggleUI()
-       (app.js). -->
-  <div class="controls-toggle-row">
-    <button type="button" id="controls-toggle-btn" class="controls-toggle-btn" aria-expanded="true" aria-controls="controls-panel">
-      <span id="controls-toggle-label">Hide controls</span> <span class="weather-chevron" id="controls-chevron">&#9660;</span>
-    </button>
-  </div>
-  <div class="controls" id="controls-panel">
+  <div class="controls">
     <div class="toggle-group">
       <span class="group-label">Launch site</span>
       <select id="site-select" style="border:1px solid var(--border); border-radius: 8px; background: var(--surface-1); color: var(--text-primary); padding: 6px 10px; font-size: 0.85rem;"></select>
@@ -121,10 +116,29 @@ writeLocalBustedTag('<link rel="stylesheet" href="', 'assets/css/app.css', '">')
            don't land on top of that row's own buttons -- see its own CSS
            comment (same padding-right trick already reserved for this
            toggle on the right). -->
-      <div class="map-view-wrap">
-        <div class="map-view-toggle toggle-btns" id="map-view-toggle">
-          <button type="button" data-mode="2d" class="active">2D</button>
-          <button type="button" data-mode="3d" title="Each model's actual predicted descent path, in 3D">3D</button>
+      <div class="map-view-wrap" id="map-view-wrap">
+        <div class="map-corner-top-right">
+          <!-- Hide-controls toggle -- 2026-08 correction: originally hid
+               the Launch Site/Date/View row above the map (see CHANGELOG),
+               reported directly as wrong ("It's supposed be positioned
+               near the map and hide the controls over the map"). Now lives
+               here, next to the map, and toggles .controls-hidden on
+               .map-view-wrap, which hides the layer toggle, zoom buttons,
+               rail-angle dial, and altitude slider -- the widgets that
+               actually overlay the map image -- via app.css. The burn-ban
+               chip and the 2D/3D/fullscreen switches stay visible; they're
+               status/mode controls, not map-overlay clutter. -->
+          <button type="button" id="map-controls-toggle-btn" class="map-fullscreen-toggle" title="Hide map controls (layer, zoom, rail angle, altitude)" aria-expanded="true" aria-controls="map-view-wrap">&#9881;</button>
+          <!-- Fullscreen toggle -- requested directly, at every screen
+               size: expands the map to fill the viewport, collapses back
+               on a second click. Self-contained (position:fixed on
+               .map-view-wrap itself, see app.css) -- doesn't require the
+               rest of the page to change layout mode. -->
+          <button type="button" id="map-fullscreen-toggle" class="map-fullscreen-toggle" title="Expand map to full screen" aria-expanded="false">&#10021;</button>
+          <div class="map-view-toggle toggle-btns" id="map-view-toggle">
+            <button type="button" data-mode="2d" class="active">2D</button>
+            <button type="button" data-mode="3d" title="Each model's actual predicted descent path, in 3D">3D</button>
+          </div>
         </div>
         <div class="layer-toggle" id="layer-toggle">
           <button data-layer="sat" title="Satellite imagery">Satellite</button>

@@ -1911,26 +1911,56 @@ mapViewToggleEl.querySelectorAll('button').forEach(btn => {
 });
 updateMapViewModeUI();
 
-// --- hide-controls toggle: requested directly, so mobile users can see
-// more of the map without scrolling past the Launch Site/Date/View row
-// first. Same chevron-toggle idea renderWeatherPanel()'s own
-// weatherPanelCollapsed already established for the Weather panel --
-// simpler here since #controls-panel's own content never changes based on
-// this, just a plain show/hide, no re-render needed. Not persisted across
-// reloads (session-only) -- same as weatherPanelCollapsed, a "just for
-// this look" preference, not something worth a URL param or localStorage
-// entry.
-let controlsCollapsed = false;
-const controlsToggleBtn = document.getElementById('controls-toggle-btn');
-const controlsPanel = document.getElementById('controls-panel');
-const controlsToggleLabel = document.getElementById('controls-toggle-label');
-const controlsChevron = document.getElementById('controls-chevron');
-controlsToggleBtn.addEventListener('click', () => {
-  controlsCollapsed = !controlsCollapsed;
-  controlsPanel.style.display = controlsCollapsed ? 'none' : '';
-  controlsToggleBtn.setAttribute('aria-expanded', String(!controlsCollapsed));
-  controlsToggleLabel.textContent = controlsCollapsed ? 'Show controls' : 'Hide controls';
-  controlsChevron.classList.toggle('collapsed', controlsCollapsed);
+// --- legal-disclaimer collapse: requested directly, the full paragraph was
+// "taking up way too much space" -- collapsed to one summary line by
+// default, same chevron-toggle idiom weatherPanelCollapsed/the toggle just
+// above already use. Not persisted -- a "just for this look" preference.
+const legalDisclaimerEl = document.getElementById('legal-disclaimer');
+const legalDisclaimerSummary = document.getElementById('legal-disclaimer-summary');
+const legalDisclaimerChevron = document.getElementById('legal-disclaimer-chevron');
+function toggleLegalDisclaimer() {
+  const expanded = legalDisclaimerEl.classList.toggle('expanded');
+  legalDisclaimerSummary.setAttribute('aria-expanded', String(expanded));
+  legalDisclaimerChevron.classList.toggle('collapsed', !expanded);
+}
+legalDisclaimerSummary.addEventListener('click', toggleLegalDisclaimer);
+legalDisclaimerSummary.addEventListener('keydown', evt => {
+  if (evt.key === 'Enter' || evt.key === ' ') { evt.preventDefault(); toggleLegalDisclaimer(); }
+});
+
+// --- fullscreen map toggle: requested directly, at every screen size --
+// expands .map-view-wrap to fill the viewport (position:fixed, see
+// app.css), collapses back on a second click. Self-contained -- no JS
+// resize handling needed, zoomAt()/renderDescent3D()'s ResizeObserver both
+// already re-measure their own box fresh on demand regardless of why it
+// changed size.
+let mapPaneExpanded = false;
+const mapViewWrapEl = document.getElementById('map-view-wrap');
+const mapFullscreenToggleBtn = document.getElementById('map-fullscreen-toggle');
+mapFullscreenToggleBtn.addEventListener('click', () => {
+  mapPaneExpanded = !mapPaneExpanded;
+  mapViewWrapEl.classList.toggle('fullscreen-active', mapPaneExpanded);
+  mapFullscreenToggleBtn.setAttribute('aria-expanded', String(mapPaneExpanded));
+  mapFullscreenToggleBtn.title = mapPaneExpanded ? 'Collapse map back to normal view' : 'Expand map to full screen';
+});
+
+// --- hide-map-controls toggle: 2026-08 correction -- this used to hide the
+// Launch Site/Date/View row above the map (see CHANGELOG), reported
+// directly as wrong: "It's supposed be positioned near the map and hide
+// the controls over the map." Lives next to the fullscreen toggle now and
+// toggles .controls-hidden on .map-view-wrap, which hides the layer
+// toggle, zoom buttons (+ hint), rail-angle dial, and altitude slider via
+// app.css -- the widgets that actually overlay the map image. Deliberately
+// leaves the burn-ban chip (a safety status, not a control) and this same
+// corner's own 2D/3D/fullscreen switches alone. Not persisted -- same
+// session-only idiom as mapPaneExpanded/weatherPanelCollapsed.
+let mapControlsHidden = false;
+const mapControlsToggleBtn = document.getElementById('map-controls-toggle-btn');
+mapControlsToggleBtn.addEventListener('click', () => {
+  mapControlsHidden = !mapControlsHidden;
+  mapViewWrapEl.classList.toggle('controls-hidden', mapControlsHidden);
+  mapControlsToggleBtn.setAttribute('aria-expanded', String(!mapControlsHidden));
+  mapControlsToggleBtn.title = mapControlsHidden ? 'Show map controls' : 'Hide map controls (layer, zoom, rail angle, altitude)';
 });
 
 // --- permalink copy button: the URL bar is kept live-synced for
@@ -5490,13 +5520,6 @@ function initFromData() {
   if (mapViewMode === '3d' && state.mode !== 'byAltitude' && state.mode !== 'byHistory') {
     mapViewMode = '2d';
   }
-  // Unconditional, not just inside the branch above -- also syncs the 3D
-  // button's own disabled-in-byTime state (updateMapViewModeUI()'s own
-  // comment) for a plain ?mode=byTime landing that never had mapViewMode
-  // set to '3d' in the first place (confirmed as a real gap: the button
-  // stayed enabled on a direct byTime load with no ?view=3d in the URL,
-  // since nothing had called this function since state.mode became real).
-  updateMapViewModeUI();
   // Altitude count varies 5-9 per site (scaled to that site's own waiver --
   // see config.altitudes_for_site()), so the ramp is rebuilt against this
   // dataset's real list every time, not just when the picker changes.
@@ -5586,6 +5609,24 @@ function initFromData() {
   renderWeatherPanel();
   renderBanStatus();
   render();
+  // Moved to run AFTER render() (2026-08 fix) -- also syncs the 3D button's
+  // own disabled-in-byTime state (see its own comment). Was called much
+  // earlier in this function, right after the mode-fallback check above --
+  // a real, confirmed bug: this can trigger renderDescent3D(), which for
+  // byHistory+3D with nothing pinned yet calls a full render() of its own
+  // (see that function's own comment). Called this early, BASE_VB/IMG_VB
+  // above hadn't been set yet, so that inner render() crashed on
+  // `BASE_VB[0]` of undefined -- and since the crash was synchronous and
+  // uncaught, every line after the old call site (the mode toggle,
+  // altitude list, weather panel, ban status, this very render() call)
+  // silently never ran at all for a direct byHistory+3D URL load --
+  // confirmed via a full mode x view x viewport sweep, not a single
+  // isolated case. Safe to move here: state.mode (all this function
+  // needs) is already set at the very top of initFromData(), and by this
+  // point BASE_VB/IMG_VB/the first real render() have all already
+  // completed successfully, so a second render() this triggers is exactly
+  // as safe as any other post-load render.
+  updateMapViewModeUI();
 }
 
 // --- launch-date selector: driven by data/manifest.json, never a server-side

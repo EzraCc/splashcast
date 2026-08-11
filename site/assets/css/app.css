@@ -136,6 +136,12 @@
   h1 { font-size: var(--fs-lg); margin: 0 0 2px; }
   .subtitle { color: var(--text-secondary); font-size: var(--fs-base); margin: 0 0 18px; }
 
+  /* Collapsed to one line by default (2026-08, reported directly: the full
+     paragraph was "taking up way too much space") -- .legal-disclaimer-summary
+     is the always-visible single-sentence version with its own expand
+     toggle; .legal-disclaimer-full is the original complete text, hidden
+     until clicked open. Both share this box's padding/border/font so the
+     collapsed state doesn't look like a different, smaller control. */
   .legal-disclaimer {
     background: var(--surface-2);
     border: 1px solid var(--border);
@@ -146,18 +152,12 @@
     padding: 8px 12px;
     margin: 0 0 14px;
   }
-
-  /* Own row above .controls, not a map overlay -- see index.html's own
-     comment on why. Same bordered-button look .copy-link-btn already uses,
-     just smaller -- this is a secondary/utility action, not sized to
-     compete with the real controls it toggles. */
-  .controls-toggle-row { margin-bottom: var(--sp-3); }
-  .controls-toggle-btn {
-    display: inline-flex; align-items: center; gap: 6px;
-    border: 1px solid var(--border); border-radius: 8px; background: var(--surface-1); color: var(--text-secondary);
-    padding: 6px 12px; font-size: var(--fs-sm); cursor: pointer;
+  .legal-disclaimer-summary {
+    display: flex; align-items: center; gap: 6px; cursor: pointer; user-select: none;
   }
-  .controls-toggle-btn:hover { background: var(--surface-2); color: var(--text-primary); }
+  .legal-disclaimer-summary .weather-chevron { flex-shrink: 0; }
+  .legal-disclaimer-full { display: none; margin-top: 6px; }
+  .legal-disclaimer.expanded .legal-disclaimer-full { display: block; }
 
   .controls {
     display: flex;
@@ -691,7 +691,18 @@
      position:relative box like .map-frame, not a .weather-panel-styled
      card. Its own visibility is a single display:none on the frame
      itself (toggled by app.js), not a nested collapse mechanic. */
-  .descent3d-frame { position: relative; }
+  /* flex column so a height set on this element (fullscreen mode, mobile
+     real-height -- both below) actually distributes down to
+     .descent3d-main/.descent3d-canvas-wrap instead of collapsing them --
+     confirmed directly this was a real bug the first time this app tried
+     giving .descent3d-frame an explicit height: with plain block flow,
+     .descent3d-main's own height stayed purely content-driven (nothing
+     forced it to fill the new space), so .descent3d-canvas-wrap's
+     height:100% underneath it resolved against ~0 and the whole 3D canvas
+     collapsed to a few px. Harmless on the normal (no explicit height)
+     case -- a flex column with no explicit height and default-sized
+     children behaves the same as plain block flow. */
+  .descent3d-frame { position: relative; display: flex; flex-direction: column; }
   /* .map-view-wrap is the shared position:relative box both .map-frame and
      .descent3d-frame sit inside -- lets the 2D/3D toggle float as ONE
      absolutely-positioned overlay regardless of which frame is showing,
@@ -703,11 +714,61 @@
      the same visual layer) since 3D mode's Map-toggle button can reach far
      enough right on narrow widths to tuck under this corner. */
   .map-view-wrap { position: relative; }
+  /* Groups the 2D/3D switch with the new fullscreen toggle (2026-08) in one
+     flex row instead of two independently-guessed fixed offsets -- avoids
+     hand-computing #map-view-toggle's own right offset to clear whatever
+     width the fullscreen button adds. */
+  .map-corner-top-right { position: absolute; right: 10px; top: 10px; z-index: 6; display: flex; align-items: center; gap: 8px; }
   .map-view-toggle {
-    position: absolute; right: 10px; top: 10px; z-index: 6;
     display: flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden;
     box-shadow: 0 1px 4px rgba(0,0,0,0.15);
   }
+  /* Same visual language #map-view-toggle's own buttons use (bordered
+     square, not a pill). requested directly, at every screen size --
+     expands .map-view-wrap to fill the viewport (position:fixed, see its
+     own rule below), collapses back on a second click. Self-contained --
+     doesn't require the rest of the page to change layout mode, unlike an
+     earlier version of this feature that turned the whole page into a
+     fixed flex shell (reverted, see this file's own git history/CHANGELOG
+     for why -- reported directly as unwanted complexity once the tab
+     redesign it was built alongside was itself reverted). */
+  /* Also reused as-is (same class) by #map-controls-toggle-btn right next
+     to it -- same 30px bordered square, just a different glyph/click
+     target, no separate class needed. */
+  .map-fullscreen-toggle {
+    border: 1px solid var(--border); border-radius: 8px; background: var(--surface-1); color: var(--text-secondary);
+    width: 30px; height: 30px; font-size: var(--fs-md); line-height: 1; cursor: pointer;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.15);
+  }
+  .map-fullscreen-toggle:hover { background: var(--surface-2); color: var(--text-primary); }
+  /* Hides everything that overlays the map image itself (layer toggle, zoom
+     buttons + their hint text, rail-angle dial, altitude slider) -- NOT the
+     burn-ban chip (a safety status, not a control) or the corner cluster
+     these two buttons live in (2D/3D + fullscreen are mode switches, not
+     map-overlay clutter). 2026-08 correction -- this toggle used to hide
+     the Launch Site/Date/View row above the map instead, reported directly
+     as wrong. */
+  .map-view-wrap.controls-hidden .layer-toggle,
+  .map-view-wrap.controls-hidden .zoom-btns,
+  .map-view-wrap.controls-hidden .zoom-hint,
+  .map-view-wrap.controls-hidden .rail-angle-control,
+  .map-view-wrap.controls-hidden .map-alt-control {
+    display: none;
+  }
+  /* .map-view-wrap itself takes over the whole viewport -- position:fixed
+     doesn't care where in the page it started, so nothing about .layout/
+     .side-col/etc. needs to change layout mode for this, unlike the
+     reverted whole-page-flex-shell approach. Children (.map-frame/
+     .descent3d-frame) fill it via height:100%; .map-wrap/
+     .descent3d-canvas-wrap drop their usual aspect-ratio sizing the same
+     way the mobile real-height rule below does, for the same reason. */
+  .map-view-wrap.fullscreen-active {
+    position: fixed; inset: 0; z-index: 15; background: var(--surface-1); padding: 0;
+  }
+  .map-view-wrap.fullscreen-active .map-frame,
+  .map-view-wrap.fullscreen-active .descent3d-frame { height: 100%; }
+  .map-view-wrap.fullscreen-active .map-wrap,
+  .map-view-wrap.fullscreen-active .descent3d-canvas-wrap { height: 100%; aspect-ratio: unset; }
   .map-view-toggle button {
     border: none; background: var(--surface-1); color: var(--text-secondary);
     padding: 5px 10px; font-size: var(--fs-sm); cursor: pointer; border-right: 1px solid var(--border);
@@ -719,20 +780,26 @@
      Slow, view presets, Map toggle) never run underneath the overlay
      above -- confirmed needed at desktop widths where all three toggle
      groups fit on one line and would otherwise reach past 10px of the
-     right edge. padding-left is the same idea for the upper-left overlay
-     stack (#layer-toggle/#burn-ban-chip, moved into .map-view-wrap
-     2026-08-09 -- reported missing from 3D entirely) -- sized for
-     #layer-toggle's own two-button width ("Satellite"/"Road", the wider
-     of the two stacked elements) plus #burn-ban-chip's own capped
-     max-width (see that rule's own comment) covering its worst case too,
-     confirmed via a real rendered measurement, not just estimated. */
-  .descent3d-header-controls { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: var(--sp-4); padding-right: 70px; padding-left: 245px; }
+     right edge. 115px (up from 70px) since 2026-08 to also clear the new
+     fullscreen-toggle button sharing that corner. padding-left is the same
+     idea for the upper-left overlay stack (#layer-toggle/#burn-ban-chip,
+     moved into .map-view-wrap 2026-08-09 -- reported missing from 3D
+     entirely) -- sized for #layer-toggle's own two-button width
+     ("Satellite"/"Road", the wider of the two stacked elements) plus
+     #burn-ban-chip's own capped max-width (see that rule's own comment)
+     covering its worst case too, confirmed via a real rendered
+     measurement, not just estimated. */
+  .descent3d-header-controls { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: var(--sp-4); padding-right: 115px; padding-left: 245px; flex-shrink: 0; }
   .descent3d-view-toggle { flex-shrink: 0; }
   .descent3d-empty-hint { font-size: var(--fs-sm); color: var(--text-muted); padding: 20px 0; text-align: center; }
   /* Just the canvas now -- the altitude slider that used to sit beside it
      (.descent3d-alt-col) is gone, promoted to the shared #map-alt-control
-     overlay below (2026-08, works in both 2D and 3D now, not 3D-only). */
-  .descent3d-main { display: flex; gap: 10px; align-items: stretch; }
+     overlay below (2026-08, works in both 2D and 3D now, not 3D-only).
+     flex:1 1 auto/min-height:0 -- fills whatever's left of .descent3d-frame
+     after the header row wherever that frame has a real height (fullscreen
+     mode, mobile real-height, both elsewhere in this file); a no-op
+     contribution to natural content sizing otherwise. */
+  .descent3d-main { display: flex; gap: 10px; align-items: stretch; flex: 1 1 auto; min-height: 0; }
 
   /* Same aspect-ratio-box + absolute-fill-canvas treatment .map-wrap uses
      for its SVG -- consistent sizing pattern for the one other real
@@ -914,7 +981,13 @@
      .map-alt-control's, growing left instead of off-screen right. */
   .map-alt-panel {
     display: none;
-    position: absolute; right: calc(100% + 8px); top: 0; z-index: 6;
+    /* z-index 10 (was 6, 2026-08) -- requested directly: an open fly-out
+       needs to sit on top of every other on-map overlay it could visually
+       reach, not just the ones it happened to already outrank. Still below
+       .ban-overlay(20)/.tooltip(20)/.real-flight-box(21), which need to
+       win over an open fly-out too (a burn ban should block interaction
+       with everything; a tooltip should stay readable regardless). */
+    position: absolute; right: calc(100% + 8px); top: 0; z-index: 10;
     width: 260px; max-width: calc(100vw - 40px); max-height: calc(100vh - 100px);
     box-sizing: border-box;
     background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px;
@@ -1254,7 +1327,8 @@
      would grow off-screen to the left instead). */
   .rail-angle-panel {
     display: none;
-    position: absolute; left: 0; bottom: calc(100% + 8px); z-index: 6;
+    /* z-index 10 -- same reasoning as .map-alt-panel's own comment. */
+    position: absolute; left: 0; bottom: calc(100% + 8px); z-index: 10;
     width: 220px; max-width: calc(100vw - 40px); box-sizing: border-box;
     background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px;
     padding: 10px 12px; box-shadow: 0 2px 10px rgba(0,0,0,0.25);
@@ -1422,6 +1496,23 @@
        legibility for not much width back) closes the gap. */
     #model-legend { gap: 6px; }
     #model-legend .alt-row { padding: 4px 8px; gap: 6px; }
+    /* Real, deliberate height on mobile instead of the aspect-ratio box
+       both .map-wrap/.descent3d-canvas-wrap otherwise use (which derives
+       height purely from a narrow phone's own WIDTH, mechanically making
+       the map short) -- reported directly as "the map is tiny in places."
+       dvh (with a plain vh fallback, ignored by older engines via normal
+       cascade) accounts for mobile browser chrome showing/hiding, unlike
+       plain vh. min-height is a floor for a very short viewport. Simple,
+       direct height override -- deliberately NOT the full fixed-shell
+       page architecture an earlier version of this fix used (reverted,
+       reported as unwanted complexity once the tab redesign built
+       alongside it was itself reverted); this alone already gives the map
+       a real size within an otherwise normally-scrolling page. */
+    .map-wrap, .descent3d-canvas-wrap {
+      aspect-ratio: unset;
+      height: 50vh; height: 50dvh;
+      min-height: 280px;
+    }
   }
 
   /* --- launch-site picker: plain <select> --- */
