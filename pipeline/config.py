@@ -12,11 +12,18 @@ from pathlib import Path
 SITE_DIR = Path(__file__).parent.parent / "site"
 
 SITE_ID = "hutto"
-# Pinned against the porta-potty/trailer visible on satellite imagery --
+# ~Pinned against the porta-potty/trailer visible on satellite imagery --
 # ~510ft off the road from where this used to point, a more reliable
-# landmark for the real rail setup spot.
-SITE_LAT = 30.613928
-SITE_LON = -97.496454  # west-negative; convert to 0-360 for grid lookups
+# landmark for the real rail setup spot.~~ -- superseded 2026-08-11: two
+# real GPS-tracked flights on 2026-08-01 (site/data/hutto/real_flights/)
+# put the actual rail ~260-290ft north of that point. Replaced with the
+# more reliable of the two: a Fluctus Blackbox's own real GPS fix (10
+# satellites) taken 40ms before its firmware-tagged liftoff event, still on
+# the pad (see analyze_real_flight.py's load_fluctus_fbb()) -- not a
+# hand-recorded phone pin like the other flight's altimeter (BlueRaven, no
+# onboard GPS) had to use instead.
+SITE_LAT = 30.614647
+SITE_LON = -97.496414  # west-negative; convert to 0-360 for grid lookups
 
 # --- Per-site config ---------------------------------------------------------
 # Coordinates are sourced from each club's own site/materials, not surveyed --
@@ -105,6 +112,27 @@ SITES = {
         # "Jockeys") per explicit instruction on display naming.
         "name": "SD Rocket Jockies", "club": "SD Rocket Jockies",
         "lat": 44.5149338, "lon": -96.8551149, "waiver_ft": 14000, "elev_m": 499.0, "cron_cutoff_hour_utc": 20, "max_pad_move_ft": 2000,
+    },
+    "leonard": {
+        # Coordinates given directly by the user. waiver_ft: "9,400 foot AGL
+        # ceiling" per tulsarocketry.org/launch/ -- that page also notes
+        # "flights over 6000 ft require Prefect approval," a club
+        # sign-off tier this app doesn't model (same as Gunter's DARS-internal
+        # practical-ceiling nuance above), so the config value is the real
+        # outer limit, not the no-approval-needed one.
+        "name": "Leonard, OK", "club": "Tulsa Rocketry",
+        "lat": 35.9338002, "lon": -95.7860019, "waiver_ft": 9400, "elev_m": 179.0, "cron_cutoff_hour_utc": 20, "max_pad_move_ft": 2000,
+    },
+    "pawhuska": {
+        # Tulsa Rocketry's Leonard site's own annual off-site event (Pawhuska
+        # Municipal Airport, not a monthly launch location) -- see
+        # launch_calendar.json's "tulsa_rocketry" club for the two-day
+        # High Frontier schedule instead of a recurring rule. waiver_ft:
+        # "FAA waiver to 29,000 feet AGL" per tulsarocketry.org/high-frontier/
+        # (that page also flags mandatory RASAero sims above 21,500ft AGL,
+        # a submission requirement this app doesn't model).
+        "name": "Pawhuska, OK (High Frontier)", "club": "Tulsa Rocketry",
+        "lat": 36.6763510, "lon": -96.4062740, "waiver_ft": 29000, "elev_m": 306.0, "cron_cutoff_hour_utc": 20, "max_pad_move_ft": 2000,
     },
 }
 
@@ -338,6 +366,8 @@ CLOUD_LAYERS_BY_SITE = {
     "sd_rocket_jockies": ["low", "mid"],
     "seymour": ["low", "mid", "high"],
     "argonia": ["low", "mid", "high"],
+    "leonard": ["low"],  # 9,400ft waiver -- well under the ~9,800ft low/mid boundary
+    "pawhuska": ["low", "mid", "high"],  # 29,000ft waiver -- meaningfully past the ~26,200ft mid/high boundary
 }
 
 # Texas A&M Forest Service's live per-county burn-ban list (plain text,

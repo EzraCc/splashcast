@@ -135,6 +135,38 @@
         }
       ]
     },
+    "tulsa_rocketry": {
+      "label": "Tulsa Rocketry",
+      "rules": [
+        {
+          "type": "hand_entered",
+          "site_id": "leonard",
+          "years": {
+            "2026": [
+              {"date": "2026-02-15", "label": "Tulsa Rocketry"},
+              {"date": "2026-03-08", "label": "Tulsa Rocketry"},
+              {"date": "2026-04-12", "label": "Tulsa Rocketry"},
+              {"date": "2026-05-03", "label": "Tulsa Rocketry"},
+              {"date": "2026-06-07", "label": "Tulsa Rocketry"},
+              {"date": "2026-07-12", "label": "Tulsa Rocketry"},
+              {"date": "2026-08-09", "label": "Tulsa Rocketry"},
+              {"date": "2026-10-11", "label": "Tulsa Rocketry"},
+              {"date": "2026-11-08", "label": "Tulsa Rocketry"}
+            ]
+          }
+        },
+        {
+          "type": "hand_entered",
+          "site_id": "pawhuska",
+          "years": {
+            "2026": [
+              {"date": "2026-09-26", "label": "High Frontier (Sat)"},
+              {"date": "2026-09-27", "label": "High Frontier (Sun)"}
+            ]
+          }
+        }
+      ]
+    },
     "kloudbusters": {
       "label": "KLOUDBusters",
       "rules": [

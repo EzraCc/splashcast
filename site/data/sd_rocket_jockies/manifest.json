@@ -1,6 +1,30 @@
 {
   "site_id": "sd_rocket_jockies",
-  "generated_at": "2026-08-09T18:09:15",
+  "generated_at": "2026-08-11T15:14:30",
+  "site_geometry": {
+    "site_px": [
+      1430.0,
+      1429.5
+    ],
+    "image_view_box": [
+      0,
+      0,
+      2860,
+      2859
+    ],
+    "wide_view_box": [
+      -2178.6,
+      -2177.9,
+      7217.3,
+      7214.8
+    ],
+    "ft_to_px_scale": {
+      "x": 0.179006,
+      "y": 0.178943
+    },
+    "site_lat": 44.5149338,
+    "site_lon": -96.8551149
+  },
   "launch_dates": [
     {
       "target_date": "2026-08-01",

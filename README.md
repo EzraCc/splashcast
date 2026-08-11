@@ -4,7 +4,7 @@ A multi-model wind-drift and splash-zone viewer for high-power rocket launch sit
 
 **Live site: [ezracc.github.io/splashcast](https://ezracc.github.io/splashcast/)**
 
-Built for the author's own Texas/Kansas/South Dakota rocketry clubs, but the pipeline is generic per-site config — see [Adding a site](docs/adding-a-site.md) if you want to point it at your own club's launch site.
+Built for the author's own Texas/Kansas/South Dakota/Oklahoma rocketry clubs, but the pipeline is generic per-site config — see [Adding a site](docs/adding-a-site.md) if you want to point it at your own club's launch site.
 
 ## Contents
 

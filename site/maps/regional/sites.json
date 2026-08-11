@@ -16,13 +16,13 @@
     "hutto": {
       "name": "Hutto",
       "club": "AARG",
-      "lat": 30.613928,
-      "lon": -97.496454,
+      "lat": 30.614647,
+      "lon": -97.496414,
       "waiver_ft": 10000,
       "elev_ft": 646.3,
       "px": [
         409.7,
-        1663.2
+        1663.1
       ],
       "has_data": true
     },
@@ -114,6 +114,32 @@
       "px": [
         846.6,
         1970.0
+      ],
+      "has_data": true
+    },
+    "leonard": {
+      "name": "Leonard, OK",
+      "club": "Tulsa Rocketry",
+      "lat": 35.9338002,
+      "lon": -95.7860019,
+      "waiver_ft": 9400,
+      "elev_ft": 587.3,
+      "px": [
+        721.1,
+        489.7
+      ],
+      "has_data": true
+    },
+    "pawhuska": {
+      "name": "Pawhuska, OK (High Frontier)",
+      "club": "Tulsa Rocketry",
+      "lat": 36.676351,
+      "lon": -96.406274,
+      "waiver_ft": 29000,
+      "elev_ft": 1003.9,
+      "px": [
+        608.2,
+        325.9
       ],
       "has_data": true
     }

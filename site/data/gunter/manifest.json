@@ -1,6 +1,30 @@
 {
   "site_id": "gunter",
-  "generated_at": "2026-08-11T11:57:21",
+  "generated_at": "2026-08-11T16:49:03",
+  "site_geometry": {
+    "site_px": [
+      1047.0,
+      1047.0
+    ],
+    "image_view_box": [
+      0,
+      0,
+      2094,
+      2094
+    ],
+    "wide_view_box": [
+      -1595.1,
+      -1595.1,
+      5284.3,
+      5284.3
+    ],
+    "ft_to_px_scale": {
+      "x": 0.305812,
+      "y": 0.305812
+    },
+    "site_lat": 33.435039,
+    "site_lon": -96.8091009
+  },
   "launch_dates": [
     {
       "target_date": "2026-08-15",

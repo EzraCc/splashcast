@@ -348,39 +348,87 @@ def hull_of(points_xy: list[tuple[float, float]]) -> list[list[float]]:
         return arr.tolist()
 
 
-def build_viewer_data(df: pd.DataFrame, pts: pd.DataFrame, site_meta: dict, site_id: str, target_date: date) -> dict:
-    """Wind profiles + descent-sim constants + map-projection scaling -- the
-    exact JSON schema index.html's DATA expects. `pts` (compute_splash_points()'s
-    output) is used only to size base_view_box (see below) -- the zones
-    themselves are no longer precomputed here, they're built client-side by
-    app.js's simulateDrift() from wind_profiles below, at whatever rate the
-    viewer's rate editor currently has selected."""
+def site_geometry(site_id: str) -> dict:
+    """Static per-site map-projection geometry -- pad pixel position, image/
+    wide view boxes, ft-to-px scale, and the site's own configured lat/lon --
+    derived only from config.SITES[site_id] and the already-fetched site
+    imagery's own bounds (site/maps/<site_id>/site.json). Deliberately does
+    NOT depend on any particular capture's wind/simulation data.
+
+    Published once, in manifest.json (see regenerate_manifest()) -- NOT
+    baked into every dated splash_zones_captured_*.json the way it was
+    before 2026-08-11. That was a real bug: config.SITES[site_id]'s lat/lon
+    has been corrected before (Hutto, twice now) and each correction meant
+    every already-published capture across every historical target date
+    carried a stale, now-wrong site_px/ft_to_px_scale/site_lat/site_lon
+    forever, silently drawing every point in that file (real flights
+    included) in the wrong place relative to the actual imagery -- fixable
+    only by regenerating every single one of those files from raw wind
+    data, which isn't even always still on disk. Since this function needs
+    no capture/wind data at all, correcting a site's pad GPS going forward
+    only ever needs this recomputed (via regenerate_manifest(), no network,
+    milliseconds) -- never a full per-date pipeline re-run."""
+    with open(config.SITE_DIR / "maps" / site_id / "site.json") as f:
+        site_meta = json.load(f)
     detail = site_meta["detail"]
     wide = site_meta["wide"]
     img_w, img_h = detail["image_size_px"]
     b = detail["bounds"]
     lat_s, lat_n = b["lat_s"], b["lat_n"]
     lon_w, lon_e = b["lon_w"], b["lon_e"]
-    site_lat, site_lon = site_meta["site_lat"], site_meta["site_lon"]
+    site_lat, site_lon = config.SITES[site_id]["lat"], config.SITES[site_id]["lon"]
 
     m_per_deg_lat = 111320
     m_per_deg_lon = 111320 * math.cos(math.radians(site_lat))
     ft_to_m = 0.3048
-
-    def ft_to_px(x_ft, y_ft):
-        lat = site_lat + (y_ft * ft_to_m) / m_per_deg_lat
-        lon = site_lon + (x_ft * ft_to_m) / m_per_deg_lon
-        return lonlat_to_px(lon, lat)
 
     def lonlat_to_px(lon, lat):
         px = (lon - lon_w) / (lon_e - lon_w) * img_w
         py = (lat_n - lat) / (lat_n - lat_s) * img_h
         return px, py
 
+    def ft_to_px(x_ft, y_ft):
+        lat = site_lat + (y_ft * ft_to_m) / m_per_deg_lat
+        lon = site_lon + (x_ft * ft_to_m) / m_per_deg_lon
+        return lonlat_to_px(lon, lat)
+
     wb = wide["bounds"]
     wx0, wy0 = lonlat_to_px(wb["lon_w"], wb["lat_n"])
     wx1, wy1 = lonlat_to_px(wb["lon_e"], wb["lat_s"])
     wide_view_box = [round(wx0, 1), round(wy0, 1), round(wx1 - wx0, 1), round(wy1 - wy0, 1)]
+
+    px_per_ft_x = (ft_to_m / m_per_deg_lon) / (lon_e - lon_w) * img_w
+    px_per_ft_y = (ft_to_m / m_per_deg_lat) / (lat_n - lat_s) * img_h
+
+    return {
+        "site_px": list(ft_to_px(0, 0)), "image_view_box": [0, 0, img_w, img_h],
+        "wide_view_box": wide_view_box,
+        "ft_to_px_scale": {"x": round(px_per_ft_x, 6), "y": round(px_per_ft_y, 6)},
+        "site_lat": site_lat, "site_lon": site_lon,
+    }
+
+
+def build_viewer_data(df: pd.DataFrame, pts: pd.DataFrame, site_id: str, target_date: date) -> dict:
+    """Wind profiles + descent-sim constants + this capture's own drift
+    extent (base_view_box) -- the exact JSON schema index.html's DATA
+    expects. `pts` (compute_splash_points()'s output) is used only to size
+    base_view_box (see below) -- the zones themselves are no longer
+    precomputed here, they're built client-side by app.js's simulateDrift()
+    from wind_profiles below, at whatever rate the viewer's rate editor
+    currently has selected.
+
+    Static map-projection geometry (site_px/image_view_box/wide_view_box/
+    ft_to_px_scale/site_lat/site_lon) is deliberately NOT part of this
+    output -- see site_geometry()'s own docstring for why. base_view_box
+    still needs a fresh ft_to_px() (it's sized from this capture's actual
+    points, which only exist here), so it borrows site_geometry()'s scale
+    rather than recomputing it a second way."""
+    geom = site_geometry(site_id)
+    site_px = geom["site_px"]
+    scale = geom["ft_to_px_scale"]
+
+    def ft_to_px(x_ft, y_ft):
+        return site_px[0] + x_ft * scale["x"], site_px[1] - y_ft * scale["y"]
 
     boost_angle_rad = math.radians(config.BOOST_ANGLE_OFF_VERTICAL_DEG)
     site_elev_ft = config.elev_ft_for_site(site_id)
@@ -427,38 +475,21 @@ def build_viewer_data(df: pd.DataFrame, pts: pd.DataFrame, site_meta: dict, site
     wind_hours = sorted(wind_profiles.keys())
 
     # ft_to_px() above is linear in x_ft/y_ft (no rotation/shear -- just an
-    # equirectangular-ish local scale), so it reduces to px = site_px.x +
-    # x_ft*scale.x, py = site_px.y - y_ft*scale.y (derived directly from
-    # ft_to_px()'s own formula, not measured empirically). Exposing scale.x/
-    # scale.y explicitly -- rather than making the viewer reverse-engineer
-    # them from point pairs -- is what lets the boost-angle buffer move
-    # client-side: the buffer polygon only depends on raw points + this
-    # scale, not on anything else server-side, so the viewer can recompute
-    # it live from a slider instead of the angle being fixed at whatever
-    # this pull baked in. As of 2026-08 this is load-bearing for the whole
-    # zone, not just the buffer -- the client derives every point's px/py
-    # itself (simulateDrift() -> ftToPx()) since raw ft coordinates are no
-    # longer pre-projected server-side at all.
-    px_per_ft_x = (ft_to_m / m_per_deg_lon) / (lon_e - lon_w) * img_w
-    px_per_ft_y = (ft_to_m / m_per_deg_lat) / (lat_n - lat_s) * img_h
-
+    # equirectangular-ish local scale), so scale.x/scale.y (published in
+    # manifest.json's site_geometry, not here -- see site_geometry()'s own
+    # docstring) is what lets the boost-angle buffer move client-side: the
+    # buffer polygon only depends on raw points + that scale, not on
+    # anything else server-side, so the viewer can recompute it live from a
+    # slider instead of the angle being fixed at whatever this pull baked
+    # in. As of 2026-08 this is load-bearing for the whole zone, not just
+    # the buffer -- the client derives every point's px/py itself
+    # (simulateDrift() -> ftToPx()) since raw ft coordinates are no longer
+    # pre-projected server-side at all.
     output = {
         "hours": [int(h) for h in hours], "wind_hours": [int(h) for h in wind_hours],
         "deploys": deploys, "altitudes": [int(a) for a in altitudes],
-        "site_px": list(ft_to_px(0, 0)), "image_view_box": [0, 0, img_w, img_h],
-        "wide_view_box": wide_view_box,
-        "ft_to_px_scale": {"x": round(px_per_ft_x, 6), "y": round(px_per_ft_y, 6)},
         "boost_angle_deg": config.BOOST_ANGLE_OFF_VERTICAL_DEG,
         "max_pad_move_ft": config.SITES[site_id]["max_pad_move_ft"],
-        # Published so the viewer can round-trip a dragged pad position as a
-        # real GPS coordinate (permalink's `pad` param) instead of a raw ft
-        # offset -- an offset alone breaks silently if this site's own
-        # surveyed lat/lon is ever corrected later (has happened more than
-        # once in this project's history), since the same offset would then
-        # describe a different real spot. A GPS coordinate re-resolves
-        # against whatever the CURRENT site_lat/site_lon is at load time,
-        # so an old shared link still points at the same real ground spot.
-        "site_lat": site_lat, "site_lon": site_lon,
         "wind_profiles": wind_profiles,
         # Everything app.js's simulateDrift()/zoneFor() need to reproduce
         # compute_splash_points()'s own phase construction and integration
@@ -487,6 +518,7 @@ def build_viewer_data(df: pd.DataFrame, pts: pd.DataFrame, site_meta: dict, site
     # viewer grows (never shrinks) the box live from what it actually draws
     # (see app.js's growBaseViewBox()), so this is a starting point, not a
     # hard bound.
+    _, _, img_w, img_h = geom["image_view_box"]
     all_x, all_y = [0, img_w], [0, img_h]
     for alt, sub in pts.groupby("altitude"):
         radius_ft = alt * math.tan(boost_angle_rad)
@@ -946,7 +978,15 @@ def regenerate_manifest(site_id: str, published_live_dir: Path) -> Path:
     # (or, in the gap after one's passed and before the next enters the
     # pull window, the most recent one) instead of the oldest backfilled date.
     entries.sort(key=lambda e: e["target_date"], reverse=True)
-    manifest = {"site_id": site_id, "generated_at": datetime.now().isoformat(timespec="seconds"), "launch_dates": entries}
+    manifest = {
+        "site_id": site_id, "generated_at": datetime.now().isoformat(timespec="seconds"),
+        # Static map-projection geometry, shared by every date below -- see
+        # site_geometry()'s own docstring for why this lives here (fetched
+        # once per site, see loadSiteManifest() in app.js) rather than
+        # duplicated into every one of this site's dated capture files.
+        "site_geometry": site_geometry(site_id),
+        "launch_dates": entries,
+    }
     out_path = published_live_dir.parent / "manifest.json"
     with open(out_path, "w") as f:
         json.dump(manifest, f, indent=2)
@@ -964,9 +1004,7 @@ def run(target_date: date, site_id: str = "hutto") -> None:
     points_path = pipeline_dir / f"splash_points_captured_{capture_date}.parquet"
     pts.to_parquet(points_path)
 
-    with open(config.SITE_DIR / "maps" / site_id / "site.json") as f:
-        site_meta = json.load(f)
-    zone_data = build_viewer_data(df, pts, site_meta, site_id, target_date)
+    zone_data = build_viewer_data(df, pts, site_id, target_date)
 
     zone_data["clouds"] = build_cloud_data(df, target_date)
     zone_data["cloud_relevant_layers"] = config.CLOUD_LAYERS_BY_SITE[site_id]

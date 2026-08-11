@@ -1,0 +1,39 @@
+{
+  "site_id": "leonard",
+  "generated_at": "2026-08-11T16:39:06",
+  "site_geometry": {
+    "site_px": [
+      1691.0,
+      1690.5
+    ],
+    "image_view_box": [
+      0,
+      0,
+      3382,
+      3381
+    ],
+    "wide_view_box": [
+      -2576.3,
+      -2575.5,
+      8534.6,
+      8532.0
+    ],
+    "ft_to_px_scale": {
+      "x": 0.315265,
+      "y": 0.315172
+    },
+    "site_lat": 35.9338002,
+    "site_lon": -95.7860019
+  },
+  "launch_dates": [
+    {
+      "target_date": "2026-08-14",
+      "capture_date": "2026-08-11",
+      "lead_days": 3,
+      "label": "Fri, Aug 14 (T-3)",
+      "data_path": "data/leonard/live/2026-08-14/splash_zones_captured_2026-08-11.json",
+      "history_path": "data/leonard/live/2026-08-14/points_history.json",
+      "real_flight_paths": []
+    }
+  ]
+}

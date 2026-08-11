@@ -409,11 +409,12 @@ let deployExplicitlyChosen = URL_PARAMS.has('deploy');
 // same way, just independently of the magnitude.
 let railAngleExplicitlyChosen = URL_PARAMS.has('railangle');
 let railHeadingExplicitlyChosen = URL_PARAMS.has('railheading');
-// pad needs DATA.site_lat/site_lon (to convert the URL's GPS coordinate
-// back to a ft offset) which isn't available until initFromData() runs, so
-// unlike the flags above this can't just be read into a plain boolean here
-// -- applied once, gated by this same sentinel, right where MAX_PAD_MOVE_FT
-// is set (see initFromData()).
+// pad needs SITE_GEOMETRY.site_lat/site_lon (to convert the URL's GPS
+// coordinate back to a ft offset) which isn't available until
+// loadSiteManifest()'s manifest fetch resolves, so unlike the flags above
+// this can't just be read into a plain boolean here -- applied once, gated
+// by this same sentinel, right where MAX_PAD_MOVE_FT is set (see
+// initFromData()).
 let padUrlApplied = false;
 
 function freshState() {
@@ -1691,23 +1692,23 @@ function setPadOffsetClamped(newX, newY) {
 // area, e.g. ft_to_px_scale). Encoding the drag as a GPS coordinate rather
 // than the raw ft offset means an old shared link still points at the same
 // real ground spot even if this site's own surveyed lat/lon is corrected
-// later (DATA.site_lat/site_lon is always read fresh at load time, so the
-// offset re-resolves against whatever the CURRENT default is).
+// later (SITE_GEOMETRY.site_lat/site_lon is always read fresh at load time,
+// so the offset re-resolves against whatever the CURRENT default is).
 const M_PER_DEG_LAT = 111320;
 function padFtToLatLon(x_ft, y_ft) {
-  const mPerDegLon = M_PER_DEG_LAT * Math.cos(DATA.site_lat * Math.PI / 180);
+  const mPerDegLon = M_PER_DEG_LAT * Math.cos(SITE_GEOMETRY.site_lat * Math.PI / 180);
   const ftToM = 0.3048;
   return {
-    lat: DATA.site_lat + (y_ft * ftToM) / M_PER_DEG_LAT,
-    lon: DATA.site_lon + (x_ft * ftToM) / mPerDegLon,
+    lat: SITE_GEOMETRY.site_lat + (y_ft * ftToM) / M_PER_DEG_LAT,
+    lon: SITE_GEOMETRY.site_lon + (x_ft * ftToM) / mPerDegLon,
   };
 }
 function padLatLonToFt(lat, lon) {
-  const mPerDegLon = M_PER_DEG_LAT * Math.cos(DATA.site_lat * Math.PI / 180);
+  const mPerDegLon = M_PER_DEG_LAT * Math.cos(SITE_GEOMETRY.site_lat * Math.PI / 180);
   const ftToM = 0.3048;
   return {
-    x: ((lon - DATA.site_lon) * mPerDegLon) / ftToM,
-    y: ((lat - DATA.site_lat) * M_PER_DEG_LAT) / ftToM,
+    x: ((lon - SITE_GEOMETRY.site_lon) * mPerDegLon) / ftToM,
+    y: ((lat - SITE_GEOMETRY.site_lat) * M_PER_DEG_LAT) / ftToM,
   };
 }
 
@@ -1729,8 +1730,8 @@ window.addEventListener('pointermove', evt => {
   const dyPx = (evt.clientY - padLastY) / rect.height * view.h;
   padLastX = evt.clientX; padLastY = evt.clientY;
 
-  const newX = padOffsetFt.x + dxPx / DATA.ft_to_px_scale.x;
-  const newY = padOffsetFt.y - dyPx / DATA.ft_to_px_scale.y; // screen y grows downward, north is +y
+  const newX = padOffsetFt.x + dxPx / SITE_GEOMETRY.ft_to_px_scale.x;
+  const newY = padOffsetFt.y - dyPx / SITE_GEOMETRY.ft_to_px_scale.y; // screen y grows downward, north is +y
   setPadOffsetClamped(newX, newY);
   // A pinned real-flight box means the pad is sitting exactly on that
   // flight's real rail (see drawRealFlightMarker()'s click handler) --
@@ -4332,8 +4333,8 @@ let padOffsetFt = { x: 0, y: 0 };
 
 function ftToPx(x_ft, y_ft) {
   return [
-    DATA.site_px[0] + (x_ft + padOffsetFt.x) * DATA.ft_to_px_scale.x,
-    DATA.site_px[1] - (y_ft + padOffsetFt.y) * DATA.ft_to_px_scale.y,
+    SITE_GEOMETRY.site_px[0] + (x_ft + padOffsetFt.x) * SITE_GEOMETRY.ft_to_px_scale.x,
+    SITE_GEOMETRY.site_px[1] - (y_ft + padOffsetFt.y) * SITE_GEOMETRY.ft_to_px_scale.y,
   ];
 }
 
@@ -4346,8 +4347,8 @@ function ftToPx(x_ft, y_ft) {
 // its own fixed lat/lon and must not move just because the pad marker did.
 function ftToPxAbsolute(x_ft, y_ft) {
   return [
-    DATA.site_px[0] + x_ft * DATA.ft_to_px_scale.x,
-    DATA.site_px[1] - y_ft * DATA.ft_to_px_scale.y,
+    SITE_GEOMETRY.site_px[0] + x_ft * SITE_GEOMETRY.ft_to_px_scale.x,
+    SITE_GEOMETRY.site_px[1] - y_ft * SITE_GEOMETRY.ft_to_px_scale.y,
   ];
 }
 
@@ -5339,7 +5340,7 @@ function render() {
   const wideImgHref = `maps/${currentSiteId}/wide_${mapLayer}_web.jpg`;
   const detailImgHref = `maps/${currentSiteId}/detail_${mapLayer}_web.jpg`;
 
-  const WIDE_VB = DATA.wide_view_box;
+  const WIDE_VB = SITE_GEOMETRY.wide_view_box;
   const wideImage = document.createElementNS(ns, 'image');
   wideImage.setAttribute('href', wideImgHref);
   wideImage.setAttributeNS('http://www.w3.org/1999/xlink', 'href', wideImgHref);
@@ -5535,7 +5536,7 @@ function initFromData() {
   // config.py's current SPLASH_HOURS_LOCAL.
   TIME_COLORS_HEX = computeSequentialRamp(timeBaseColor, DATA.hours);
   BASE_VB = DATA.base_view_box;
-  IMG_VB = DATA.image_view_box;
+  IMG_VB = SITE_GEOMETRY.image_view_box;
   // Not set to BASE_VB here either -- BASE_VB can still grow once render()
   // (called at the end of this function) runs growBaseViewBox() against
   // the live rate/altitude selection, which isn't resolved yet at this
@@ -5574,7 +5575,7 @@ function initFromData() {
   if (!padUrlApplied) {
     padUrlApplied = true;
     const urlPad = URL_PARAMS.get('pad');
-    if (urlPad && DATA.site_lat !== undefined) {
+    if (urlPad && SITE_GEOMETRY.site_lat !== undefined) {
       const [latStr, lonStr] = urlPad.split(',');
       const lat = Number(latStr), lon = Number(lonStr);
       if (!Number.isNaN(lat) && !Number.isNaN(lon)) {
@@ -5636,6 +5637,17 @@ function initFromData() {
 const subtitleEl = document.getElementById('subtitle');
 const dateSelect = document.getElementById('date-select');
 let manifestEntries = [];
+// Static per-site map-projection geometry (site_px/image_view_box/
+// wide_view_box/ft_to_px_scale/site_lat/site_lon) -- lives in manifest.json
+// (fetched once per site, see loadSiteManifest() below), NOT in each dated
+// capture's own JSON (DATA). 2026-08-11 fix: it used to be duplicated into
+// every capture, which meant correcting a site's configured pad GPS left
+// every already-published historical date silently pointing at the old
+// pixel location until each one was individually regenerated. Reading it
+// from here instead means a pad correction only ever needs manifest.json
+// rebuilt (pipeline/splash_zones.py's regenerate_manifest(), no network,
+// no per-date work) to take effect everywhere at once.
+let SITE_GEOMETRY = null;
 
 function describeEntry(entry) {
   const lead = entry.lead_days === 0 ? 'captured this morning' : `captured ${entry.capture_date} (T-${entry.lead_days})`;
@@ -5695,6 +5707,7 @@ function loadSiteManifest(manifestPath) {
   fetchData(manifestPath)
     .then(r => r.json())
     .then(manifest => {
+      SITE_GEOMETRY = manifest.site_geometry;
       manifestEntries = manifest.launch_dates;
       if (manifestEntries.length === 0) {
         subtitleEl.textContent = `No processed launch dates found in ${manifestPath}.`;

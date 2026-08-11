@@ -6,18 +6,18 @@
   "launch": {
     "time_local": "11:26:00.448",
     "offset_from_pad_ft": {
-      "x": 12.6,
-      "y": 262.6,
-      "dist": 262.9
+      "x": 0.0,
+      "y": 0.0,
+      "dist": 0.0
     }
   },
   "apogee": {
     "time_local": "11:26:21.449",
     "altitude_agl_ft": 8625.3,
     "offset_from_pad_ft": {
-      "x": -961.5,
-      "y": 1783.8,
-      "dist": 2026.4
+      "x": -974.1,
+      "y": 1521.2,
+      "dist": 1806.4
     },
     "boost_angle_from_vertical_deg": 13.22,
     "configured_boost_angle_deg": 10,
@@ -85,15 +85,15 @@
     "lat": 30.614737,
     "lon": -97.493828,
     "offset_from_pad_ft": {
-      "x": 825.4,
-      "y": 295.5,
-      "dist": 876.7
+      "x": 812.8,
+      "y": 32.9,
+      "dist": 813.5
     },
     "note": "This altimeter's own real GPS fix closest to its firmware-tagged Touchdown event (10 satellites, matching the barometer's own return to ~ground level) -- not a hand-recorded pin."
   },
   "predicted_landing_offset_from_pad_ft": {
-    "x": 90.3,
-    "y": 454.1
+    "x": 77.7,
+    "y": 191.5
   },
   "delta_from_predictions": {
     "self_simulated_boost_adjusted": {
@@ -103,127 +103,127 @@
     "altitude_bucket_used_ft": 8000,
     "forecast_capture_date_used": "2026-08-01",
     "model_forecasts": {
-      "11_dual_fast_8000": {
-        "gfs": {
-          "ft": 1256.2,
-          "pct_of_actual_drift": 143.3
-        },
-        "ecmwf": {
-          "ft": 1055.9,
-          "pct_of_actual_drift": 120.4
-        },
-        "gem": {
-          "ft": 1093.4,
-          "pct_of_actual_drift": 124.7
-        },
-        "icon": {
-          "ft": 1738.4,
-          "pct_of_actual_drift": 198.3
-        },
-        "arpege": {
-          "ft": 1078.9,
-          "pct_of_actual_drift": 123.1
-        },
-        "hrrr": {
-          "ft": 856.0,
-          "pct_of_actual_drift": 97.6
-        }
-      },
       "11_dual_slow_8000": {
         "gfs": {
-          "ft": 1623.2,
-          "pct_of_actual_drift": 185.1
+          "ft": 1931.2,
+          "pct_of_actual_drift": 237.4
         },
         "ecmwf": {
-          "ft": 1633.8,
-          "pct_of_actual_drift": 186.4
+          "ft": 2162.4,
+          "pct_of_actual_drift": 265.8
         },
         "gem": {
-          "ft": 1509.0,
-          "pct_of_actual_drift": 172.1
+          "ft": 2047.6,
+          "pct_of_actual_drift": 251.7
         },
         "icon": {
-          "ft": 2470.0,
-          "pct_of_actual_drift": 281.7
+          "ft": 2530.4,
+          "pct_of_actual_drift": 311.1
         },
         "arpege": {
-          "ft": 1185.4,
-          "pct_of_actual_drift": 135.2
+          "ft": 1731.9,
+          "pct_of_actual_drift": 212.9
         },
         "hrrr": {
-          "ft": 899.0,
-          "pct_of_actual_drift": 102.5
+          "ft": 1393.6,
+          "pct_of_actual_drift": 171.3
         }
       },
-      "13_dual_fast_8000": {
+      "11_dual_fast_8000": {
         "gfs": {
-          "ft": 1829.6,
-          "pct_of_actual_drift": 208.7
+          "ft": 1213.5,
+          "pct_of_actual_drift": 149.2
         },
         "ecmwf": {
-          "ft": 837.6,
-          "pct_of_actual_drift": 95.5
+          "ft": 1165.1,
+          "pct_of_actual_drift": 143.2
         },
         "gem": {
-          "ft": 978.9,
-          "pct_of_actual_drift": 111.7
+          "ft": 1139.3,
+          "pct_of_actual_drift": 140.1
         },
         "icon": {
-          "ft": 1928.8,
-          "pct_of_actual_drift": 220.0
+          "ft": 1687.7,
+          "pct_of_actual_drift": 207.5
         },
         "arpege": {
-          "ft": 1237.7,
-          "pct_of_actual_drift": 141.2
+          "ft": 1048.4,
+          "pct_of_actual_drift": 128.9
         },
         "hrrr": {
-          "ft": 1507.2,
-          "pct_of_actual_drift": 171.9
+          "ft": 794.6,
+          "pct_of_actual_drift": 97.7
         }
       },
       "13_dual_slow_8000": {
         "gfs": {
-          "ft": 2573.5,
-          "pct_of_actual_drift": 293.5
+          "ft": 2642.1,
+          "pct_of_actual_drift": 324.8
         },
         "ecmwf": {
-          "ft": 1387.2,
-          "pct_of_actual_drift": 158.2
+          "ft": 1752.2,
+          "pct_of_actual_drift": 215.4
         },
         "gem": {
-          "ft": 1291.2,
-          "pct_of_actual_drift": 147.3
+          "ft": 1654.4,
+          "pct_of_actual_drift": 203.4
         },
         "icon": {
-          "ft": 2716.0,
-          "pct_of_actual_drift": 309.8
+          "ft": 2761.3,
+          "pct_of_actual_drift": 339.4
         },
         "arpege": {
-          "ft": 1451.4,
-          "pct_of_actual_drift": 165.6
+          "ft": 1687.8,
+          "pct_of_actual_drift": 207.5
         },
         "hrrr": {
-          "ft": 1968.3,
-          "pct_of_actual_drift": 224.5
+          "ft": 2451.1,
+          "pct_of_actual_drift": 301.3
+        }
+      },
+      "13_dual_fast_8000": {
+        "gfs": {
+          "ft": 1782.5,
+          "pct_of_actual_drift": 219.1
+        },
+        "ecmwf": {
+          "ft": 897.7,
+          "pct_of_actual_drift": 110.3
+        },
+        "gem": {
+          "ft": 937.8,
+          "pct_of_actual_drift": 115.3
+        },
+        "icon": {
+          "ft": 1893.7,
+          "pct_of_actual_drift": 232.8
+        },
+        "arpege": {
+          "ft": 1146.7,
+          "pct_of_actual_drift": 141.0
+        },
+        "hrrr": {
+          "ft": 1523.8,
+          "pct_of_actual_drift": 187.3
         }
       }
     },
     "hrrr_analysis_actual_proxy": {
+      "11_dual_slow_8000": {
+        "ft": 1388.9,
+        "pct_of_actual_drift": 170.7
+      },
       "11_dual_fast_8000": {
-        "ft": 853.1,
+        "ft": 791.7,
         "pct_of_actual_drift": 97.3
       },
-      "11_dual_slow_8000": {
-        "ft": 890.3,
-        "pct_of_actual_drift": 101.6
+      "13_dual_slow_8000": {
+        "ft": 2235.9,
+        "pct_of_actual_drift": 274.9
       },
       "13_dual_fast_8000": {
-        "ft": 1431.2,
-        "pct_of_actual_drift": 163.2
-      },
-      "13_dual_slow_8000": {
-        "ft": 1793.8,
-        "pct_of_actual_drift": 204.6
+        "ft": 1414.6,
+        "pct_of_actual_drift": 173.9
       }
     },
     "within_published_core_hull": {

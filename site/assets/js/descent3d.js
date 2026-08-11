@@ -355,7 +355,7 @@ if (window.ResizeObserver) {
 
 // --- ground-plane imagery (satellite/road texture on the z=0 plane) -------
 // Reuses the exact same image files and geo-registration data the 2D map
-// already publishes (DATA.site_px/ft_to_px_scale/wide_view_box/
+// already publishes (SITE_GEOMETRY.site_px/ft_to_px_scale/wide_view_box/
 // image_view_box, render()'s wideImage/detailImage construction in
 // app.js) -- no new pipeline work, purely a client-side addition. Lazy-
 // loaded per (site, layer) pair, cached, keyed off the same global
@@ -376,14 +376,14 @@ function path3dGetGroundImage(kind) {
 
 // Both source images live in one shared pixel space (the DETAIL image's
 // own native pixel grid -- app.js's render() positions the wide image
-// into that same space via DATA.wide_view_box, not its own separate
-// space). Real feet convert to/from that space via
-// DATA.site_px/ft_to_px_scale (ft_to_px_scale's own comment in
+// into that same space via SITE_GEOMETRY.wide_view_box, not its own
+// separate space). Real feet convert to/from that space via
+// SITE_GEOMETRY.site_px/ft_to_px_scale (ft_to_px_scale's own comment in
 // splash_zones.py: "exposing scale.x/scale.y explicitly... is what lets
 // the boost-angle buffer move client-side" -- same published fields,
 // reused here for a different client-side geometry need).
 function path3dDetailPxToFt(px, py) {
-  return [(px - DATA.site_px[0]) / DATA.ft_to_px_scale.x, (DATA.site_px[1] - py) / DATA.ft_to_px_scale.y];
+  return [(px - SITE_GEOMETRY.site_px[0]) / SITE_GEOMETRY.ft_to_px_scale.x, (SITE_GEOMETRY.site_px[1] - py) / SITE_GEOMETRY.ft_to_px_scale.y];
 }
 // Corners in real feet (relative to the pad), for the image's own 3
 // defining corners: top-left, top-right, bottom-left (a 4th corner is
@@ -393,7 +393,7 @@ function path3dDetailPxToFt(px, py) {
 // JPEG's own real pixel dimensions (img.naturalWidth/Height) do NOT
 // necessarily match the resolution site_px/ft_to_px_scale were computed
 // against server-side (confirmed directly: hutto's detail_sat_web.jpg is
-// 1600x1600 but DATA.image_view_box says 3384x3384; hearne's is
+// 1600x1600 but SITE_GEOMETRY.image_view_box says 3384x3384; hearne's is
 // 1599x1600 against a published 2035x2036 -- the "_web" files are resized
 // down for file size, independently of the geo-registration math). An
 // earlier version treated the detail image's own native pixel space as
@@ -403,12 +403,12 @@ function path3dDetailPxToFt(px, py) {
 // wrong moving away from it, which is why it looked closer to right for
 // hutto (small site_px offset from that corner) and badly wrong for
 // hearne (confirmed via a user screenshot: pad crosshair and 3D origin
-// landed nowhere near each other on the same imagery). DATA.image_view_box
+// landed nowhere near each other on the same imagery). SITE_GEOMETRY.image_view_box
 // (always [0,0,true_w,true_h]) is the detail image's own equivalent of
 // wide_view_box -- using it here the same way removes the asymmetry.
 function path3dGroundCornersFt(kind, img) {
   const w = img.naturalWidth, h = img.naturalHeight;
-  const [vx, vy, vw, vh] = kind === 'detail' ? DATA.image_view_box : DATA.wide_view_box;
+  const [vx, vy, vw, vh] = kind === 'detail' ? SITE_GEOMETRY.image_view_box : SITE_GEOMETRY.wide_view_box;
   const corners = [[0, 0], [w, 0], [0, h]];
   return corners.map(([px, py]) => path3dDetailPxToFt(vx + (px / w) * vw, vy + (py / h) * vh));
 }

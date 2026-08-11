@@ -1,6 +1,30 @@
 {
   "site_id": "seymour",
-  "generated_at": "2026-08-09T18:10:06",
+  "generated_at": "2026-08-11T15:14:30",
+  "site_geometry": {
+    "site_px": [
+      3929.5,
+      3929.5
+    ],
+    "image_view_box": [
+      0,
+      0,
+      7859,
+      7859
+    ],
+    "wide_view_box": [
+      -5986.7,
+      -5986.7,
+      19832.4,
+      19832.4
+    ],
+    "ft_to_px_scale": {
+      "x": 0.153032,
+      "y": 0.153032
+    },
+    "site_lat": 33.501037,
+    "site_lon": -99.338722
+  },
   "launch_dates": [
     {
       "target_date": "2026-07-25",

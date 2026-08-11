@@ -469,6 +469,22 @@ def fetch_burn_ban(county: str, attempts: int = 3, timeout: int = BURN_BAN_TIMEO
 SURGE_RETRY_POLL_S = 60
 SURGE_RETRY_MAX_WAIT_S = 900
 
+# Open-Meteo's forecast_days parameter caps at 16 regardless of model
+# (https://open-meteo.com/en/docs -- GFS/ECMWF's own real horizons top out
+# right around there too, the longest of the 8 models here). fetch_model()/
+# fetch_grouped_models() request forecast_days = days_ahead + 2 (their own
+# margin, see that comment), so the largest days_ahead a request can ever
+# actually satisfy is MAX_FORECAST_DAYS_PARAM - 2. Requesting further out
+# doesn't degrade gracefully to "fewer models available" the way a real
+# coverage gap does -- every single model 400s immediately (confirmed live,
+# 2026-08-11: a 61-day-out pull for a brand-new site failed all 8 the same
+# way), and that used to fall straight into the SURGE_RETRY_MAX_WAIT_S loop
+# above on the wrong assumption it was a transient surge -- burning a full
+# 15 minutes to fail the exact same way it already failed instantly.
+# Checked in run(), before any request goes out -- not worth the surge-retry
+# treatment at all, since no amount of waiting fixes an out-of-range date.
+MAX_FORECAST_DAYS_PARAM = 16
+
 
 def _fetch_one_model(model_key: str, target_date: date, site_id: str) -> pd.DataFrame | None:
     """fetch_model() + parse_hourly(), collapsed to None (and logged) on
@@ -491,6 +507,16 @@ def run(target_date: date, site_id: str = "hutto") -> tuple[pd.DataFrame, dict |
     # overwrites the same capture_date's file -- one retained data point per
     # day, not a bug.
     capture_date = datetime.now(timezone.utc).date()
+    days_ahead = (target_date - capture_date).days
+    max_days_ahead = MAX_FORECAST_DAYS_PARAM - 2
+    if days_ahead > max_days_ahead:
+        log.error(
+            f"target_date {target_date} is {days_ahead} days out -- past every model's real forecast "
+            f"horizon ({max_days_ahead} days_ahead max, see MAX_FORECAST_DAYS_PARAM's own comment). "
+            "Not attempting the pull -- every model would 400 immediately and this isn't a transient "
+            "failure worth surge-retrying."
+        )
+        return pd.DataFrame(), None, capture_date
     frames = []
     failed_models = []
     # Models sharing one literal Open-Meteo endpoint (gfs/hrrr/nam/nbm, all

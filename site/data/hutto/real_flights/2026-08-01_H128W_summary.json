@@ -6,18 +6,18 @@
   "launch": {
     "time_local": "11:53:56.443",
     "offset_from_pad_ft": {
-      "x": 5.3,
-      "y": 228.6,
-      "dist": 228.7
+      "x": -7.3,
+      "y": -34.0,
+      "dist": 34.8
     }
   },
   "apogee": {
     "time_local": "11:54:12.443",
     "altitude_agl_ft": 4952.8,
     "offset_from_pad_ft": {
-      "x": 1250.7,
-      "y": 187.3,
-      "dist": 1264.6
+      "x": 1238.1,
+      "y": -75.3,
+      "dist": 1240.4
     },
     "boost_angle_from_vertical_deg": 14.32,
     "configured_boost_angle_deg": 10,
@@ -85,141 +85,141 @@
     "lat": 30.611984,
     "lon": -97.489214,
     "offset_from_pad_ft": {
-      "x": 2275.7,
-      "y": -710.0,
-      "dist": 2383.8
+      "x": 2263.1,
+      "y": -972.6,
+      "dist": 2463.2
     },
     "note": "Hand-recorded GPS pin at the recovery site (this altimeter has no onboard GPS) -- not extrapolated from a track."
   },
   "predicted_landing_offset_from_pad_ft": {
-    "x": 2275.7,
-    "y": -710.0
+    "x": 2263.1,
+    "y": -972.6
   },
   "delta_from_predictions": {
     "altitude_bucket_used_ft": 4000,
     "forecast_capture_date_used": "2026-08-01",
     "model_forecasts": {
-      "11_dual_fast_4000": {
-        "gfs": {
-          "ft": 1427.3,
-          "pct_of_actual_drift": 59.9
-        },
-        "ecmwf": {
-          "ft": 1458.6,
-          "pct_of_actual_drift": 61.2
-        },
-        "gem": {
-          "ft": 1408.2,
-          "pct_of_actual_drift": 59.1
-        },
-        "icon": {
-          "ft": 1873.8,
-          "pct_of_actual_drift": 78.6
-        },
-        "arpege": {
-          "ft": 1528.5,
-          "pct_of_actual_drift": 64.1
-        },
-        "hrrr": {
-          "ft": 1720.2,
-          "pct_of_actual_drift": 72.2
-        }
-      },
       "11_dual_slow_4000": {
         "gfs": {
-          "ft": 805.4,
-          "pct_of_actual_drift": 33.8
+          "ft": 927.1,
+          "pct_of_actual_drift": 37.6
         },
         "ecmwf": {
-          "ft": 955.0,
-          "pct_of_actual_drift": 40.1
+          "ft": 923.4,
+          "pct_of_actual_drift": 37.5
         },
         "gem": {
-          "ft": 1003.9,
-          "pct_of_actual_drift": 42.1
+          "ft": 962.8,
+          "pct_of_actual_drift": 39.1
         },
         "icon": {
-          "ft": 1847.3,
-          "pct_of_actual_drift": 77.5
+          "ft": 1726.1,
+          "pct_of_actual_drift": 70.1
         },
         "arpege": {
-          "ft": 1139.2,
-          "pct_of_actual_drift": 47.8
+          "ft": 1034.4,
+          "pct_of_actual_drift": 42.0
         },
         "hrrr": {
-          "ft": 1427.5,
-          "pct_of_actual_drift": 59.9
+          "ft": 1358.5,
+          "pct_of_actual_drift": 55.2
         }
       },
-      "13_dual_fast_4000": {
+      "11_dual_fast_4000": {
         "gfs": {
-          "ft": 2059.3,
-          "pct_of_actual_drift": 86.4
+          "ft": 1413.2,
+          "pct_of_actual_drift": 57.4
         },
         "ecmwf": {
-          "ft": 1541.9,
-          "pct_of_actual_drift": 64.7
+          "ft": 1430.2,
+          "pct_of_actual_drift": 58.1
         },
         "gem": {
-          "ft": 1530.0,
-          "pct_of_actual_drift": 64.2
+          "ft": 1404.8,
+          "pct_of_actual_drift": 57.0
         },
         "icon": {
-          "ft": 2088.3,
-          "pct_of_actual_drift": 87.6
+          "ft": 1792.7,
+          "pct_of_actual_drift": 72.8
         },
         "arpege": {
-          "ft": 1956.5,
-          "pct_of_actual_drift": 82.1
+          "ft": 1508.6,
+          "pct_of_actual_drift": 61.2
         },
         "hrrr": {
-          "ft": 1516.1,
-          "pct_of_actual_drift": 63.6
+          "ft": 1729.1,
+          "pct_of_actual_drift": 70.2
         }
       },
       "13_dual_slow_4000": {
         "gfs": {
-          "ft": 2152.2,
-          "pct_of_actual_drift": 90.3
+          "ft": 1929.1,
+          "pct_of_actual_drift": 78.3
         },
         "ecmwf": {
-          "ft": 1045.8,
-          "pct_of_actual_drift": 43.9
+          "ft": 1094.0,
+          "pct_of_actual_drift": 44.4
         },
         "gem": {
-          "ft": 1094.8,
-          "pct_of_actual_drift": 45.9
+          "ft": 1123.4,
+          "pct_of_actual_drift": 45.6
         },
         "icon": {
-          "ft": 2259.6,
-          "pct_of_actual_drift": 94.8
+          "ft": 2210.6,
+          "pct_of_actual_drift": 89.7
         },
         "arpege": {
-          "ft": 1736.8,
-          "pct_of_actual_drift": 72.9
+          "ft": 1688.8,
+          "pct_of_actual_drift": 68.6
         },
         "hrrr": {
-          "ft": 1006.5,
-          "pct_of_actual_drift": 42.2
+          "ft": 976.6,
+          "pct_of_actual_drift": 39.6
+        }
+      },
+      "13_dual_fast_4000": {
+        "gfs": {
+          "ft": 1986.3,
+          "pct_of_actual_drift": 80.6
+        },
+        "ecmwf": {
+          "ft": 1534.6,
+          "pct_of_actual_drift": 62.3
+        },
+        "gem": {
+          "ft": 1537.1,
+          "pct_of_actual_drift": 62.4
+        },
+        "icon": {
+          "ft": 2031.6,
+          "pct_of_actual_drift": 82.5
+        },
+        "arpege": {
+          "ft": 1941.1,
+          "pct_of_actual_drift": 78.8
+        },
+        "hrrr": {
+          "ft": 1448.7,
+          "pct_of_actual_drift": 58.8
         }
       }
     },
     "hrrr_analysis_actual_proxy": {
-      "11_dual_fast_4000": {
-        "ft": 1723.7,
-        "pct_of_actual_drift": 72.3
-      },
       "11_dual_slow_4000": {
-        "ft": 1436.9,
-        "pct_of_actual_drift": 60.3
+        "ft": 1364.5,
+        "pct_of_actual_drift": 55.4
       },
-      "13_dual_fast_4000": {
-        "ft": 1665.6,
-        "pct_of_actual_drift": 69.9
+      "11_dual_fast_4000": {
+        "ft": 1733.2,
+        "pct_of_actual_drift": 70.4
       },
       "13_dual_slow_4000": {
-        "ft": 1282.5,
-        "pct_of_actual_drift": 53.8
+        "ft": 1191.8,
+        "pct_of_actual_drift": 48.4
+      },
+      "13_dual_fast_4000": {
+        "ft": 1606.3,
+        "pct_of_actual_drift": 65.2
       }
     },
     "within_published_core_hull": {
