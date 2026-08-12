@@ -1,0 +1,39 @@
+{
+  "site_id": "eggemeyer",
+  "generated_at": "2026-08-12T11:22:55",
+  "site_geometry": {
+    "site_px": [
+      1704.5,
+      1705.0
+    ],
+    "image_view_box": [
+      0,
+      0,
+      3409,
+      3410
+    ],
+    "wide_view_box": [
+      -2596.8,
+      -2597.6,
+      8602.7,
+      8605.2
+    ],
+    "ft_to_px_scale": {
+      "x": 0.298715,
+      "y": 0.298803
+    },
+    "site_lat": 31.3315,
+    "site_lon": -100.28875
+  },
+  "launch_dates": [
+    {
+      "target_date": "2026-08-15",
+      "capture_date": "2026-08-12",
+      "lead_days": 3,
+      "label": "Sat, Aug 15 (T-3)",
+      "data_path": "data/eggemeyer/live/2026-08-15/splash_zones_captured_2026-08-12.json",
+      "history_path": "data/eggemeyer/live/2026-08-15/points_history.json",
+      "real_flight_paths": []
+    }
+  ]
+}

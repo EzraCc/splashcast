@@ -55,7 +55,7 @@ import time
 from pathlib import Path
 
 import requests
-from PIL import Image, ImageDraw
+from PIL import Image
 
 import config
 
@@ -190,19 +190,23 @@ def _make_web_jpg(png_path: Path, out_path: Path, max_long_edge: int) -> None:
 
 def fetch_satellite(bounds: dict, zoom: int, out_path: Path, mark_site: tuple[float, float] | None = None, service: str = "World_Imagery") -> tuple[tuple[int, int], tuple[float, float] | None]:
     """service is any ArcGIS Online MapServer name on the same free tile REST
-    API -- "World_Imagery" for satellite (the per-site detail/wide maps)."""
+    API -- "World_Imagery" for satellite (the per-site detail/wide maps).
+
+    mark_site, if given, is used ONLY to compute the returned site_px_crop
+    (written into site.json for informational/debugging use -- nothing in
+    the pipeline actually reads it back, see splash_zones.py's own
+    site_geometry(), which recomputes site_px itself from config.SITES'
+    current lat/lon + this same bounds) -- it does NOT draw anything onto
+    the image. 2026-08 fix: this used to burn a red crosshair directly into
+    the saved PNG/_web.jpg pixels, which meant the pad's on-image position
+    was frozen at whatever config.SITES said at fetch time -- permanently
+    wrong the moment that site's coordinates were ever corrected (confirmed
+    on Hutto), and redundant even when correct, since the viewer already
+    draws its own live "Launch pad" SVG marker on top at render time
+    (drawPadMarker(), app.js) from whatever config.SITES says right now.
+    The map image itself should only ever be ground truth imagery."""
     cropped, lonlat_to_px = _fetch_and_crop(bounds, zoom, service)
-
-    site_px_crop = None
-    if mark_site:
-        site_px_crop = lonlat_to_px(mark_site[1], mark_site[0])
-        draw = ImageDraw.Draw(cropped)
-        r = max(6, cropped.width // 200)
-        sx, sy = site_px_crop
-        draw.ellipse([sx - r, sy - r, sx + r, sy + r], outline=(255, 40, 40), width=max(2, r // 3))
-        draw.line([sx - r * 2, sy, sx + r * 2, sy], fill=(255, 40, 40), width=max(1, r // 4))
-        draw.line([sx, sy - r * 2, sx, sy + r * 2], fill=(255, 40, 40), width=max(1, r // 4))
-
+    site_px_crop = lonlat_to_px(mark_site[1], mark_site[0]) if mark_site else None
     cropped.save(out_path)
     print(f"  saved {out_path.name}: {cropped.size}")
     return cropped.size, site_px_crop

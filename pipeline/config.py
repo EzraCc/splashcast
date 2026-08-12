@@ -134,6 +134,15 @@ SITES = {
         "name": "Pawhuska, OK (High Frontier)", "club": "Tulsa Rocketry",
         "lat": 36.6763510, "lon": -96.4062740, "waiver_ft": 29000, "elev_m": 306.0, "cron_cutoff_hour_utc": 20, "max_pad_move_ft": 2000,
     },
+    "eggemeyer": {
+        # Coordinates given directly by the user in degrees/minutes (31 19.89N
+        # 100 17.325W), converted to decimal here -- 31 + 19.89/60,
+        # -(100 + 17.325/60). West Texas Space Vaqueres (WTSV), NAR club #896,
+        # San Angelo, TX. waiver_ft: "FAA waiver up to 10,000ft AGL" per NAR's
+        # own club listing.
+        "name": "Eggemeyer Field, San Angelo, TX", "club": "WTSV",
+        "lat": 31.3315, "lon": -100.28875, "waiver_ft": 10000, "elev_m": 588.0, "cron_cutoff_hour_utc": 20, "max_pad_move_ft": 2000,
+    },
 }
 
 # --- Pressure levels requested for winds aloft, per site --------------------
@@ -368,6 +377,7 @@ CLOUD_LAYERS_BY_SITE = {
     "argonia": ["low", "mid", "high"],
     "leonard": ["low"],  # 9,400ft waiver -- well under the ~9,800ft low/mid boundary
     "pawhuska": ["low", "mid", "high"],  # 29,000ft waiver -- meaningfully past the ~26,200ft mid/high boundary
+    "eggemeyer": ["low"],  # 10,000ft waiver -- same Hutto/Apache-Pass-style marginal case, Low-only
 }
 
 # Texas A&M Forest Service's live per-county burn-ban list (plain text,
@@ -394,6 +404,7 @@ BURN_BAN_COUNTY_BY_SITE = {
     "tripoli_houston_south": "BRAZORIA",
     "gunter": "GRAYSON",
     "seymour": "BAYLOR",
+    "eggemeyer": "TOM GREEN",
 }
 
 # --- Splash-zone drift calc (ad-hoc analysis, not yet a permanent script) ---

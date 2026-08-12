@@ -2,6 +2,19 @@
 
 Dated, terse log of notable changes. For the full design rationale and decision history, see [docs/spec.md](docs/spec.md).
 
+## 2026-08-12
+
+**Added West Texas Space Vaqueres' (WTSV) Eggemeyer Field, San Angelo, TX**
+- Requested directly, with the club/field's own coordinates given in degrees-minutes (31 19.89N 100 17.325W), converted to decimal. Waiver (10,000ft AGL) and club identity confirmed via NAR's own club listing; the actual 2026/2027 launch-day schedule (including an August 15 certification launch, only 3 days out at the time) pulled from Tom Green County Library's rocketry page, the club's real published source -- all Saturdays, confirmed via `date.weekday()` before trusting the transcription.
+- Unlike every other non-Texas site added recently, this one gets real burn-ban tracking -- Tom Green County confirmed via the same FCC Census Area API lookup this repo already uses for its other Texas sites, and (as of this pull) genuinely under an active ban, verified live against the real feed.
+- Verified end-to-end: map imagery fetched clean (272/272 detail tiles), a real live pull + `splash_zones.py` run for the actual Aug 15 date (well within the forecast horizon, unlike the Tulsa Rocketry mishap the day before), zero console errors, real burn-ban chip rendering correctly.
+
+**Fixed: the launch-pad marker was baked directly into the map tiles, not drawn live -- so it went stale the moment a site's coordinates were ever corrected**
+- Caught directly, following up on the Hutto pad correction: the old (pre-correction) crosshair was still visible in Hutto's own satellite/road imagery, permanently marking the wrong spot -- `fetch_site_maps.py`'s `fetch_satellite()` had always drawn a red crosshair straight into the saved PNG/`_web.jpg` pixels at fetch time, redundant with (and in Hutto's case, actively contradicting) the viewer's own live "Launch pad" SVG marker (`drawPadMarker()`, `app.js`), which already draws from whatever `config.SITES` says at render time.
+- Root cause fixed in `fetch_site_maps.py`: `fetch_satellite()` no longer draws anything -- `mark_site` now only computes the returned `site_px` (still written to `site.json` for informational use, never actually read back by anything). Every future fetch/re-fetch is clean by construction.
+- Already-published imagery patched in place, not fully re-fetched: new `patch_region()` (scratch script, reusing `fetch_site_maps.py`'s own tile-grid math directly rather than re-deriving it) re-fetches only the 1-4 ArcGIS tiles that actually cover the baked marker's small footprint, and composites them back into the shipped `_web.jpg` at its own resolution -- no full re-fetch, no bandwidth wasted on the 99%+ of each image that was already fine. Validated before touching any real file: patched a scratch copy at a *control* location (not the real marker) and diffed against the original -- mean abs pixel diff ~3-4/255 (consistent with ordinary JPEG re-compression, not misalignment), confirmed visually with a side-by-side crop showing no seam across the patched tile boundary. Applied to all 8 previously-published sites (Hutto at its *old* pre-correction coordinates; every other site at its own current, never-corrected coordinates) -- 2-8 tiles each, all spot-checked clean. Leonard/Pawhuska (added the day before, already carrying a freshly-baked-but-otherwise-correct marker) and Eggemeyer (new today) just got a full clean re-fetch instead, since they're small/cheap and hadn't shipped to anyone yet.
+- Verified: full mode x view x viewport sweep across all 11 sites, zero console errors; spot-checked several patched sites' marker regions visually (Hutto, Seymour, Argonia, Pawhuska) -- no baked marker, no visible tile seams.
+
 ## 2026-08-11
 
 **Added two new sites: Tulsa Rocketry's Leonard (regular launches) and Pawhuska (annual High Frontier event)**

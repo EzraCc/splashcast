@@ -142,6 +142,19 @@
         325.9
       ],
       "has_data": true
+    },
+    "eggemeyer": {
+      "name": "Eggemeyer Field, San Angelo, TX",
+      "club": "WTSV",
+      "lat": 31.3315,
+      "lon": -100.28875,
+      "waiver_ft": 10000,
+      "elev_ft": 1929.1,
+      "px": [
+        -98.8,
+        1505.0
+      ],
+      "has_data": true
     }
   }
 }

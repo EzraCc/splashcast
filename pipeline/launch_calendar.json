@@ -135,6 +135,28 @@
         }
       ]
     },
+    "wtsv": {
+      "label": "WTSV",
+      "rules": [
+        {
+          "type": "hand_entered",
+          "site_id": "eggemeyer",
+          "years": {
+            "2026": [
+              {"date": "2026-08-15", "label": "WTSV Certification Launch"},
+              {"date": "2026-09-19", "label": "WTSV (tentative)"},
+              {"date": "2026-10-17", "label": "WTSV (tentative)"},
+              {"date": "2026-12-19", "label": "WTSV (tentative)"}
+            ],
+            "2027": [
+              {"date": "2027-01-16", "label": "WTSV (tentative)"},
+              {"date": "2027-02-20", "label": "WTSV (tentative)"},
+              {"date": "2027-04-17", "label": "WTSV (tentative)"}
+            ]
+          }
+        }
+      ]
+    },
     "tulsa_rocketry": {
       "label": "Tulsa Rocketry",
       "rules": [
