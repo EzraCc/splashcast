@@ -19,6 +19,13 @@
     --hot-bg:         #fbe9d0;
     --hot-border:     #c17a17;
     --hot-text:       #8a5a10;
+    /* Frostbite-risk temperature warning (.temp-risk-badge/tier-frostbite,
+       app.js's tempRiskTier()) -- a teal/ice blue, deliberately distinct
+       from --accent's own blue (#2a78d6, already means "interactive UI
+       element" everywhere else) so the two don't read as the same signal. */
+    --cold-bg:        #d6eef2;
+    --cold-border:    #1a7a8a;
+    --cold-text:      #145e6b;
     /* Wind row's graduated tier scale (windTierMajority() in app.js).
        --wind-red used to just reuse --hot-border verbatim (the cloud
        panel's amber "models agree it's cloudy" flag) on the theory that
@@ -52,6 +59,9 @@
       --hot-bg:         #3d2e12;
       --hot-border:     #e0a542;
       --hot-text:       #f0c27a;
+      --cold-bg:        #123138;
+      --cold-border:    #4fc3d4;
+      --cold-text:      #8fdce8;
       --wind-green:  #3fc16a;
       --wind-yellow: #e8c547;
       --wind-orange: #ff8a48;
@@ -74,6 +84,9 @@
     --hot-bg:         #3d2e12;
     --hot-border:     #e0a542;
     --hot-text:       #f0c27a;
+    --cold-bg:        #123138;
+    --cold-border:    #4fc3d4;
+    --cold-text:      #8fdce8;
     --wind-green:  #3fc16a;
     --wind-yellow: #e8c547;
     --wind-orange: #ff8a48;
@@ -199,6 +212,26 @@
     flex: 1 1 0; border: 1px solid var(--border); border-radius: 6px; text-align: center; padding: 7px 0;
   }
   .rate-toggle-row .toggle-btns button:last-child { border-right: 1px solid var(--border); }
+
+  /* Rate editor, promoted 2026-08 out of the now-deleted .side-col to a
+     horizontal row above the map, every screen size -- same "flex-wrap
+     row of control clusters" idea #model-legend already established below
+     the map, just for a denser control cluster (toggle groups + number
+     inputs) instead of flat chips, so each group gets an explicit
+     flex-basis rather than relying on default content-width wrapping.
+     .rate-toggle-row's own space-between/fixed-140px-toggle sizing above
+     was tuned for a narrow (190-230px) sidebar column -- overridden here
+     so each group reads as a compact inline label+toggle pair instead. */
+  #rate-editor-row {
+    display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2) var(--sp-4);
+    margin-bottom: var(--sp-4);
+  }
+  #rate-editor-row .alt-list-title { margin: 0; }
+  #rate-editor-row .rate-toggle-row { justify-content: flex-start; gap: 8px; }
+  #rate-editor-row .rate-toggle-row .toggle-btns { width: auto; }
+  #rate-editor-row .rate-edit { margin-top: 0; }
+  #rate-editor-row .rate-warning,
+  #rate-editor-row .alt-hint { flex-basis: 100%; }
   .copy-link-btn {
     border: 1px solid var(--border); border-radius: 8px; background: var(--surface-1); color: var(--text-primary);
     padding: 7px 14px; font-size: var(--fs-base); cursor: pointer;
@@ -206,15 +239,17 @@
   .copy-link-btn:hover { background: var(--surface-2); }
   .copy-link-btn.copied { background: var(--accent); color: #fff; border-color: var(--accent); }
 
-  /* Grid (not flex) so the source order can differ from the visual order:
-     on mobile the side-col (altitude/model/rate legends) needs to land right
-     after the map and before the longer explanatory notes underneath it, so
-     it's reachable without scrolling past a wall of text -- see the mobile
-     grid-template-areas below. */
+  /* Single column, every screen size, since 2026-08 -- the "side" column
+     (grid-area) this used to carry is gone: the rate editor (its last
+     always-visible occupant) moved to #rate-editor-row above the map, and
+     #time-legend-block (its only other occupant, History-mode-only)
+     moved into .map-col-notes next to #accuracy-section. Grid (not flex)
+     kept anyway so "notes" and "accuracy" stay named areas rather than
+     bare source order, matching how .map-col-map already reads. */
   .layout {
     display: grid;
-    grid-template-columns: 1fr 190px;
-    grid-template-areas: "map side" "notes side" "accuracy accuracy";
+    grid-template-columns: 1fr;
+    grid-template-areas: "map" "notes" "accuracy";
     gap: var(--sp-6);
     align-items: start;
   }
@@ -227,22 +262,8 @@
      the site-metadata fetch resolves) so there's no empty gap flash. */
   .site-heading { font-size: var(--fs-lg); font-weight: 700; color: var(--text-primary); margin: 0 0 var(--sp-3); }
   .site-heading:empty { display: none; }
-  .side-col { grid-area: side; }
   .map-col-notes { grid-area: notes; }
   .accuracy-section { grid-area: accuracy; min-width: 0; }
-
-  /* The sidebar has grown a lot denser than when 190px was first chosen --
-     rate editor (two number inputs per row), altitude ladder + range
-     slider, model checkboxes -- and 190px stays genuinely tight even at
-     this app's own 1200px max-width (.viz-root doesn't grow past that, so
-     without this the sidebar never gets more room no matter how wide the
-     browser window is). Only widens the column on viewports comfortably
-     past tablet width -- the map only gives up 40px for it (negligible at
-     that size), and everything narrower than this stays exactly as tuned
-     (760px's single-column stack is untouched, this tier sits above it). */
-  @media (min-width: 1024px) {
-    .layout { grid-template-columns: 1fr 230px; }
-  }
 
   .map-frame { position: relative; }
 
@@ -583,22 +604,26 @@
     position: absolute; left: 0; width: 7px; box-sizing: border-box;
     border: 1.5px solid; border-bottom: none; border-radius: 2px 2px 0 0; background: none;
   }
-  /* 10/20mph dashed reference lines -- WIND_BAR_MAX_MPH's own scale has no
-     axis labeled anywhere else, and these are the same two numbers the
-     tier scale's own breakpoints land on (WIND_TIER_YELLOW_MIN_MPH=10,
-     DATA.wind_nogo_mph=20), per direction -- one set of numbers doing
-     double duty as gridline and tier boundary instead of two unrelated
-     scales sharing one chart. --text-primary, not --border -- these sit on
-     top of 4 different tier-tinted cell backgrounds (color-mix()'d from
-     --wind-green/yellow/orange/red into --surface-1, see the tier rules
-     above), and --border's own gray was confirmed too low-contrast against
-     more than one of them. --text-primary already flips near-black/
-     near-white per theme (unlike a fixed hex), which a literal black
-     wouldn't -- dark theme's own cell backgrounds stay dark (tinted from a
-     near-black --surface-1, not a pale one), so a hardcoded black line
-     would just disappear there the same way the gray one did elsewhere.
-     opacity keeps it reading as a reference line, not another data mark. */
-  .wind-ref-line { position: absolute; left: 0; right: 0; height: 0; border-top: 1px dashed var(--text-primary); opacity: 0.3; pointer-events: none; }
+  /* Dashed reference line(s) on a cell's own bar chart -- shared by Wind's
+     10/20mph lines (WIND_BAR_MAX_MPH's own scale has no axis labeled
+     anywhere else, and these are the same two numbers the tier scale's own
+     breakpoints land on: WIND_TIER_YELLOW_MIN_MPH=10, DATA.wind_nogo_mph=20,
+     per direction -- one set of numbers doing double duty as gridline and
+     tier boundary instead of two unrelated scales sharing one chart) and
+     Clouds' 50% line (DATA.cloud_nogo_pct, added 2026-08 -- same idea, the
+     safety-code threshold IS the gridline). Not wind-specific despite the
+     name's own history, hence the generic class name. --text-primary, not
+     --border -- these sit on top of tier-tinted cell backgrounds
+     (color-mix()'d from --wind-green/yellow/orange/red or --hot-* into
+     --surface-1, see the tier rules elsewhere in this file), and --border's
+     own gray was confirmed too low-contrast against more than one of them.
+     --text-primary already flips near-black/near-white per theme (unlike a
+     fixed hex), which a literal black wouldn't -- dark theme's own cell
+     backgrounds stay dark (tinted from a near-black --surface-1, not a pale
+     one), so a hardcoded black line would just disappear there the same way
+     the gray one did elsewhere. opacity keeps it reading as a reference
+     line, not another data mark. */
+  .chart-ref-line { position: absolute; left: 0; right: 0; height: 0; border-top: 1px dashed var(--text-primary); opacity: 0.3; pointer-events: none; }
   /* "Pop" state: a majority of reporting models agree this layer/hour is
      >=50% covered (config.CLOUD_COVER_NOGO_PCT, Tripoli Unified Safety Code
      9-5/9-6) -- the safety-relevant threshold clubs actually watch for, not
@@ -637,6 +662,44 @@
   .cloud-cell.wind-cell.tier-orange .baseline { background: var(--wind-orange); }
   .cloud-cell.wind-cell.tier-red    { background: color-mix(in srgb, var(--wind-red) 20%, var(--surface-1)); }
   .cloud-cell.wind-cell.tier-red    .baseline { background: var(--wind-red); }
+
+  /* Temp row's heat/cold risk badges (tempRiskTier() in app.js) -- a real
+     <button>, not a ::after pseudo-element like .cloud-cell.cell-hot's own
+     badge above, since this one needs a click handler and per-instance
+     dynamic popup content (3 different messages depending on tier, see
+     TEMP_RISK_COPY/#temp-risk-box), which a pseudo-element can't carry.
+     Same circular-badge visual language as .cloud-badge, just an
+     interactive element instead of decoration. heat-advisory reuses the
+     same amber --hot-* tokens Clouds' own flag uses; heat-warning reuses
+     --wind-red (Wind's own most-severe tier, so the two "most severe"
+     signals in this panel share one red rather than inventing a second);
+     frostbite gets the dedicated --cold-* tokens above. */
+  .temp-risk-badge {
+    display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0;
+    width: 17px; height: 17px; border-radius: 50%; border: none; padding: 0; cursor: pointer;
+    color: #fff; font-size: var(--fs-xs); font-weight: 700;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.4), 0 0 0 2px var(--surface-2);
+    position: absolute; right: -4px; top: 2px; z-index: 2;
+  }
+  .temp-risk-badge.tier-heat-advisory { background: var(--hot-border); }
+  .temp-risk-badge.tier-heat-warning { background: var(--wind-red); }
+  .temp-risk-badge.tier-frostbite { background: var(--cold-border); }
+  .temp-cell.tier-heat-advisory { background: var(--hot-bg); }
+  .temp-cell.tier-heat-advisory .baseline { background: var(--hot-border); }
+  .temp-cell.tier-heat-warning { background: color-mix(in srgb, var(--wind-red) 20%, var(--surface-1)); }
+  .temp-cell.tier-heat-warning .baseline { background: var(--wind-red); }
+  .temp-cell.tier-frostbite { background: var(--cold-bg); }
+  .temp-cell.tier-frostbite .baseline { background: var(--cold-border); }
+  /* #temp-risk-box reuses .real-flight-box's own box styling (position/
+     shadow/padding) but not its default pink left-border, which is that
+     marker's own established meaning elsewhere -- tier class set in
+     showTempRiskBox() (app.js) picks the matching color instead. */
+  #temp-risk-box.tier-heat-advisory { border-left-color: var(--hot-border); }
+  #temp-risk-box.tier-heat-warning { border-left-color: var(--wind-red); }
+  #temp-risk-box.tier-frostbite { border-left-color: var(--cold-border); }
+  #temp-risk-box.tier-heat-advisory .rf-title { color: var(--hot-border); }
+  #temp-risk-box.tier-heat-warning .rf-title { color: var(--wind-red); }
+  #temp-risk-box.tier-frostbite .rf-title { color: var(--cold-border); }
 
   .cloud-legend { margin-top: 12px; padding-top: 9px; border-top: 1px solid var(--border); }
   /* Wind legend key -- a label (previously missing entirely -- confirmed
@@ -1463,10 +1526,10 @@
   .footnote code { background: var(--surface-2); padding: 1px 5px; border-radius: 4px; }
 
   @media (max-width: 760px) {
-    .layout {
-      grid-template-columns: 1fr;
-      grid-template-areas: "map" "side" "notes" "accuracy";
-    }
+    /* .layout's own grid-template-columns/-areas need no mobile override
+       any more -- single column, "map"/"notes"/"accuracy", is already the
+       default at every width since #rate-editor-row/.side-col's removal
+       (see .layout's own comment). */
     /* .descent3d-header-controls' desktop padding-left/right (reserving
        horizontal room beside the #layer-toggle/#burn-ban-chip stack and
        #map-view-toggle) doesn't scale down -- confirmed directly, a narrow

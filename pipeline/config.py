@@ -358,6 +358,35 @@ CLOUD_COVER_NOGO_PCT = 50
 # here, so this file never implies a citation that doesn't exist.
 WIND_SPEED_NOGO_MPH = 20
 
+# No rocketry safety code addresses temperature -- these are National
+# Weather Service criteria instead, verified directly against NWS's own
+# published sources (not paraphrased), same "one real cited number, extra
+# display-only breakpoints stay frontend-only" discipline as
+# CLOUD_COVER_NOGO_PCT/WIND_SPEED_NOGO_MPH above.
+#
+# Heat Index (weather.gov/safety/heat-tools) -- NWS's Rothfusz-regression
+# Heat Index, NOT Open-Meteo's own apparent_temperature (a different
+# formula, Steadman/Australian BOM's, see build_temperature_data()'s own
+# comment). Individual NWS regional offices set their own exact numbers
+# (some as high as 108-113F) based on local climatology; these are NWS's
+# commonly-published national baseline figures, not one universal number
+# every office uses verbatim -- same honesty already applied above.
+HEAT_INDEX_ADVISORY_F = 100  # Heat Advisory: heat index >=100F
+HEAT_INDEX_WARNING_F = 105  # Excessive Heat Warning: heat index >=105F
+
+# Wind Chill frostbite risk (weather.gov/safety/cold-wind-chill-chart,
+# quoted verbatim): "If the temperature is 0 F and the wind is blowing at
+# 15 mph, the wind chill is -19 F. At this wind chill temperature, exposed
+# skin can freeze in 30 minutes." Deliberately NOT a "Cold Weather
+# Advisory" threshold -- unlike heat, NWS has no single national number for
+# that (set per regional office, -15F to -35F wind chill); the frostbite
+# chart is a real, non-regional NWS product instead, so this cites
+# "frostbite risk," not a named advisory implying one national threshold
+# exists. NWS's own Wind Chill formula (not apparent_temperature, same
+# reasoning as heat above) is only defined for actual temp <=50F and wind
+# >3mph -- see app.js's windChillF().
+WIND_CHILL_FROSTBITE_F = -19
+
 # Which of Open-Meteo's low/mid/high cloud bands (surface-9,800ft /
 # 9,800-26,200ft / 26,200ft+) are actually relevant to display by default for
 # each site's waiver -- shown collapsed to just these in the viewer, with the

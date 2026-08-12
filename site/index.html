@@ -116,6 +116,43 @@ writeLocalBustedTag('<link rel="stylesheet" href="', 'assets/css/app.css', '">')
            don't land on top of that row's own buttons -- see its own CSS
            comment (same padding-right trick already reserved for this
            toggle on the right). -->
+      <!-- Moved 2026-08 out of .side-col (the right-hand sidebar, since
+           removed) to a horizontal row right above the map -- requested
+           directly, at every screen size: the rate editor had become the
+           only thing left in the sidebar after the altitude ladder/model
+           legend/rail-angle inputs were already relocated in earlier
+           rounds, and it was easy to miss scrolling past it on mobile.
+           Same flex-row treatment #model-legend already got below the map
+           -- see that element's own CSS comment. buildRateEditor()/
+           showRateWarning()/updateRateHint() (app.js) need no changes --
+           plain getElementById lookups, don't care where in the DOM these
+           ids live. -->
+      <div id="rate-editor-row">
+        <div class="alt-list-title">
+          Rate (fps) <button class="info-btn" type="button" data-hint="rate-hint" title="Show interaction hint">i</button>
+        </div>
+        <div class="toggle-group rate-toggle-row">
+          <span class="group-label">Deploy</span>
+          <div class="toggle-btns" id="deploy-toggle"></div>
+        </div>
+        <!-- One active drogue+main pair now, not two computed simultaneously --
+             Fast/Slow are quick-fill presets for the single row below, same
+             idea descent3d.js's own rate toggle already used (2026-08
+             simplification, see buildRateEditor()'s own comment). No separate
+             reset button any more -- clicking either preset already resets to
+             its exact defaults. -->
+        <div class="toggle-group rate-toggle-row">
+          <span class="group-label">Preset</span>
+          <div class="toggle-btns" id="rate-preset-toggle">
+            <button type="button" data-rate="fast">Fast</button>
+            <button type="button" data-rate="slow">Slow</button>
+          </div>
+        </div>
+        <div class="rate-edit" id="rate-edit"></div>
+        <div class="rate-warning" id="rate-warning" style="display:none;">Main capped at 35 fps &mdash; Tripoli Unified Safety Code &sect;11-1's max landing speed.</div>
+        <div class="alt-hint" id="rate-hint">Editable drogue/main fps.</div>
+      </div>
+
       <div class="map-view-wrap" id="map-view-wrap">
         <div class="map-corner-top-right">
           <!-- Hide-controls toggle -- 2026-08 correction: originally hid
@@ -341,48 +378,6 @@ writeLocalBustedTag('<link rel="stylesheet" href="', 'assets/css/app.css', '">')
       <div class="weather-panel" id="weather-panel" style="display:none;"></div>
     </div>
 
-    <div class="side-col">
-      <div class="alt-list-title">
-        Rate (fps) <button class="info-btn" type="button" data-hint="rate-hint" title="Show interaction hint">i</button>
-      </div>
-      <div class="toggle-group rate-toggle-row">
-        <span class="group-label">Deploy</span>
-        <div class="toggle-btns" id="deploy-toggle"></div>
-      </div>
-      <!-- One active drogue+main pair now, not two computed simultaneously --
-           Fast/Slow are quick-fill presets for the single row below, same
-           idea descent3d.js's own rate toggle already used (2026-08
-           simplification, see buildRateEditor()'s own comment). No separate
-           reset button any more -- clicking either preset already resets to
-           its exact defaults. -->
-      <div class="toggle-group rate-toggle-row">
-        <span class="group-label">Preset</span>
-        <div class="toggle-btns" id="rate-preset-toggle">
-          <button type="button" data-rate="fast">Fast</button>
-          <button type="button" data-rate="slow">Slow</button>
-        </div>
-      </div>
-      <div class="rate-edit" id="rate-edit"></div>
-      <div class="rate-warning" id="rate-warning" style="display:none;">Main capped at 35 fps &mdash; Tripoli Unified Safety Code &sect;11-1's max landing speed.</div>
-      <div class="alt-hint" id="rate-hint">Editable drogue/main fps.</div>
-
-      <!-- Apogee altitude ladder/specific-altitude control moved 2026-08 to
-           the map-anchored #map-alt-control (see .map-view-wrap) -- one
-           shared picker for both 2D and 3D instead of a sidebar-only one. -->
-
-      <div id="time-legend-block" style="display:none;">
-        <div class="alt-list-title" style="margin-top:16px;">
-          <span id="time-legend-title">Time of day</span> <button class="info-btn" type="button" data-hint="time-hint" title="Show interaction hint">i</button>
-          <span id="time-color-controls" style="display:contents;">
-            <input type="color" id="time-color-picker" class="zone-color-picker" title="Pick a time-of-day color that stands out against this site's imagery">
-            <button id="time-color-reset" class="zone-color-reset-btn" type="button" title="Reset to default time-of-day color">&#8635;</button>
-          </span>
-        </div>
-        <div id="time-legend"></div>
-        <div class="alt-hint" id="time-hint">Hover a time to isolate it. Click to pin; click again to release.</div>
-      </div>
-    </div>
-
     <div class="map-col-notes">
       <!-- No idle-state sentence here any more ("Pad at surveyed GPS
            position") -- it was a lone line of text with no icon/swatch to
@@ -396,6 +391,23 @@ writeLocalBustedTag('<link rel="stylesheet" href="', 'assets/css/app.css', '">')
       <div class="pad-move-control">
         <span id="pad-readout"></span>
         <button id="pad-reset-btn" type="button" style="display:none;">Reset pad position</button>
+      </div>
+
+      <!-- Moved 2026-08 out of the now-deleted .side-col, next to
+           #accuracy-section -- both are already History-mode-only,
+           self-hiding content (display:none except in History mode, see
+           setMode() in app.js), a real pairing rather than leftover
+           placement. -->
+      <div id="time-legend-block" style="display:none;">
+        <div class="alt-list-title" style="margin-top:16px;">
+          <span id="time-legend-title">Time of day</span> <button class="info-btn" type="button" data-hint="time-hint" title="Show interaction hint">i</button>
+          <span id="time-color-controls" style="display:contents;">
+            <input type="color" id="time-color-picker" class="zone-color-picker" title="Pick a time-of-day color that stands out against this site's imagery">
+            <button id="time-color-reset" class="zone-color-reset-btn" type="button" title="Reset to default time-of-day color">&#8635;</button>
+          </span>
+        </div>
+        <div id="time-legend"></div>
+        <div class="alt-hint" id="time-hint">Hover a time to isolate it. Click to pin; click again to release.</div>
       </div>
     </div>
 
@@ -418,6 +430,15 @@ writeLocalBustedTag('<link rel="stylesheet" href="', 'assets/css/app.css', '">')
 
   <div class="tooltip" id="tooltip"></div>
   <div class="real-flight-box" id="real-flight-box"></div>
+  <!-- Temperature heat/cold warning popup -- click a .temp-risk-badge in
+       the weather panel's Temp row to open, same click-to-open/position-
+       near-cursor/click-away-to-close mechanism #real-flight-box already
+       established (see showTempRiskBox()/tempRiskBoxHTML(), app.js). Not
+       a static .info-btn/data-hint (one fixed hint per id -- wrong shape
+       for 3 different messages depending on which tier this specific
+       cell is in) and not a bare title attribute (no native tooltips on
+       touch, and this app is mobile-first). -->
+  <div class="real-flight-box" id="temp-risk-box"></div>
 </div>
 
 <script>writeLocalBustedTag('<script src="', 'assets/js/app.js', '"><' + '/script>');</script>

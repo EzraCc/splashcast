@@ -102,6 +102,14 @@ def _hourly_variables(model_key: str, site_id: str) -> list[str]:
         "cloud_cover", "cloud_cover_low", "cloud_cover_mid", "cloud_cover_high",
         "precipitation", "rain", "showers", "precipitation_probability",
         "temperature_2m", "apparent_temperature", "cape",
+        # Added 2026-08 for the temperature-based heat/cold warnings --
+        # NWS's own Heat Index formula needs relative humidity specifically
+        # (not apparent_temperature, which is a different formula -- see
+        # build_temperature_data()'s own comment). Confirmed live, real
+        # non-null data from every one of this app's 8 models. dew_point_2m
+        # deliberately not pulled -- Heat Index uses RH, not dew point, and
+        # nothing else here would consume it.
+        "relative_humidity_2m",
     ]
     if model_key == "nbm":
         for h in config.LIVE_NBM_HEIGHTS_M:

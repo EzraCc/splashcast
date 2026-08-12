@@ -649,18 +649,34 @@ def build_rain_data(df: pd.DataFrame, target_date: date) -> dict:
 def build_temperature_data(df: pd.DataFrame, target_date: date) -> dict:
     """{"prior_day": {model: cell}, "morning": {model: cell}, "hourly":
     {hour: {model: cell}}} where cell = {"actual": degF|None, "apparent":
-    degF|None}. hourly covers config.RAIN_WINDOW_START through
-    END_HOUR_LOCAL inclusive (8am-5pm, 10 hours), same time axis as
-    build_rain_data() so the two timelines line up. Each hourly cell is that
-    single hour's own reading, not an aggregate (matches rain's hourly cells
-    being one hour's own value).
+    degF|None, "humidity": pct|None (hourly cells only, see below)}.
+    hourly covers config.RAIN_WINDOW_START through END_HOUR_LOCAL inclusive
+    (8am-5pm, 10 hours), same time axis as build_rain_data() so the two
+    timelines line up. Each hourly cell is that single hour's own reading,
+    not an aggregate (matches rain's hourly cells being one hour's own
+    value).
 
-    "apparent" is Open-Meteo's own apparent_temperature -- one combined
-    "feels like" figure (folds in wind + humidity, not just temperature),
-    covering both heat-index-when-hot and wind-chill-when-cold in a single
-    number rather than needing two separate fields. Viewer defaults to
-    showing this, with "actual" (raw temperature_2m) as a toggle-away
-    option -- see app.js's renderTempTimeline().
+    "apparent" is Open-Meteo's own apparent_temperature -- the Steadman
+    Apparent Temperature formula (Australian BOM's own operational
+    formula, confirmed via github.com/open-meteo/open-meteo/discussions/651
+    -- also factors in solar radiation, unlike either NWS formula below),
+    one combined "feels like" figure folding in wind + humidity + solar.
+    Viewer defaults to showing this, with "actual" (raw temperature_2m) as
+    a toggle-away option -- see app.js's renderTempTimeline().
+
+    "humidity" (relative_humidity_2m) is published on hourly cells ONLY,
+    added 2026-08 so the client can compute NWS's own Heat Index (Rothfusz
+    regression, needs actual temp + RH) and Wind Chill (needs actual temp +
+    wind speed) for the heat/cold warning badges -- see app.js's
+    heatIndexF()/windChillF()/tempRiskTier(). Deliberately NOT computed
+    from "apparent" -- NWS's advisory thresholds (config.HEAT_INDEX_*_F/
+    WIND_CHILL_FROSTBITE_F) are defined against NWS's own formulas
+    specifically, and Steadman AT doesn't reproduce them (NWS's own
+    published example: 96F/65%RH is a 121F NWS Heat Index, which Steadman
+    AT does not match). Not published on prior_day/morning -- those are
+    window-MAX aggregate cells with no single well-defined RH reading at
+    that peak moment, same reasoning wind/cloud's own grading already
+    restricts to hourly-only cells.
 
     prior_day/morning use each window's MAX, not a mean -- multi-hour spans
     reduced to one number, and peak heat is the more safety-relevant read
@@ -704,6 +720,7 @@ def build_temperature_data(df: pd.DataFrame, target_date: date) -> dict:
             out["hourly"][h][m] = {
                 "actual": hour_value(m_df, "temperature", hdt),
                 "apparent": hour_value(m_df, "apparent_temperature", hdt),
+                "humidity": hour_value(m_df, "relative_humidity", hdt),
             }
     return out
 
@@ -1012,6 +1029,9 @@ def run(target_date: date, site_id: str = "hutto") -> None:
 
     zone_data["rain"] = build_rain_data(df, target_date)
     zone_data["temperature"] = build_temperature_data(df, target_date)
+    zone_data["heat_index_advisory_f"] = config.HEAT_INDEX_ADVISORY_F
+    zone_data["heat_index_warning_f"] = config.HEAT_INDEX_WARNING_F
+    zone_data["wind_chill_frostbite_f"] = config.WIND_CHILL_FROSTBITE_F
     zone_data["wind"] = build_wind_data(df, target_date)
     zone_data["wind_nogo_mph"] = config.WIND_SPEED_NOGO_MPH
 

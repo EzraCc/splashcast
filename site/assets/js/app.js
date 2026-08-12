@@ -2445,6 +2445,162 @@ function windTierMajority(speeds) {
   return 'green';
 }
 
+// --- Temperature-based heat/cold warnings (2026-08) -------------------------
+// No rocketry safety code addresses temperature -- these implement NWS's own
+// published criteria instead (config.HEAT_INDEX_ADVISORY_F/WARNING_F,
+// config.WIND_CHILL_FROSTBITE_F -- see config.py's own citation comments for
+// the verbatim sources). Both formulas take ACTUAL temperature only
+// (cell.actual), never .apparent -- DATA.temperature's own "apparent" field
+// is Open-Meteo's Steadman/Australian-BOM Apparent Temperature, a genuinely
+// different formula (also factors in solar radiation) that does not
+// reproduce NWS's Heat Index or Wind Chill numbers for the same conditions
+// (confirmed against NWS's own published example: 96F/65%RH is a 121F NWS
+// Heat Index). Feeding a different formula's output against an NWS-labeled
+// threshold would silently mislabel the guidance, so this always starts
+// from raw actual temp + this hour's own humidity/wind speed.
+
+// NWS Heat Index (Rothfusz regression), verified directly against
+// wpc.ncep.noaa.gov/html/heatindex_equation.shtml. Per that page's own
+// wording: "the simple formula is computed first and the result averaged
+// with the temperature. If this heat index value is 80 degrees F or
+// higher, the full regression equation ... is applied" -- the switch
+// condition is that AVERAGE, not the simple formula's own value alone.
+function heatIndexF(tF, rh) {
+  if (tF === null || rh === null) return null;
+  const simple = 0.5 * (tF + 61.0 + (tF - 68.0) * 1.2 + rh * 0.094);
+  if ((simple + tF) / 2 < 80) return simple;
+  let hi = -42.379 + 2.04901523 * tF + 10.14333127 * rh - 0.22475541 * tF * rh
+    - 0.00683783 * tF * tF - 0.05481717 * rh * rh + 0.00122874 * tF * tF * rh
+    + 0.00085282 * tF * rh * rh - 0.00000199 * tF * tF * rh * rh;
+  if (rh < 13 && tF >= 80 && tF <= 112) {
+    hi -= ((13 - rh) / 4) * Math.sqrt((17 - Math.abs(tF - 95)) / 17);
+  } else if (rh > 85 && tF >= 80 && tF <= 87) {
+    hi += ((rh - 85) / 10) * ((87 - tF) / 5);
+  }
+  return hi;
+}
+
+// NWS Wind Chill, verified directly against weather.gov/safety/cold-wind-
+// chill-chart. Only defined for actual temp <=50F and wind >3mph -- NWS's
+// own stated validity bounds, not this app's own choice -- returns null
+// outside them rather than a number NWS itself doesn't define.
+function windChillF(tF, mph) {
+  if (tF === null || mph === null || tF > 50 || mph <= 3) return null;
+  return 35.74 + 0.6215 * tF - 35.75 * Math.pow(mph, 0.16) + 0.4275 * tF * Math.pow(mph, 0.16);
+}
+
+// What "Feels like" should actually show for an hourly cell -- the SAME
+// number tempRiskTier()'s warning badge is computed from, not Open-Meteo's
+// own apparent_temperature (see the block comment above). Reported
+// directly: showing a different number than what actually drives the
+// badge means a user sees a warning appear without "Feels like" itself
+// looking any more extreme than the hour before it -- confusing, and
+// undermines trust that the badge means anything. >=80F/<=50F gates match
+// NWS's own real convention exactly (heat index isn't a published NWS
+// concept below 80F, wind chill isn't defined above 50F/calm wind, see
+// windChillF's own comment) -- in between, NWS doesn't publish an
+// adjusted figure at all, so this returns actual temperature unchanged,
+// same as NWS would.
+function nwsFeelsLikeF(tF, rh, mph) {
+  if (tF === null) return null;
+  if (tF >= 80 && rh !== null) return heatIndexF(tF, rh);
+  if (tF <= 50 && mph !== null) {
+    const wc = windChillF(tF, mph);
+    if (wc !== null) return wc;
+  }
+  return tF;
+}
+
+// Same majority-vote shape as windTierMajority()/isCloudHot() -- for each
+// model present in both cells, classifies THAT model's own heat index (if
+// its actual temp is warm enough for one to apply) or wind chill (if cold
+// enough), then majority-votes (>=50% of models agree, same threshold
+// every other tier check here uses) across models. Heat and cold can't
+// both apply to the same model's own reading (the >=80F/<=50F gates below,
+// same as nwsFeelsLikeF()'s own domain split, don't overlap), so the
+// result is always at most one of the three tiers. The >=80F gate here
+// (not just "humidity is available") matters for more than correctness --
+// it's what keeps this in lockstep with nwsFeelsLikeF()'s own gate, so a
+// vote here always corresponds to the exact number "Feels like" goes on to
+// display for that same model/hour (see addTempCell()).
+function tempRiskTier(hourlyCell, windHourCell) {
+  if (!hourlyCell || !windHourCell) return null;
+  const heatVotes = [];
+  const chillVotes = [];
+  for (const m in hourlyCell) {
+    const cell = hourlyCell[m];
+    const windCell = windHourCell[m];
+    if (!cell || cell.actual === null) continue;
+    if (cell.actual >= 80 && cell.humidity !== null) {
+      heatVotes.push(heatIndexF(cell.actual, cell.humidity));
+    }
+    const wc = (windCell && windCell.speed !== undefined) ? windChillF(cell.actual, windCell.speed) : null;
+    if (wc !== null) chillVotes.push(wc);
+  }
+  const majority = (votes, threshold, cmp) => votes.length > 0 && votes.filter(v => cmp(v, threshold)).length / votes.length >= 0.5;
+  if (majority(heatVotes, DATA.heat_index_warning_f, (v, t) => v >= t)) return 'heat-warning';
+  if (majority(heatVotes, DATA.heat_index_advisory_f, (v, t) => v >= t)) return 'heat-advisory';
+  if (majority(chillVotes, DATA.wind_chill_frostbite_f, (v, t) => v <= t)) return 'frostbite';
+  return null;
+}
+
+// Per-tier copy for the click-to-open popup (.temp-risk-badge/#temp-risk-box
+// below) -- practical guidance, not a repeat of the numeric threshold
+// already visible in the cell itself.
+const TEMP_RISK_COPY = {
+  'heat-advisory': {
+    title: 'Heat Advisory',
+    body: 'A majority of models put the heat index at or above 100&deg;F. Stay hydrated, take breaks in shade, and limit prolonged outdoor exposure.',
+  },
+  'heat-warning': {
+    title: 'Excessive Heat Warning',
+    body: 'A majority of models put the heat index at or above 105&deg;F. Avoid outdoor activity during peak hours if possible, hydrate aggressively, and watch for heat exhaustion/heat stroke signs.',
+  },
+  'frostbite': {
+    title: 'Frostbite risk',
+    body: 'A majority of models put the wind chill at or below -19&deg;F -- NWS’s own frostbite chart puts exposed skin at risk of freezing in about 30 minutes at that wind chill. Wear layers, limit exposed skin, and watch for numbness.',
+  },
+};
+
+function tempRiskBoxHTML(tier) {
+  const copy = TEMP_RISK_COPY[tier];
+  return `<div class="rf-title">${copy.title}</div>${copy.body}`;
+}
+
+// Same click-to-open/position-near-cursor/click-away-to-close mechanism
+// showRealFlightBox()/positionBoxAvoiding() already established (see those
+// functions further down) -- reused here rather than reinvented, same
+// touch-first reasoning (no native title-attribute tooltip, no per-id-fixed
+// .info-btn/data-hint). openTempRiskBadge tracks which badge (if any) is
+// currently showing its box, so a second click on that SAME badge toggles
+// it closed instead of just re-opening the same content.
+let openTempRiskBadge = null;
+const tempRiskBox = document.getElementById('temp-risk-box');
+function showTempRiskBox(evt, tier) {
+  if (openTempRiskBadge === evt.currentTarget) { hideTempRiskBox(); return; }
+  tempRiskBox.innerHTML = tempRiskBoxHTML(tier);
+  // Own left-border color per tier (real-flight-box's default --real-
+  // flight-color pink is that marker's own established meaning elsewhere
+  // in the app -- reusing it here would misleadingly tie a heat/cold
+  // warning to "real flight data").
+  tempRiskBox.className = 'real-flight-box tier-' + tier;
+  const [x, y] = positionBoxAvoiding(evt, []);
+  tempRiskBox.style.left = x + 'px';
+  tempRiskBox.style.top = y + 'px';
+  tempRiskBox.style.display = 'block';
+  openTempRiskBadge = evt.currentTarget;
+}
+function hideTempRiskBox() {
+  tempRiskBox.style.display = 'none';
+  openTempRiskBadge = null;
+}
+// Only ever sees clicks that didn't land on a badge itself -- each badge's
+// own click handler stopPropagation()s, same fix #real-flight-box's own
+// document-level listener already needed.
+document.addEventListener('click', () => {
+  if (openTempRiskBadge !== null) hideTempRiskBox();
+});
+
 // Shared by addCloudRow() and addRainCell() -- three states per model,
 // split across two flex rows (barsAbove/barsBelow) so zero gets real room
 // to sit BELOW the baseline -- the one part of the cell that can never be
@@ -2536,6 +2692,15 @@ function addCloudRow(grid, layerKey, label, sub, beyondWaiver) {
     const bars = document.createElement('div');
     bars.className = 'bars';
     cell.appendChild(bars);
+    // DATA.cloud_nogo_pct dashed reference line -- same idea as Wind's own
+    // 10/20mph lines (.chart-ref-line, shared class -- see its own CSS
+    // comment), just no scaling division needed since cloud values are
+    // already raw 0-100 percentages. Appended before the per-model bars
+    // below so it paints behind them, not on top.
+    const refLine = document.createElement('div');
+    refLine.className = 'chart-ref-line';
+    refLine.style.bottom = DATA.cloud_nogo_pct + '%';
+    bars.appendChild(refLine);
     const barsBelow = document.createElement('div');
     barsBelow.className = 'bars-below';
     cell.appendChild(barsBelow);
@@ -2772,26 +2937,65 @@ function addRainRow(grid) {
 // there's nothing for appendValueBar()'s null/zero/real split to do here --
 // just null-or-real).
 //
-// Each cell carries both "actual" (raw temperature_2m) and "apparent"
-// (Open-Meteo's own combined wind+humidity+temperature "feels like" figure
-// -- covers both heat-index-when-hot and wind-chill-when-cold in one
-// number, not two separate fields) -- a toggle switches which one the bars
-// show, default apparent since "does this feel dangerous" is closer to
+// Each cell carries "actual" (raw temperature_2m) and, for hourly cells,
+// "humidity" -- a toggle switches the bars between that and a "feels
+// like" figure, default on since "does this feel dangerous" is closer to
 // what a launch director actually needs than raw air temperature alone.
 // Lives inline in the row label now instead of owning a full header row.
+//
+// "Feels like" is nwsFeelsLikeF() (NWS Heat Index/Wind Chill, actual+
+// humidity/wind) for the 5 hourly columns, NOT Open-Meteo's own
+// "apparent" field (a different formula, Steadman/Australian BOM's -- see
+// the block comment above tempRiskTier()) -- reported directly: showing a
+// different number than what the warning badge is actually computed from
+// meant a badge could appear without "Feels like" looking any more
+// extreme than the hour before, undermining trust that it means anything.
+// prior_day/morning still show Open-Meteo's own "apparent" (no per-model
+// humidity published there, see build_temperature_data()'s own comment) --
+// harmless, since neither of those two columns ever carries a warning
+// badge to misalign against.
 let tempShowApparent = URL_PARAMS.get('temp') !== 'actual';
 
-function addTempCell(grid, cellData, scaleMin, scaleMax, tooltipLabel) {
+function addTempCell(grid, cellData, scaleMin, scaleMax, tooltipLabel, windHourCell) {
   const cell = document.createElement('div');
-  cell.className = 'cloud-cell temp-cell';
+  // windHourCell is only ever passed for the DATA.hours hourly cells (see
+  // addTempRow() below) -- prior_day/morning cells have no "humidity"
+  // field at all (build_temperature_data()'s own comment: no single
+  // well-defined RH reading for a window-MAX aggregate), so tempRiskTier()
+  // only ever runs where the data actually supports it.
+  const riskTier = windHourCell ? tempRiskTier(cellData, windHourCell) : null;
+  cell.className = 'cloud-cell temp-cell' + (riskTier ? ' tier-' + riskTier : '');
 
   const baseline = document.createElement('div');
   baseline.className = 'baseline';
   cell.appendChild(baseline);
 
-  const field = tempShowApparent ? 'apparent' : 'actual';
-  const vals = weatherPanelModels().map(m => ({ m, v: cellData[m]?.[field] ?? null }));
+  const vals = weatherPanelModels().map(m => {
+    const c = cellData[m];
+    if (!tempShowApparent) return { m, v: c?.actual ?? null };
+    if (windHourCell) {
+      // Hourly: NWS-sourced, same value tempRiskTier() votes with -- see
+      // tempShowApparent's own comment for why this isn't Open-Meteo's
+      // "apparent" field.
+      const windSpeed = windHourCell[m]?.speed ?? null;
+      return { m, v: c ? nwsFeelsLikeF(c.actual, c.humidity ?? null, windSpeed) : null };
+    }
+    return { m, v: c?.apparent ?? null }; // prior_day/morning -- Open-Meteo's own figure, no humidity here to do better
+  });
   const real = vals.filter(x => x.v !== null);
+
+  if (riskTier) {
+    const badge = document.createElement('button');
+    badge.type = 'button';
+    badge.className = 'temp-risk-badge tier-' + riskTier;
+    badge.innerHTML = '&#9888;';
+    badge.title = TEMP_RISK_COPY[riskTier].title;
+    badge.addEventListener('click', evt => {
+      evt.stopPropagation();
+      showTempRiskBox(evt, riskTier);
+    });
+    cell.appendChild(badge);
+  }
 
   if (real.length) {
     const nums = real.map(x => x.v);
@@ -2901,7 +3105,7 @@ function addTempRow(grid) {
   addTempCell(grid, DATA.temperature.prior_day, scaleMin, scaleMax, 'Prior day');
   addTempCell(grid, DATA.temperature.morning, scaleMin, scaleMax, 'Morning');
   DATA.hours.forEach(h => {
-    addTempCell(grid, DATA.temperature.hourly[h], scaleMin, scaleMax, hourAmPm(h));
+    addTempCell(grid, DATA.temperature.hourly[h], scaleMin, scaleMax, hourAmPm(h), DATA.wind.hourly[h]);
   });
 }
 
@@ -3000,7 +3204,7 @@ function addWindCell(grid, cellData, tooltipLabel) {
   // the model columns below so they paint behind the bars, not on top.
   [10, 20].forEach(mph => {
     const line = document.createElement('div');
-    line.className = 'wind-ref-line';
+    line.className = 'chart-ref-line';
     line.style.bottom = Math.min(100, (mph / WIND_BAR_MAX_MPH) * 100) + '%';
     bars.appendChild(line);
   });
