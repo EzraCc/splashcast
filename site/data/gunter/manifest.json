@@ -1,6 +1,6 @@
 {
   "site_id": "gunter",
-  "generated_at": "2026-08-11T23:57:22",
+  "generated_at": "2026-08-12T02:42:14",
   "site_geometry": {
     "site_px": [
       1047.0,
@@ -28,10 +28,10 @@
   "launch_dates": [
     {
       "target_date": "2026-08-15",
-      "capture_date": "2026-08-11",
-      "lead_days": 4,
-      "label": "Sat, Aug 15 (T-4)",
-      "data_path": "data/gunter/live/2026-08-15/splash_zones_captured_2026-08-11.json",
+      "capture_date": "2026-08-12",
+      "lead_days": 3,
+      "label": "Sat, Aug 15 (T-3)",
+      "data_path": "data/gunter/live/2026-08-15/splash_zones_captured_2026-08-12.json",
       "history_path": "data/gunter/live/2026-08-15/points_history.json",
       "real_flight_paths": []
     },
