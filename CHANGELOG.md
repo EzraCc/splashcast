@@ -4,6 +4,9 @@ Dated, terse log of notable changes. For the full design rationale and decision 
 
 ## 2026-08-12
 
+**Fixed: Deploy/Preset rate buttons had no left/right padding, text touching the border**
+- `.rate-toggle-row .toggle-btns button` (`app.css`) had `padding: 7px 0`, a leftover from when this toggle lived in the old fixed-140px sidebar column (`flex: 1 1 0` gave each button room to center in there). After the rate editor's move to `#rate-editor-row` (below), the group is sized to content (`width: auto`) instead, so zero horizontal padding left "Fast"/"Slow"/"Single"/"Dual" flush against each button's own border. Changed to `padding: 7px 12px`.
+
 **Added temperature-based heat/cold warnings, computed from real NWS criteria**
 - Requested directly: "I want to put temperature warnings in place... Find what is definitive, what factors they look at." No rocketry safety code addresses temperature, so this cites National Weather Service criteria instead, verified directly against NWS's own published sources (not paraphrased): Heat Index (Rothfusz regression, `wpc.ncep.noaa.gov/html/heatindex_equation.shtml`) for heat, Wind Chill (`weather.gov/safety/cold-wind-chill-chart`) for cold.
 - Thresholds (`pipeline/config.py`, matching `WIND_SPEED_NOGO_MPH`'s own citation-comment convention): `HEAT_INDEX_ADVISORY_F=100`/`HEAT_INDEX_WARNING_F=105` (NWS's generalized national baseline -- individual offices set their own exact numbers, some as high as 108-113°F, same honesty already applied to the existing wind/cloud constants). Cold turned out to have no single national number at all -- NWS sets "Cold Weather Advisory" per regional office, -15°F to -35°F wind chill -- confirmed directly with the user before picking a citation: `WIND_CHILL_FROSTBITE_F=-19`, quoting NWS's own frostbite-time chart verbatim ("at [-19°F] wind chill, exposed skin can freeze in 30 minutes") instead of a regionally-set advisory name that would misleadingly imply one national threshold.

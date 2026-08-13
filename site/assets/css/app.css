@@ -209,7 +209,7 @@
   .rate-toggle-row { justify-content: space-between; }
   .rate-toggle-row .toggle-btns { width: 140px; gap: 6px; border: none; overflow: visible; }
   .rate-toggle-row .toggle-btns button {
-    flex: 1 1 0; border: 1px solid var(--border); border-radius: 6px; text-align: center; padding: 7px 0;
+    flex: 1 1 0; border: 1px solid var(--border); border-radius: 6px; text-align: center; padding: 7px 12px;
   }
   .rate-toggle-row .toggle-btns button:last-child { border-right: 1px solid var(--border); }
 
