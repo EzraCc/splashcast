@@ -291,10 +291,10 @@
       "action": "add",
       "club": "AARG",
       "date": "2026-08-15",
-      "site_id": "apache_pass",
-      "label": "AARG (possible extra August launch)",
-      "reason": "may add an additional August date, unconfirmed",
-      "status": "tentative"
+      "site_id": "hutto",
+      "label": "AARG",
+      "reason": "extra August date, confirmed at Hutto",
+      "status": "confirmed"
     },
     {
       "action": "flag",

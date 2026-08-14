@@ -2,6 +2,13 @@
 
 Dated, terse log of notable changes. For the full design rationale and decision history, see [docs/spec.md](docs/spec.md).
 
+## 2026-08-14
+
+**Fixed: Hutto's Aug 15 launch stopped getting cron updates, stuck at T-3**
+- Not a caching or automation bug -- `pipeline/launch_calendar.json` never actually scheduled Hutto for 2026-08-15. That date's only AARG entry was a tentative `"AARG (possible extra August launch)"` override pointing at `apache_pass` (added 2026-07-29, present since the calendar file's very first commit). `site/data/hutto/live/2026-08-15/`'s data through Aug 12 came from a handful of one-off manual pulls, not the recurring 6h cron -- `launch_schedule.py --dry-run --run-live` confirmed no `hutto` event existed on that date at all, so cron correctly stopped touching it.
+- Confirmed directly with the user: AARG's Aug 15 launch is real and is at Hutto. Updated the existing tentative override in place (`site_id: apache_pass` -> `hutto`, `status: tentative` -> `confirmed`) rather than adding a second entry -- it's the same event, not a new one. `launch_schedule.py`'s `--move`/`--cancel` CLI helpers couldn't do this directly (both validate their "from" side against the *recurring* schedule only, and this event only ever existed as a one-off `add`), so this was a direct JSON edit, verified after with `load_calendar()` (passes validation) and a dry run (`hutto` now listed for 2026-08-15, `apache_pass` no longer is).
+- Ran today's near-tier pull for Hutto immediately (`pull_live_forecast.py 2026-08-15 --site hutto` + `splash_zones.py`) rather than waiting for the next scheduled cron tick, bringing it to T-1 same-day as the other three real Aug 15 sites (apache_pass, eggemeyer, gunter). Ongoing near-tier (today) and the day-after actuals pull (T+1) now resume automatically since `hutto`/`2026-08-15` is a real entry in `all_events()`.
+
 ## 2026-08-12
 
 **Fixed: Deploy/Preset rate buttons had no left/right padding, text touching the border**
