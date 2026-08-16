@@ -2263,6 +2263,9 @@ const ROCKETRY_ORIGIN = new URL(ROCKETRY_EMBED_BASE).origin;
 
 const ascentSimBtn = document.getElementById('ascent-sim-btn');
 const ascentSimModal = document.getElementById('ascent-sim-modal');
+const ascentSimModalInner = document.querySelector('.ascent-sim-modal-inner');
+const ascentSimModalHeader = document.querySelector('.ascent-sim-modal-header');
+const ascentSimFullscreenBtn = document.getElementById('ascent-sim-fullscreen');
 const ascentSimIframe = document.getElementById('ascent-sim-iframe');
 const ascentSimClose = document.getElementById('ascent-sim-close');
 const ascentSimError = document.getElementById('ascent-sim-error');
@@ -2397,7 +2400,94 @@ function openAscentSimModal() {
   });
   ascentSimIframe.src = `${ROCKETRY_EMBED_BASE}?${params}`;
   ascentSimModal.style.display = 'flex';
+  // Every fresh open starts back at the default centered/900x800 layout,
+  // not wherever a previous session left it dragged/resized/full-screened
+  // to -- a dialog reopening in an unpredictable spot (or still off-screen
+  // from an earlier drag) is worse than just always starting clean, and
+  // nothing here was asked to persist that state across separate opens.
+  ascentModalResetLayout();
 }
+// Clears whatever drag/resize/full-screen state a previous open/close
+// cycle left behind -- plain inline styles (position/left/top/margin, set
+// by the header-drag handler below) and the native `resize` handle's own
+// inline width/height (set directly by the browser, not by this app's own
+// code, but cleared the same way) both fall back to the CSS defaults the
+// moment they're removed, no separate "remembered default" to restore.
+function ascentModalResetLayout() {
+  ascentSimModalInner.style.position = '';
+  ascentSimModalInner.style.left = '';
+  ascentSimModalInner.style.top = '';
+  ascentSimModalInner.style.margin = '';
+  ascentSimModalInner.style.width = '';
+  ascentSimModalInner.style.height = '';
+  ascentSimFullscreen = false;
+  ascentSimModal.classList.remove('fullscreen-active');
+  ascentSimFullscreenBtn.setAttribute('aria-expanded', 'false');
+  ascentSimFullscreenBtn.title = 'Expand to full screen';
+}
+
+// --- draggable (by the header) + resizable (native CSS `resize`, no JS
+// needed for that half) + full-screen-toggleable modal -- requested
+// directly. Drag switches the panel from the CSS default (flex-centered
+// by .ascent-sim-modal's own align-items/justify-content) to an explicit
+// position:fixed anchored at wherever it was actually rendered at
+// drag-start (via getBoundingClientRect()), so taking over never causes a
+// visible jump -- same "read the current rendered position before
+// overriding it" approach this app already uses for the 3D view's own
+// orbit-drag delta tracking. setPointerCapture() on the header (not
+// document) is what keeps move/up events routed here even while the
+// cursor passes directly over the cross-origin iframe below mid-drag --
+// the exact same fix this app's own 3D-canvas orbit/pan and 2D-map pan
+// already rely on, not a new mechanism invented for this. ---
+let ascentDragPointerId = null, ascentDragOffsetX = 0, ascentDragOffsetY = 0;
+ascentSimModalHeader.addEventListener('pointerdown', evt => {
+  if (ascentSimFullscreen || evt.target.closest('button')) return; // no drag while full-screen, and a header button click shouldn't also start one
+  const rect = ascentSimModalInner.getBoundingClientRect();
+  ascentSimModalInner.style.position = 'fixed';
+  ascentSimModalInner.style.left = rect.left + 'px';
+  ascentSimModalInner.style.top = rect.top + 'px';
+  ascentSimModalInner.style.margin = '0';
+  ascentDragOffsetX = evt.clientX - rect.left;
+  ascentDragOffsetY = evt.clientY - rect.top;
+  ascentDragPointerId = evt.pointerId;
+  ascentSimModalHeader.setPointerCapture(evt.pointerId);
+  ascentSimModalHeader.classList.add('dragging');
+});
+ascentSimModalHeader.addEventListener('pointermove', evt => {
+  if (ascentDragPointerId !== evt.pointerId) return;
+  const rect = ascentSimModalInner.getBoundingClientRect();
+  // Clamped so at least a margin-wide strip of the header always stays
+  // reachable on every edge -- same "don't let a draggable thing become
+  // unreachable" principle MAX_PAD_MOVE_FT/the rail dial's own pitch clamp
+  // already establish elsewhere in this app, just applied to screen-space
+  // position instead of a data value.
+  const margin = 40;
+  const x = Math.max(margin - rect.width, Math.min(window.innerWidth - margin, evt.clientX - ascentDragOffsetX));
+  const y = Math.max(0, Math.min(window.innerHeight - margin, evt.clientY - ascentDragOffsetY));
+  ascentSimModalInner.style.left = x + 'px';
+  ascentSimModalInner.style.top = y + 'px';
+});
+function ascentDragEnd() {
+  ascentDragPointerId = null;
+  ascentSimModalHeader.classList.remove('dragging');
+}
+ascentSimModalHeader.addEventListener('pointerup', ascentDragEnd);
+ascentSimModalHeader.addEventListener('pointercancel', ascentDragEnd);
+
+// Same CSS-class-toggle pattern #map-fullscreen-toggle already established
+// for the map's own fullscreen button (mapPaneExpanded/.fullscreen-active,
+// above) -- not the native Fullscreen API, and not a JS position/size
+// override either: the CSS rule's own !important wins over whatever
+// inline drag/resize state is currently set, and reverts to it cleanly
+// the instant this class comes back off (see that rule's own comment).
+let ascentSimFullscreen = false;
+ascentSimFullscreenBtn.addEventListener('click', evt => {
+  evt.stopPropagation();
+  ascentSimFullscreen = !ascentSimFullscreen;
+  ascentSimModal.classList.toggle('fullscreen-active', ascentSimFullscreen);
+  ascentSimFullscreenBtn.setAttribute('aria-expanded', String(ascentSimFullscreen));
+  ascentSimFullscreenBtn.title = ascentSimFullscreen ? 'Collapse back to normal size' : 'Expand to full screen';
+});
 // Pure "hide" -- no ASCENT_RESULTS change. Used both by the explicit
 // close/reset flow below AND by the message listener's own success path
 // (which auto-closes the modal once a result arrives, but obviously

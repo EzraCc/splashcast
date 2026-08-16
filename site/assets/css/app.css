@@ -1592,25 +1592,69 @@
     position: fixed; inset: 0; z-index: 30; display: flex; align-items: center; justify-content: center;
     background: rgba(0,0,0,0.6); padding: 16px; box-sizing: border-box;
   }
+  /* Sizing split into a starting width/height (same effective 900x800,
+     shrinking on a small viewport) separate from max-width/max-height
+     (nearly the full viewport) -- requested directly: resizable via the
+     native `resize: both` handle (bottom-right corner, browser-drawn, no
+     hand-rolled resize math needed) up to nearly fullscreen, but still
+     opening at the old familiar default size, not maximized every time.
+     overflow:hidden (already needed for the iframe's own border-radius
+     clipping) is also what makes `resize` draw a handle at all -- it
+     requires a non-visible overflow to have somewhere to reveal/hide
+     content as the box changes size. position:fixed/left/top are set by
+     app.js's own drag handler once the visitor actually drags the header
+     (see that file's own comment) -- absent here, so the flex-centered
+     default (align-items/justify-content on the parent, above) is what
+     positions it until then. */
   .ascent-sim-modal-inner {
-    display: flex; flex-direction: column; width: 100%; height: 100%; max-width: 900px; max-height: 800px;
+    display: flex; flex-direction: column;
+    width: min(900px, calc(100vw - 32px)); height: min(800px, calc(100vh - 32px));
+    max-width: calc(100vw - 32px); max-height: calc(100vh - 32px);
+    min-width: 320px; min-height: 280px;
     background: var(--surface-1); border-radius: 10px; overflow: hidden; box-shadow: 0 8px 40px rgba(0,0,0,0.5);
+    resize: both;
   }
+  /* Grab-to-drag cursor on the header specifically (not the whole modal --
+     dragging by the iframe's own content would fight rocketry's own UI
+     underneath it). touch-action:none for the same reason the rail dial's
+     own draggable thumb needs it -- stops the browser's touch-scroll/pan
+     gesture from fighting the pointer drag on mobile. */
   .ascent-sim-modal-header {
     display: flex; align-items: center; justify-content: space-between; flex-shrink: 0;
     padding: 10px 14px; border-bottom: 1px solid var(--border); font-weight: 700; color: var(--text-primary);
+    cursor: grab; touch-action: none;
   }
-  .ascent-sim-close {
-    border: none; background: none; color: var(--text-secondary); font-size: 1.4rem; line-height: 1;
-    cursor: pointer; padding: 2px 6px;
+  .ascent-sim-modal-header.dragging { cursor: grabbing; }
+  .ascent-sim-header-btns { display: flex; align-items: center; gap: 2px; flex-shrink: 0; }
+  .ascent-sim-close, .ascent-sim-header-btn {
+    border: none; background: none; color: var(--text-secondary); line-height: 1;
+    cursor: pointer; padding: 2px 6px; border-radius: 4px;
   }
-  .ascent-sim-close:hover { color: var(--text-primary); }
+  .ascent-sim-close { font-size: 1.4rem; }
+  .ascent-sim-header-btn { font-size: 1.05rem; }
+  .ascent-sim-close:hover, .ascent-sim-header-btn:hover { color: var(--text-primary); background: var(--surface-2); }
+  .ascent-sim-header-btn[aria-expanded="true"] { color: var(--accent); }
   .ascent-sim-modal-error {
     flex-shrink: 0; margin: 10px 14px 0; padding: 6px 8px; border-radius: 6px;
     background: var(--hot-bg); border: 1px solid var(--hot-border); color: var(--hot-text);
     font-size: var(--fs-sm); line-height: 1.4;
   }
   .ascent-sim-iframe { flex: 1 1 auto; width: 100%; border: none; }
+  /* Full-screen toggle (#ascent-sim-fullscreen, app.js) -- same CSS-class-
+     toggle pattern .map-view-wrap.fullscreen-active already established
+     for the map's own fullscreen button, not the native Fullscreen API.
+     !important on the inner box's own overrides -- deliberately wins over
+     whatever inline position/width/height a prior drag/resize already set
+     (app.js sets those as plain inline styles), and cleanly reverts to
+     them the instant this class comes back off, no JS save/restore needed
+     for that state. resize:none while full-screen -- resizing an already-
+     fullscreen panel has nothing to grow into. */
+  .ascent-sim-modal.fullscreen-active { padding: 0; }
+  .ascent-sim-modal.fullscreen-active .ascent-sim-modal-inner {
+    position: static !important; left: auto !important; top: auto !important; margin: 0 !important;
+    width: 100% !important; height: 100% !important; max-width: 100% !important; max-height: 100% !important;
+    border-radius: 0 !important; resize: none !important;
+  }
 
   .footnote { margin-top: 18px; font-size: var(--fs-sm); color: var(--text-muted); line-height: 1.6; }
   .footnote code { background: var(--surface-2); padding: 1px 5px; border-radius: 4px; }

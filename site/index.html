@@ -480,10 +480,25 @@ writeLocalBustedTag('<link rel="stylesheet" href="', 'assets/css/app.css', '">')
        .claude/plans/rocketry-flight-sim-integration.md for the full
        postMessage contract this modal/iframe implements. -->
   <div class="ascent-sim-modal" id="ascent-sim-modal" style="display:none;">
+    <!-- Draggable (grab the header, see app.js's own pointerdown/move/up
+         trio on .ascent-sim-modal-header -- setPointerCapture() there is
+         what keeps the drag alive even while the cursor passes over the
+         iframe below, same fix this app's own 3D-canvas orbit/2D-map pan
+         already rely on for a cross-origin child), resizable (native CSS
+         `resize: both` on .ascent-sim-modal-inner -- the browser's own
+         corner handle, no hand-rolled resize logic needed, and immune to
+         the same iframe-steals-events concern since it's UA-internal, not
+         page-level JS), and full-screen-toggleable (#ascent-sim-fullscreen,
+         same .fullscreen-active CSS-class-toggle pattern the map's own
+         #map-fullscreen-toggle already established, not the native
+         Fullscreen API) -- requested directly. -->
     <div class="ascent-sim-modal-inner">
       <div class="ascent-sim-modal-header">
         <span>Simulate real ascent path</span>
-        <button type="button" id="ascent-sim-close" class="ascent-sim-close" title="Close">&times;</button>
+        <div class="ascent-sim-header-btns">
+          <button type="button" id="ascent-sim-fullscreen" class="ascent-sim-header-btn" title="Expand to full screen" aria-expanded="false">&#10021;</button>
+          <button type="button" id="ascent-sim-close" class="ascent-sim-close" title="Close">&times;</button>
+        </div>
       </div>
       <div class="ascent-sim-modal-error" id="ascent-sim-error" style="display:none;"></div>
       <iframe id="ascent-sim-iframe" class="ascent-sim-iframe" title="Rocketry flight simulator" referrerpolicy="no-referrer"></iframe>

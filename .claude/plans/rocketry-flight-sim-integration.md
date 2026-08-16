@@ -23,6 +23,7 @@ Last updated: 2026-08-16
 - [x] Task 9 — Background per-hour prefetch (`app.js`, `descent3d.js`), so the time slider updates apogee without leaving a frozen result — **splashcast-side only, no rocketry change needed** (confirmed directly: "they only digest what we send them") — see "Update 2026-08-16 (4)" below
 - [x] Task 10 — `autoSend=1` param on prefetch-only requests, model-selection-aware apogee mean (rounded to nearest 10ft in 3D), and a real click-to-open popup for the Clouds row's warning badge — see "Update 2026-08-16 (5)" below. **`autoSend=1` needs matching rocketry-side support** (contract addition, not yet confirmed shipped) — everything else in this task is splashcast-only.
 - [x] Task 11 — 15-minute ascent interpolation between the two bracketing real prefetched hours, dashed/faded when shown — **splashcast-side only, no rocketry change needed** (same reasoning as Task 9) — see "Update 2026-08-16 (6)" below
+- [x] Task 12 — Draggable/resizable/full-screen-toggleable ascent-sim modal (`index.html`, `app.css`, `app.js`) — **splashcast-side only, entirely a wrapper around the existing iframe, no rocketry change needed** — see "Update 2026-08-16 (7)" below
 
 ## Context
 
@@ -799,6 +800,51 @@ Task 4 was built against.
 > (false only exactly on the hour), zero console errors. Directly
 > instrumented `ctx.setLineDash` to confirm zero dash calls at an exact
 > hour and a dash call for every visible model at a mid-hour position.
+
+> **Update 2026-08-16 (7) — draggable/resizable/full-screen modal.**
+> Requested directly: "make the iframe resizable, draggable, and give it a
+> 'full screen' toggle."
+>
+> - **Resizable**: native CSS `resize: both` on `.ascent-sim-modal-inner`
+>   — the browser's own bottom-right corner handle, no hand-rolled resize
+>   math needed, and immune to the cross-origin-iframe-steals-events
+>   problem entirely (handled UA-internally, not via page-level JS).
+>   Default size stays the old 900x800 (`width: min(900px, calc(100vw -
+>   32px))`, separate from `max-width: calc(100vw - 32px)`, which is what
+>   actually allows growing past 900x800 up to nearly the full viewport).
+> - **Draggable**: grab the header (`.ascent-sim-modal-header`, cursor:grab).
+>   First drag switches the panel from the CSS default (flex-centered by
+>   `.ascent-sim-modal`) to an explicit `position:fixed` anchored at its
+>   current rendered position (`getBoundingClientRect()` at drag-start), so
+>   taking over never causes a jump. `setPointerCapture()` on the header —
+>   same fix this app's own 3D-canvas orbit/2D-map pan already rely on —
+>   is what keeps the drag alive even while the cursor passes directly
+>   over the cross-origin iframe mid-drag. Clamped so a 40px strip of the
+>   header always stays reachable on every edge.
+> - **Full-screen toggle**: same CSS-class-toggle pattern
+>   `#map-fullscreen-toggle` already established for the map's own button
+>   (`.fullscreen-active`, not the native Fullscreen API). The override
+>   CSS uses `!important` specifically so it wins over whatever inline
+>   drag/resize state is currently set without JS needing to save/restore
+>   it — toggling back off reverts to exactly the dragged/resized state
+>   automatically, since the underlying inline styles were never touched.
+>   Dragging is a no-op while full-screen (nothing to drag to).
+> - Every fresh `openAscentSimModal()` call resets all of this back to the
+>   default centered/900x800/non-full-screen layout (`ascentModalResetLayout()`)
+>   — a dialog reopening in an unpredictable spot from a previous session
+>   is worse than always starting clean; nothing here was asked to persist
+>   position across separate opens.
+>
+> **Verified** via headless-Chromium (Playwright): default rect exactly
+> centered at 900x800 in a 1200x900 viewport; dragging moves the panel by
+> the expected delta (and correctly clamps at the top edge when a drag
+> would push it off-screen); a simulated resize (setting inline width/
+> height, since Playwright can't drive the browser's own native resize
+> handle) correctly reflows the iframe inside it; full-screen exactly
+> matches the viewport; un-full-screen reverts to the exact dragged+resized
+> rect, not the original default; a drag attempt while full-screen is
+> correctly a no-op; closing and reopening the modal resets fully back to
+> the default layout. Zero console errors throughout.
 
 ## Explicitly out of scope for this plan
 
