@@ -454,6 +454,13 @@ writeLocalBustedTag('<link rel="stylesheet" href="', 'assets/css/app.css', '">')
        cell is in) and not a bare title attribute (no native tooltips on
        touch, and this app is mobile-first). -->
   <div class="real-flight-box" id="temp-risk-box"></div>
+  <!-- Cloud-cover safety-threshold warning popup -- click a .cloud-risk-badge
+       in the weather panel's Clouds row to open, same mechanism as
+       #temp-risk-box above (see showCloudRiskBox(), app.js). Replaces the
+       old .cell-hot::after pseudo-element, which had no click handler at
+       all -- reported directly ("I'm not getting a popup when clicking
+       the warning icon"). -->
+  <div class="real-flight-box" id="cloud-risk-box"></div>
   <!-- Click-to-open popup for the burnout/weathercock points on the real
        ascent-path curve (once a rocketry sim result is active), same
        mechanism as #real-flight-box/#temp-risk-box above -- always-visible

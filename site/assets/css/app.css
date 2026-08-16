@@ -640,8 +640,26 @@
   /* Anchored just inside the cell's own top-right, not up in the -14px band
      the range-num text occupies above the cell -- a wide range ("0-100%")
      spans close to the full cell width there, and the two would otherwise
-     overlap. */
+     overlap. Real cloud cells (not :wind-cell) no longer use this --
+     addCloudRow() now appends a real .cloud-risk-badge <button> instead
+     (below), so this pseudo-element is suppressed there to avoid a
+     doubled-up badge; wind cells (addWindCell(), no click-to-open popup
+     built for them) still use it exactly as before. */
   .cloud-cell.cell-hot::after { content: "\26A0"; position: absolute; right: -4px; top: 2px; z-index: 2; }
+  .cloud-cell.cell-hot:not(.wind-cell)::after { display: none; }
+  /* Real cloud cells' own click-to-open warning badge -- requested
+     directly ("I'm not getting a popup when clicking the warning icon"),
+     same real-<button>-not-pseudo-element upgrade .temp-risk-badge already
+     got for temperature's own warning icon (see that rule's own comment
+     for why a pseudo-element can't carry a click handler). Same circular-
+     badge visual language/position as .cloud-badge/.temp-risk-badge. */
+  .cloud-risk-badge {
+    display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0;
+    width: 17px; height: 17px; border-radius: 50%; border: none; padding: 0; cursor: pointer;
+    background: var(--hot-border); color: #fff; font-size: var(--fs-xs); font-weight: 700;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.4), 0 0 0 2px var(--surface-2);
+    position: absolute; right: -4px; top: 2px; z-index: 2;
+  }
 
   /* Wind row's 4 tiers (windTierMajority() in app.js) -- background/baseline
      derived via color-mix() from the 4 tokens above rather than a

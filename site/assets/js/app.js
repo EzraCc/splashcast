@@ -742,7 +742,10 @@ function mapAltSliderMaxFt() {
 // per-model markers below, a separate concern).
 function resolveMapAltFt() {
   if (ASCENT_RESULTS) {
-    const mean = ascentMeanApogeeFt();
+    // state.timeMinutes directly, not a snapped hour -- ascentMeanApogeeFt()
+    // (descent3d.js) now interpolates each model's own apogee between the
+    // two bracketing real hours, same as this app already does for wind.
+    const mean = ascentMeanApogeeFt(state.timeMinutes);
     // Rounded -- ascentMeanApogeeFt() is a genuine float mean (unlike every
     // other source this function returns, which are always whole-number
     // ladder rungs/slider positions already), and this value both feeds
@@ -2265,15 +2268,19 @@ const ascentSimClose = document.getElementById('ascent-sim-close');
 const ascentSimError = document.getElementById('ascent-sim-error');
 const ascentSimLabel = document.getElementById('ascent-sim-label');
 
-// The full postMessage success payload (`{type, rocketName, parseWarnings,
-// stability, results: [{model, ascentPath}, ...], rocketConfig?}`) once a
-// sim result has come back, else null -- rocketry computes one ascent per
-// forecast model (the same wind profile each model's own descent path
-// already integrates), not a single result, so `results` is an array, one
-// entry per model. null is also the signal every ascent* consumer
-// (descent3d.js) and drawPredictedApogeeMarker() below use to fall back to
-// the plain railShiftFt() dial approximation, same role TEST_ASCENT_DATA
-// played in this session's local-only prototype.
+// `{rocketName, parseWarnings, stability, rocketConfig?, resultsByHour}`
+// once a sim result has come back, else null -- `resultsByHour` is
+// `{[hour]: [{model, ascentPath}, ...]}`, one entry per hour rocketry has
+// actually returned data for (built up incrementally by the background
+// prefetch below, see ASCENT_PREFETCH_HOURS's own comment in
+// descent3d.js), NOT a flat `results` array any more (2026-08 rewrite --
+// the old single-hour shape is why "when the time is switched, apogee
+// doesn't change" was reported: nothing re-fetched a new hour, so the
+// first-requested hour's result just stayed frozen regardless of where the
+// time slider moved afterward). null is also the signal every ascent*
+// consumer (descent3d.js) and drawPredictedApogeeMarker() below use to
+// fall back to the plain railShiftFt() dial approximation, same role
+// TEST_ASCENT_DATA played in this session's local-only prototype.
 //
 // `rocketConfig` (2026-08-16, rocketry's repeat-visit caching update,
 // `rocketry/tmp/splashcast-caching-update.md`) is optional -- present only
@@ -2285,16 +2292,107 @@ const ascentSimLabel = document.getElementById('ascent-sim-label');
 // splashcast's own side too" feature, explicitly deferred, not read here.
 let ASCENT_RESULTS = null;
 
+// Hidden iframe driving the background per-hour prefetch (2026-08) -- a
+// SEPARATE element from the visible ascentSimIframe so an in-flight
+// background reload never collides with (or gets torn down by) the
+// visitor reopening the interactive panel to change rocket/motor.
+// display:none, never shown to the visitor -- rocketry's own auto-restore/
+// auto-run (rocket-cache.ts, splashcast-caching-update.md) is what makes
+// this possible with zero UI: the SAME rocket+motor the visitor already
+// picked interactively gets remembered via rocketry's own localStorage and
+// re-simulated automatically on each reload, no new CHOICE made silently
+// on the visitor's behalf -- the "always visible iframe" rule this
+// integration was built around was specifically about preserving that
+// choice (see this plan's own Context section), which stays fully
+// interactive for the first pick; only the repeat computation for hours
+// the visitor hasn't scrubbed to yet happens unattended, confirmed
+// directly as an acceptable extension of that rule rather than a
+// violation of it. Rocketry itself needed zero changes for this -- "they
+// only digest what we send them" -- it's purely a splashcast-side
+// orchestration of the SAME single-hour contract that already existed,
+// repeated across the 0900-1500 window (deliberately hourly-only, not the
+// 15-minute drag resolution the time slider otherwise supports -- "to
+// help manage data bloat").
+const ascentPrefetchIframe = document.createElement('iframe');
+ascentPrefetchIframe.style.display = 'none';
+document.body.appendChild(ascentPrefetchIframe);
+let ascentPrefetchQueue = [];
+let ascentPrefetchHour = null; // hour currently in flight via the prefetch iframe, or null
+// Bumped on every fresh interactive result AND on reset -- an in-flight
+// background request started under a PREVIOUS rocket/motor pick (or before
+// a reset) must never write its response into a resultsByHour that no
+// longer belongs to it. ascentPrefetchStop() bumps this without needing
+// the response to actually arrive and get compared -- the queue is also
+// cleared and the iframe src reset, so nothing is left pending anyway; the
+// epoch exists for the rarer case where a response is already in flight
+// (network/compute time) at the moment of the bump.
+let ascentEpoch = 0;
+
+function ascentPrefetchNext() {
+  if (!ASCENT_RESULTS || !ascentPrefetchQueue.length) { ascentPrefetchHour = null; return; }
+  ascentPrefetchHour = ascentPrefetchQueue.shift();
+  const params = new URLSearchParams({
+    embed: '1',
+    windUrl: new URL(CURRENT_DATA_PATH, location.href).href,
+    hour: String(ascentPrefetchHour),
+    parentOrigin: location.origin,
+    // Requested directly, 2026-08 -- rocketry's own auto-restore/auto-run
+    // (see ascentPrefetchIframe's own comment) still gates on some real
+    // user-interaction signal that a background load has none of; autoSend
+    // tells it to skip waiting on that and auto-run immediately once the
+    // cached rocket+motor is restored. Only ever sent on the HIDDEN
+    // prefetch iframe -- the visible/interactive one (openAscentSimModal())
+    // deliberately does NOT set this, since that load's whole point is a
+    // real, visible, user-driven "Simulate" click (or the visitor picking
+    // a different rocket/motor), not an auto-run.
+    autoSend: '1',
+  });
+  ascentPrefetchIframe.src = `${ROCKETRY_EMBED_BASE}?${params}`;
+}
+// ASCENT_PREFETCH_HOURS (descent3d.js) minus whichever hour the interactive
+// request already covered (no need to refetch that one) and minus any hour
+// this capture doesn't actually publish wind data for (windProfileHours(),
+// same real-hours source nearestPublishedHour() itself already trusts) --
+// avoids a wasted round trip that would just come back as a
+// rocketry:error for an hour that was never going to have data, on an
+// older/incomplete capture that doesn't cover the full 8am-5pm range.
+function ascentPrefetchStart(coveredHour) {
+  ascentEpoch++;
+  const published = new Set(windProfileHours());
+  ascentPrefetchQueue = ASCENT_PREFETCH_HOURS.filter(h => h !== coveredHour && published.has(h));
+  ascentPrefetchNext();
+}
+function ascentPrefetchStop() {
+  ascentEpoch++;
+  ascentPrefetchQueue = [];
+  ascentPrefetchHour = null;
+  ascentPrefetchIframe.src = '';
+}
+
+// Which hour the currently-open (or most recently opened) interactive
+// request was built for -- the message listener uses this as the key for
+// that result in ASCENT_RESULTS.resultsByHour, since rocketry's own
+// success payload doesn't echo the hour back.
+let ascentSimRequestedHour = null;
+
 // Only built when the panel actually opens (not reactively on every
 // render) -- rebuilding the iframe src on an unrelated state change (e.g.
 // dragging the altitude slider while the panel is open) would reload the
 // embed and throw away an in-progress rocket/motor pick over there.
 function openAscentSimModal() {
   ascentSimError.style.display = 'none';
+  // Discards any in-progress background prefetch for a PREVIOUS pick --
+  // about to be superseded by whatever the visitor picks this time, so
+  // there's no reason to let it keep computing hours for a config that's
+  // either about to be confirmed again (rocketry's own cache absorbs that
+  // redundancy cheaply) or about to change entirely (in which case this
+  // work is simply wasted).
+  ascentPrefetchStop();
+  ascentSimRequestedHour = nearestPublishedHour(state.timeMinutes);
   const params = new URLSearchParams({
     embed: '1',
     windUrl: new URL(CURRENT_DATA_PATH, location.href).href,
-    hour: String(nearestPublishedHour(state.timeMinutes)),
+    hour: String(ascentSimRequestedHour),
     parentOrigin: location.origin,
   });
   ascentSimIframe.src = `${ROCKETRY_EMBED_BASE}?${params}`;
@@ -2318,6 +2416,7 @@ function closeAscentSimModal() {
 // map.
 function resetAscentSim() {
   ASCENT_RESULTS = null;
+  ascentPrefetchStop();
   railAngleControl.classList.remove('sim-active');
   railAngleControl.title = '';
   ascentSimLabel.style.display = 'none';
@@ -2345,8 +2444,42 @@ window.addEventListener('message', evt => {
   if (evt.origin !== ROCKETRY_ORIGIN) return;
   const data = evt.data;
   if (!data || typeof data !== 'object') return;
+
+  // Background prefetch responses (evt.source is the HIDDEN iframe, not
+  // the visible one) are handled entirely separately from the interactive
+  // path below -- no modal to close, no label/dial state to touch (those
+  // were already set by the interactive result that kicked this queue
+  // off), and no ascentSimError surface (a background hour failing to
+  // simulate is silently skipped, not shown to the visitor -- it just
+  // means that hour falls back to the nearest hour that DID succeed via
+  // ascentResultsForHour()'s own nearest-available lookup). Guarded on
+  // ASCENT_RESULTS/ascentPrefetchHour both being non-null -- either can go
+  // null between issuing this request and its response arriving (a reset,
+  // or a new interactive pick that already called ascentPrefetchStop()),
+  // in which case this response no longer belongs to anything and is
+  // simply dropped rather than corrupting whatever replaced it.
+  if (evt.source === ascentPrefetchIframe.contentWindow) {
+    if (data.type === 'rocketry:ascentResults' && ASCENT_RESULTS && ascentPrefetchHour !== null) {
+      ASCENT_RESULTS.resultsByHour[ascentPrefetchHour] = data.results;
+      renderDescent3D();
+      render();
+    }
+    ascentPrefetchNext();
+    return;
+  }
+
   if (data.type === 'rocketry:ascentResults') {
-    ASCENT_RESULTS = data;
+    // resultsByHour, not a flat `results` -- see ASCENT_RESULTS' own
+    // comment for why (2026-08 rewrite, "when the time is switched, apogee
+    // doesn't change"). ascentSimRequestedHour (set in openAscentSimModal())
+    // is the key rocketry's own payload doesn't otherwise carry.
+    ASCENT_RESULTS = {
+      rocketName: data.rocketName,
+      parseWarnings: data.parseWarnings,
+      stability: data.stability,
+      rocketConfig: data.rocketConfig,
+      resultsByHour: { [ascentSimRequestedHour]: data.results },
+    };
     railAngleControl.classList.add('sim-active');
     railAngleControl.title = 'Dial disabled -- a real ascent-path simulation result is active. Its own weathercocking physics already replaces the simple rail-angle shift for this apogee. Use the rocket icon to change or clear it.';
     // rocketConfig.label ("LOC-IV X2 + AeroTech K400C") is the human-
@@ -2368,6 +2501,11 @@ window.addEventListener('message', evt => {
     // apogee marker never re-checking ASCENT_RESULTS at all.
     renderDescent3D();
     render();
+    // Background-fills the rest of the 0900-1500 window, same rocket+motor
+    // -- requested directly ("we need to resend to splashcast and get a
+    // new ascent profile" once the time slider moves), see
+    // ascentPrefetchIframe's own comment for the full mechanism.
+    ascentPrefetchStart(ascentSimRequestedHour);
   } else if (data.type === 'rocketry:error') {
     ascentSimError.textContent = data.message || 'Simulation failed.';
     ascentSimError.style.display = 'block';
@@ -2767,6 +2905,31 @@ document.addEventListener('click', () => {
   if (openTempRiskBadge !== null) hideTempRiskBox();
 });
 
+// Same click-to-open/toggle-closed-on-repeat-click/click-away mechanism
+// as showTempRiskBox() above, for the cloud row's own warning badge
+// (addCloudRow()) -- a separate box/state pair rather than generalizing
+// the temp one, since its content is a per-cell model breakdown built by
+// the caller (cellContentHTML() in addCloudRow()), not a fixed lookup
+// table keyed by tier the way TEMP_RISK_COPY is.
+let openCloudRiskBadge = null;
+const cloudRiskBox = document.getElementById('cloud-risk-box');
+function showCloudRiskBox(evt, html) {
+  if (openCloudRiskBadge === evt.currentTarget) { hideCloudRiskBox(); return; }
+  cloudRiskBox.innerHTML = html;
+  const [x, y] = positionBoxAvoiding(evt, []);
+  cloudRiskBox.style.left = x + 'px';
+  cloudRiskBox.style.top = y + 'px';
+  cloudRiskBox.style.display = 'block';
+  openCloudRiskBadge = evt.currentTarget;
+}
+function hideCloudRiskBox() {
+  cloudRiskBox.style.display = 'none';
+  openCloudRiskBadge = null;
+}
+document.addEventListener('click', () => {
+  if (openCloudRiskBadge !== null) hideCloudRiskBox();
+});
+
 // Shared by addCloudRow() and addRainCell() -- three states per model,
 // split across two flex rows (barsAbove/barsBelow) so zero gets real room
 // to sit BELOW the baseline -- the one part of the cell that can never be
@@ -2878,11 +3041,12 @@ function addCloudRow(grid, layerKey, label, sub, beyondWaiver) {
       cell.appendChild(nodata);
     }
 
-    // One listener on the whole cell (not per-bar) so models with identical
-    // or near-identical values are all listed together, never hidden behind
-    // whichever mark happens to be under the cursor -- same real .tooltip
-    // used everywhere else in the viewer.
-    cell.addEventListener('mousemove', evt => {
+    // Extracted so the hover tooltip (desktop, mousemove below) and the
+    // click-to-open popup (badge, added just below) show IDENTICAL
+    // content from one place -- same "one content builder, two triggers"
+    // precedent this session's own descent-path tooltip/ascent-box split
+    // already established (descent3d.js).
+    function cellContentHTML() {
       // Two-column grid (name | %), not one row per model -- a stacked list
       // with a divider between every single model line read as a long,
       // slow-to-scan column of near-identical rows. Right-aligning the %
@@ -2898,12 +3062,45 @@ function addCloudRow(grid, layerKey, label, sub, beyondWaiver) {
       // uses (majority of reporting models >=50%) -- not a separate rule,
       // so the hover state and the at-rest cell always agree.
       const badge = hot ? '<span class="cloud-badge" style="margin-right:5px;">&#9888;</span>' : '';
-      tooltip.innerHTML = `<div class="tt-cloud-grid">${rows}</div>` +
+      return `<div class="tt-cloud-grid">${rows}</div>` +
         `<div class="tt-cloud-footer" style="color:var(--text-muted);">${badge}${label} · ${hourAmPm(h)}</div>`;
+    }
+
+    // One listener on the whole cell (not per-bar) so models with identical
+    // or near-identical values are all listed together, never hidden behind
+    // whichever mark happens to be under the cursor -- same real .tooltip
+    // used everywhere else in the viewer.
+    cell.addEventListener('mousemove', evt => {
+      tooltip.innerHTML = cellContentHTML();
       tooltip.style.display = 'block';
       positionTooltip(evt);
     });
     cell.addEventListener('mouseleave', hideTooltip);
+
+    // Real click-to-open badge, requested directly ("I'm not getting a
+    // popup when clicking the warning icon") -- the warning icon here used
+    // to be `.cloud-cell.cell-hot::after`, a CSS pseudo-element with no
+    // click handler at all (same limitation the temp row's own
+    // .temp-risk-badge was built to replace for ITS warning icon, per that
+    // feature's own comment: "not the... pseudo-element, which can't carry
+    // a click handler"). Clouds just never got the same upgrade at the
+    // time. Same click-to-open/toggle-closed-on-repeat-click/click-away
+    // mechanism showTempRiskBox() already established, reused directly
+    // rather than reinvented -- only the content differs (this cell's own
+    // per-model breakdown, via cellContentHTML() above, not a fixed
+    // 3-message tier table).
+    if (hot) {
+      const badge = document.createElement('button');
+      badge.type = 'button';
+      badge.className = 'cloud-risk-badge';
+      badge.innerHTML = '&#9888;';
+      badge.title = 'Majority of models at/above the safety-code cloud-cover threshold';
+      badge.addEventListener('click', evt => {
+        evt.stopPropagation();
+        showCloudRiskBox(evt, cellContentHTML());
+      });
+      cell.appendChild(badge);
+    }
 
     grid.appendChild(cell);
   });
@@ -5868,10 +6065,14 @@ function drawPredictedApogeeMarker() {
   if (!simActive && !(railAngleDeg ?? 0)) return;
 
   if (simActive) {
+    // state.timeMinutes directly, not a snapped hour -- same interpolated
+    // lookup renderDescent3D() uses (descent3d.js's ascentPathForModel()
+    // own comment), so the 2D and 3D views never disagree about what
+    // they're each showing at this exact slider position.
     const models = (state.selectedModels ? [...state.selectedModels] : MODEL_LEGEND_ORDER)
-      .filter(model => ascentPathForModel(model));
+      .filter(model => ascentPathForModel(model, state.timeMinutes));
     models.forEach(model => {
-      const shift = ascentApogeeFt(ascentPathForModel(model));
+      const shift = ascentApogeeFt(ascentPathForModel(model, state.timeMinutes));
       const color = MODEL_COLORS_HEX[model] || '#888';
       const [sx, sy] = ftToPx(shift.x, shift.y);
       const marker = drawMarker(svg, MODEL_SHAPES[model] || 'circle', sx, sy, 9, color);

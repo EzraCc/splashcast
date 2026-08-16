@@ -20,6 +20,9 @@ Last updated: 2026-08-16
 - [ ] Delete the local `ascent-path-test.json` fixture once the real path is verified end-to-end
 - [x] Task 7 — Display rocket + motor name when a sim result is active (`app.js`, `index.html`, `app.css`), consuming rocketry's new optional `rocketConfig` field — see "Update 2026-08-16 (2)" below
 - [x] Task 8 — Real-browser bug fixes + per-model apogee markers, found via live production testing — see "Update 2026-08-16 (3)" below
+- [x] Task 9 — Background per-hour prefetch (`app.js`, `descent3d.js`), so the time slider updates apogee without leaving a frozen result — **splashcast-side only, no rocketry change needed** (confirmed directly: "they only digest what we send them") — see "Update 2026-08-16 (4)" below
+- [x] Task 10 — `autoSend=1` param on prefetch-only requests, model-selection-aware apogee mean (rounded to nearest 10ft in 3D), and a real click-to-open popup for the Clouds row's warning badge — see "Update 2026-08-16 (5)" below. **`autoSend=1` needs matching rocketry-side support** (contract addition, not yet confirmed shipped) — everything else in this task is splashcast-only.
+- [x] Task 11 — 15-minute ascent interpolation between the two bracketing real prefetched hours, dashed/faded when shown — **splashcast-side only, no rocketry change needed** (same reasoning as Task 9) — see "Update 2026-08-16 (6)" below
 
 ## Context
 
@@ -574,6 +577,228 @@ Task 4 was built against.
 > event distinct from anything this app's own code fired) that didn't
 > reproduce with a raw dispatched event, i.e. confirmed as a test-harness
 > artifact, not a real bug.
+
+> **Update 2026-08-16 (4) — background per-hour prefetch, splashcast-side
+> only.** Reported directly: "when the time is switched, apogee doesn't
+> change. We need to resend to splashcast and get a new ascent profile."
+> Confirmed why: `rocketry:ascentResults` only ever carried ONE hour's
+> results (whichever `hour` the panel was opened with), and nothing
+> re-triggered a new simulate call as the time slider moved afterward, so
+> the first-requested hour's result just stayed frozen regardless.
+>
+> **First considered, then dropped**: extending rocketry's own contract to
+> return an array of hours in one response. Corrected directly: rocketry
+> "only digest[s] what we send them" — it has no concept of "give me
+> several hours," it just simulates whatever single `windUrl`+`hour` it's
+> given. **No rocketry-side change was needed at all.** The fix is entirely
+> a splashcast-side orchestration of the SAME single-hour contract that
+> already existed, repeated across the 0900-1500 window and cached locally.
+>
+> **Design, confirmed directly**: after the first visible/interactive
+> simulate returns, splashcast automatically drives a **hidden** iframe
+> (`ascentPrefetchIframe`, `app.js` — a separate element from the visible
+> `ascentSimIframe`) through the other 6 hours in `{9,10,11,12,13,14,15}`,
+> one at a time, same rocket+motor auto-restored via rocketry's own
+> existing caching (`splashcast-caching-update.md`) with zero new UI
+> interaction. Deliberately **hourly-only, 0900-1500** — not the 15-minute
+> drag resolution the time slider otherwise supports ("I don't want 15
+> minute resolution with real flight sims... to help manage data bloat").
+> Confirmed this doesn't violate the plan's own earlier "always visible
+> iframe" decision (Context, above): that rule was about preserving the
+> visitor's real CHOICE of rocket+motor, which stays fully interactive for
+> the first pick; the 6 background reruns make no new choice on the
+> visitor's behalf, they just repeat an already-made one for hours not yet
+> viewed.
+>
+> **Implementation**:
+> - `ASCENT_RESULTS.resultsByHour` (`{[hour]: [{model,ascentPath},...]}`)
+>   replaces the old flat `.results` — the interactive result seeds one
+>   entry (keyed by `ascentSimRequestedHour`, tracked since rocketry's own
+>   payload doesn't echo the hour back), then `ascentPrefetchStart()` queues
+>   the other 6 and `ascentPrefetchNext()` walks them one at a time,
+>   reloading the hidden iframe's `src` per hour.
+> - The message listener now branches on `evt.source` — `ascentSimIframe`
+>   (interactive: closes the modal, sets the dial/label state, kicks off
+>   the prefetch queue) vs. `ascentPrefetchIframe` (background: stores the
+>   hour silently, re-renders, advances the queue; a `rocketry:error` for a
+>   background hour is silently skipped, not shown to the visitor — that
+>   hour just stays unavailable, see `ascentResultsForHour()` below).
+> - An `ascentEpoch` counter, bumped by `ascentPrefetchStart()`/
+>   `ascentPrefetchStop()`, guards a stale in-flight background response
+>   (started under a since-replaced or since-reset rocket/motor) from
+>   writing into a `resultsByHour` it no longer belongs to.
+> - New `ascentResultsForHour(hour)` (descent3d.js): clamps to [9,15] first
+>   (confirmed directly: outside 9am-3pm the sim result stays the
+>   active/authoritative one, clamped to the nearest edge hour, rather than
+>   reverting to the manual dial), then picks the NEAREST hour actually
+>   present in `resultsByHour` yet (not just nearest in the abstract 9-15
+>   range) — this is what keeps the map showing something sim-driven
+>   immediately after the first interactive result, before the background
+>   prefetch has finished filling in the rest.
+> - `ascentPathForModel(model, hour)` and `ascentMeanApogeeFt(hour)` both
+>   gained an explicit `hour` argument; every render-time caller
+>   (`renderDescent3D()`, `resolveMapAltFt()`, `drawPredictedApogeeMarker()`,
+>   `path3dDrawScene()`'s per-model loop) computes
+>   `nearestPublishedHour(state.timeMinutes)` fresh and passes it through.
+>   `ascentBoxHTML()` (the click/hover info popup) recomputes the current
+>   hour live at call time instead of threading it through hit-point
+>   objects — it only ever runs interactively, so "whatever's on screen
+>   right now" is always correct with no staleness risk.
+>
+> **Verified** via headless-Chromium (Playwright), network-isolated (real
+> `ezracc.github.io` traffic blocked — confirmed it's actually live and was
+> answering the hidden iframe's real navigations during an early test run,
+> which had to be isolated out to get a clean result): interactive result
+> seeds hour 9, prefetch queue drains through 10→15 in order via synthetic
+> per-hour responses, all 7 hours end up in `resultsByHour`; a direct check
+> with distinct fake altitudes at hours 9/12/15 confirmed
+> `ascentMeanApogeeFt()` picks the exactly-matching hour when scrubbed
+> there, the correct NEARER neighbor when scrubbed between two available
+> hours, and clamps correctly outside 9-15 (7am and 5pm both resolved to
+> hour 9's/15's own data respectively, per the confirmed clamp-not-revert
+> decision); closing the panel mid-prefetch (`resetAscentSim()`) correctly
+> clears the queue, bumps the epoch, and a stale in-flight response
+> arriving after that reset is dropped without resurrecting
+> `ASCENT_RESULTS`. Zero console errors throughout. Full real-rocketry
+> round trip (interactive pick + real background prefetch against the live
+> deployed rocketry embed) still not done — same standing blocker as
+> Task 5's own unchecked items, rocketry's real embed page behavior can
+> only be confirmed once tested together live.
+
+> **Update 2026-08-16 (5) — autoSend param, model-aware apogee mean, cloud
+> badge popup.** Three items, requested directly in one message:
+>
+> 1. **`autoSend=1`** — the background prefetch requests (`ascentPrefetchNext()`,
+>    app.js) now send `autoSend=1` alongside the existing `embed`/`windUrl`/
+>    `hour`/`parentOrigin` params. Rocketry's own auto-restore/auto-run
+>    apparently still gates on some real user-interaction signal a hidden
+>    background load has none of; this tells it to skip that and auto-run
+>    immediately once the cached rocket+motor is restored. **Only sent on
+>    the hidden prefetch iframe** — `openAscentSimModal()`'s own visible/
+>    interactive request deliberately does NOT set it, since that load's
+>    whole point is a real "Simulate" click or a fresh rocket/motor pick,
+>    not an auto-run. Needs matching rocketry-side support to actually take
+>    effect — noted as Task 10's own open item above.
+> 2. **Model-aware apogee mean.** `ascentMeanApogeeFt(hour)` (descent3d.js)
+>    now filters to `state.selectedModels` before averaging (falling back
+>    to every model in that hour's results if the filtered set would be
+>    empty) — requested directly: "apogee may differ between forecasts
+>    because of weathercocking, which eats altitude... if only HRRR is
+>    showing, then show it. If they change from 6 to 4 models, recalc it."
+>    No new wiring needed for the "recalc on toggle" part -- toggling a
+>    model already triggers a re-render, which already calls
+>    `ascentMeanApogeeFt()` fresh every time. Verified directly: with HRRR
+>    solo'd, `ascentMeanApogeeFt()`'s result matches HRRR's own individual
+>    `ascentApogeeFt()` output exactly (x/y/altFt all identical).
+> 3. **Nearest-10 rounding, 3D apogee label only.** `path3dDrawApogeeLabel()`
+>    now displays `Math.round(altFt / 10) * 10` instead of `Math.round(altFt)`
+>    — "~5,280', round it to the nearest 10... these are estimators and
+>    shouldn't pretend to be to-the-foot accurate." Only the printed text
+>    rounds; the label's screen POSITION still uses the exact value, so it
+>    stays visually anchored to the real marker point. Scoped to the 3D
+>    label specifically (not the 2D altitude readout or the per-model
+>    marker tooltips), matching where this was asked.
+> 4. **Cloud warning badge, real click-to-open popup.** Reported directly:
+>    "I'm not getting a popup when clicking the warning icon" for the
+>    Clouds row's >=50%-cover flag. Root cause: that icon was always
+>    `.cloud-cell.cell-hot::after`, a CSS pseudo-element with no click
+>    handler at all — the exact same limitation `.temp-risk-badge`
+>    (temperature's own warning icon) was built to replace, documented
+>    directly in that feature's own CSS comment ("not the... pseudo-
+>    element, which can't carry a click handler") — clouds just never got
+>    the same upgrade. Fixed by giving cloud cells a real
+>    `<button class="cloud-risk-badge">` (`addCloudRow()`, app.js) with the
+>    exact same click-to-open/toggle-closed-on-repeat-click/click-away
+>    mechanism `showTempRiskBox()` already established (`showCloudRiskBox()`,
+>    new `#cloud-risk-box` element, index.html), showing the cell's own
+>    per-model breakdown (same content the hover tooltip already built,
+>    extracted into a shared `cellContentHTML()` so hover and click always
+>    agree). The old `::after` pseudo-element is suppressed specifically
+>    for non-`.wind-cell` cells (`.cloud-cell.cell-hot:not(.wind-cell)::after
+>    { display: none; }`) so it doesn't double up with the new button —
+>    **wind cells keep their existing (still unclickable) badge exactly as
+>    before**, out of scope for this fix (only Clouds was reported).
+>
+> **Verified** via headless-Chromium (Playwright): prefetch iframe's `src`
+> contains `autoSend=1`, the interactive iframe's does not; `ascentMeanApogeeFt()`
+> with only HRRR selected returns exactly HRRR's own individual apogee;
+> the cloud badge opens the popup on click, closes on click-away, and
+> toggles closed on a repeat click on the same badge; exactly 1 badge
+> rendered for the 1 real hot cell present (no stray/duplicate badges);
+> wind/temp's own existing badges visually unaffected. Zero console errors.
+
+> **Update 2026-08-16 (6) — 15-minute ascent interpolation.** Requested
+> directly: "can we interpolate the 15 minute increments between hours for
+> the ascent using the before/after bracketing that we do for descents?
+> ...if we can allow full functionality on the 15 minute increments for
+> ascent similarly, why not." Confirmed the two aren't quite symmetric
+> first: descent blends the WIND INPUT (`blendProfilesForTime()`, app.js)
+> then cheaply re-simulates client-side; ascent's own physics only exists
+> in rocketry, cross-origin, so there's no client-side "re-simulate"
+> available — this blends the two real ascentPath OUTPUTS instead.
+> Confirmed acceptable directly: "the x,y,z delta is likely to come out
+> similarly... we'll fade or dash the line on the non-sim points to show
+> they were approximated, not simulated."
+>
+> **Implementation** (`descent3d.js`): `ascentPathForModel(model, timeMinutes)`
+> now takes RAW time (not a snapped hour) and brackets the two real hours
+> THIS MODEL has prefetched data for that straddle it — same bracket-
+> finding shape `blendProfilesForTime()` already established — then
+> linearly interpolates between the two real `ascentPath` outputs. Only
+> the fields any splashcast consumer actually reads get blended (waypoint
+> position/altitude/speed/time, `path[]` points, `windShear.ground`
+> speed+direction — the last via the same circular-shortest-path idiom
+> `blendProfilesForTime()` uses for wind, not a naive linear blend that
+> could cross the wrong way around the compass); `tiltFromVerticalDeg`/
+> `aoaDeg`/per-waypoint `wind`/`segments`/`windShear.aloft` are copied
+> unchanged since nothing reads them. The continuous `path[]` polyline is
+> resampled onto a shared index grid before blending across hours (pathA/
+> pathB aren't guaranteed the same point count — rocketry's integration
+> step count isn't guaranteed wind-independent). Returns a real
+> ascentPath-shaped object tagged `.interpolated` (true when genuinely
+> blended between two different hours; false on an exact-hour hit
+> anywhere in the range, the degenerate single-hour case, AND the
+> outside-0900-1500 clamp — that last one is real, unmodified data for
+> its own hour just held past its valid window, a different kind of
+> approximation than an inter-hour blend, not flagged the same way).
+> `ascentMeanApogeeFt(timeMinutes)` also switched to raw time so the 3D
+> apogee label/2D readout/descent-simulation start altitude all stay
+> consistent with whatever the ascent curves themselves show at that exact
+> slider position, not a separately-snapped value.
+>
+> **Visual**: `path3dDrawAscentPath()` dashes (`[5,4]`, same pattern/intent
+> `path3dDrawBoostLine()` already uses for the dial's own tan(angle) stand-
+> in) and fades (`globalAlpha 0.6`) a model's curve whenever
+> `ascentPath.interpolated` is true — scoped to the line itself, per
+> direction ("fade or dash the line"); the weathercock/burnout click
+> points and ground apogee marker stay full-opacity/solid, since they're
+> still real interactive info points showing genuine (interpolated but
+> meaningful) numbers.
+>
+> **A real bug found and fixed during verification**: the first pass
+> always took the interpolation branch and computed `weightB`, which
+> numerically lands on exactly 0 or 1 at a real hour boundary (so the
+> VALUE came out right) but never set `interpolated: false` for it except
+> in the single-hour degenerate case — confirmed directly via a browser
+> test (every exact-hour hit reported `interpolated: true`). Fixed by
+> explicitly checking `clamped === hourA*60` / `clamped === hourB*60`
+> before falling through to the blend.
+>
+> **Verified** via headless-Chromium (Playwright): a synthetic 3-hour
+> dataset (9/10/15, distinct altitudes, deliberately different `path[]`
+> point counts on two of them) confirmed exact-hour hits at every
+> boundary (start/middle/end of the available range) report
+> `interpolated: false` with the exact real value; 9:15/9:30 (quarter/half
+> between 9-10) and 12:30 (the midpoint of the 10→15 gap, since 11-14 had
+> no data in this synthetic set) all interpolate to the exact expected
+> linear value; outside 0900-1500 (7am/5pm) clamp to their real edge
+> hour's data with `interpolated: false`; the circular wind-direction
+> blend lands on the correct shorter-arc midpoint. Against the real sample
+> payload prefetched across all 7 real hours: scrubbing 15-minute
+> increments from 9am-3pm toggles `interpolated` correctly at every step
+> (false only exactly on the hour), zero console errors. Directly
+> instrumented `ctx.setLineDash` to confirm zero dash calls at an exact
+> hour and a dash call for every visible model at a mid-hour position.
 
 ## Explicitly out of scope for this plan
 

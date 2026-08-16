@@ -69,12 +69,186 @@
 // offset works, so the two aren't reconcilable as-is.
 const ASCENT_M_TO_FT = 3.28084; // same literal pipeline/config.py's own elev_ft_for_site() uses
 
-// {model: ascentPath} for the given model, or null if rocketry didn't
-// return one for it (e.g. 'actual' -- History mode's real-flight overlay --
-// never has a matching sim result).
-function ascentPathForModel(model) {
-  if (!ASCENT_RESULTS) return null;
-  return ASCENT_RESULTS.results.find(r => r.model === model)?.ascentPath ?? null;
+// PREFETCH_HOURS -- ASCENT_RESULTS.resultsByHour (2026-08, hour-aware
+// rewrite) is `{[hour]: [{model, ascentPath}, ...]}`, keyed by hour, not a
+// flat `results` array any more -- reported directly: "when the time is
+// switched, apogee doesn't change," because the old single-hour contract
+// froze whatever hour the panel happened to be opened at. Rocketry itself
+// didn't need to change at all ("they only digest what we send them") --
+// app.js's message listener now drives a background prefetch through the
+// hidden #ascent-sim-prefetch-iframe, one hour at a time, same rocket/motor
+// auto-restored via rocketry's own existing caching, and stores each
+// result here as it arrives. Deliberately hourly-only, 0900-1500 (per
+// direction, "I don't want 15 minute resolution... to help manage data
+// bloat") -- NOT the full 15-minute drag resolution the time slider
+// otherwise supports elsewhere in this app.
+const ASCENT_PREFETCH_HOURS = [9, 10, 11, 12, 13, 14, 15];
+
+// Every real hour ASCENT_RESULTS.resultsByHour has DATA FOR THIS SPECIFIC
+// MODEL -- a model can be present in some hours' results and missing from
+// others (e.g. a background-prefetch hour that errored, or 'actual',
+// History's real-flight overlay, which never has a matching sim result at
+// all), same per-model tolerance this file always had. Ascending, for the
+// bracket-finding below.
+function ascentAvailableHoursForModel(model) {
+  if (!ASCENT_RESULTS) return [];
+  return Object.keys(ASCENT_RESULTS.resultsByHour)
+    .map(Number)
+    .filter(h => ASCENT_RESULTS.resultsByHour[h].some(r => r.model === model))
+    .sort((a, b) => a - b);
+}
+
+// {model: ascentPath} for the given model at the given RAW time (not a
+// snapped/clamped hour any more -- 2026-08, requested directly: "can we
+// interpolate the 15 minute increments between hours for the ascent using
+// the before/after bracketing that we do for descents?"). Brackets the two
+// real hours THIS MODEL has data for that straddle timeMinutes -- same
+// bracket-finding shape blendProfilesForTime() (app.js) already
+// established for wind -- and linearly interpolates between their two
+// real ascentPath OUTPUTS when the time doesn't land exactly on one.
+// Unlike descent (which blends the wind INPUT and cheaply re-simulates
+// client-side), ascent's own physics only exists in rocketry, cross-
+// origin -- there's no "re-simulate" available here, so this blends the
+// two real outputs directly instead. Confirmed acceptable directly: "the
+// x,y,z delta is likely to come out similarly... we'll fade or dash the
+// line on the non-sim points to show they were approximated, not
+// simulated" -- same "not real data, just linear math" honesty this app
+// already applies to wind blending, extended to ascent's own output
+// instead of its input. Always returns a real ascentPath-shaped object
+// (or null if this model has no data at all), tagged `.interpolated` --
+// true when blended between two hours, false when it lands exactly on one
+// real hour or clamps to the nearest edge hour outside this model's own
+// range (same clamp-not-revert behavior already established for time
+// outside 0900-1500) -- ascentIsInterpolated is never left undefined, so
+// callers can check it directly. path3dDrawAscentPath() reads this tag to
+// dash/fade the curve; callers that just want a number (ascentApogeeFt()
+// etc.) can ignore it entirely.
+function ascentPathForModel(model, timeMinutes) {
+  const hours = ascentAvailableHoursForModel(model);
+  if (!hours.length) return null;
+
+  const clamped = Math.max(hours[0] * 60, Math.min(hours[hours.length - 1] * 60, timeMinutes));
+  let hourA = hours[0], hourB = hours[hours.length - 1];
+  for (let i = 0; i < hours.length - 1; i++) {
+    if (hours[i] * 60 <= clamped && clamped <= hours[i + 1] * 60) {
+      hourA = hours[i]; hourB = hours[i + 1];
+      break;
+    }
+  }
+  const pathA = ASCENT_RESULTS.resultsByHour[hourA].find(r => r.model === model).ascentPath;
+  // Exact hit on hourA (covers the single-hour case, hourA===hourB, too)
+  // -- NOT just hourA===hourB alone, which only ever caught the single-
+  // hour degenerate case and missed every OTHER exact-hour landing (e.g.
+  // clamped === hourA*60 in the middle of a multi-hour range still finds
+  // a real bracket [hourA,hourB] via the loop above, so hourA!==hourB
+  // there even though no actual blending should happen) -- confirmed
+  // directly via a real test: without this check, `interpolated` was
+  // `true` on every exact-hour hit, weightB just happened to numerically
+  // land on 0, an incorrect label even though the VALUE was already right.
+  if (clamped === hourA * 60) return Object.assign({}, pathA, { interpolated: false });
+  const pathB = ASCENT_RESULTS.resultsByHour[hourB].find(r => r.model === model).ascentPath;
+  // Exact hit on hourB, same reasoning (also covers hourA===hourB, since
+  // clamped then equals both hourA*60 and hourB*60 -- caught above first).
+  if (clamped === hourB * 60) return Object.assign({}, pathB, { interpolated: false });
+  const weightB = (clamped - hourA * 60) / ((hourB - hourA) * 60);
+  return ascentInterpolatePath(pathA, pathB, weightB);
+}
+
+function ascentLerp(a, b, f) { return a + (b - a) * f; }
+// Same circular-shortest-path idiom blendProfilesForTime() (app.js)
+// already uses for wind direction -- a straight linear blend of two
+// compass bearings can cross the wrong way around the circle (10deg and
+// 350deg averaging to 180deg instead of 0deg), this takes the shorter arc.
+function ascentLerpDirDeg(d0, d1, f) {
+  const diff = (((d1 - d0 + 180) % 360) + 360) % 360 - 180;
+  return (((d0 + f * diff) % 360) + 360) % 360;
+}
+
+// Interpolates the 4 named waypoints (LIFTOFF/LAUNCHROD/BURNOUT/APOGEE --
+// always the same fixed set regardless of wind, matched by `type`) between
+// two real ascentPaths. Only the fields any splashcast consumer actually
+// reads get blended (position, altitude, speed, time) -- tiltFromVerticalDeg/
+// aoaDeg/wind are copied from `wpA` unchanged, since nothing here reads
+// them (ascentPositionTiltDeg() computes its own geometric angle from
+// position, not from tiltFromVerticalDeg -- see that function's own
+// comment for why those two numbers can disagree).
+function ascentInterpolateWaypoints(wpA, wpB, f) {
+  return wpA.map(a => {
+    const b = wpB.find(w => w.type === a.type);
+    if (!b) return a; // shouldn't happen -- the 4 types are always the same set
+    return Object.assign({}, a, {
+      time: ascentLerp(a.time, b.time, f),
+      position: {
+        x: ascentLerp(a.position.x, b.position.x, f),
+        y: ascentLerp(a.position.y, b.position.y, f),
+        z: ascentLerp(a.position.z, b.position.z, f),
+      },
+      altitude: ascentLerp(a.altitude, b.altitude, f),
+      speed: ascentLerp(a.speed, b.speed, f),
+    });
+  });
+}
+
+// One sample at a fractional INDEX position (0=first point, 1=last) along
+// a path[] polyline, interpolated between its two nearest real points --
+// NOT a real-time or arc-length position, just "how far along this
+// array." Needed because pathA/pathB's own point counts aren't guaranteed
+// equal (rocketry's integration step count isn't guaranteed wind-
+// independent) -- ascentInterpolatePathPoints() below resamples both
+// sides onto a shared index grid via this before blending across hours.
+function ascentSampleAlongPath(path, frac) {
+  const idx = frac * (path.length - 1);
+  const i0 = Math.floor(idx), i1 = Math.min(path.length - 1, i0 + 1);
+  const t = idx - i0;
+  const p0 = path[i0], p1 = path[i1];
+  return {
+    time: ascentLerp(p0.time, p1.time, t),
+    position: {
+      x: ascentLerp(p0.position.x, p1.position.x, t),
+      y: ascentLerp(p0.position.y, p1.position.y, t),
+      z: ascentLerp(p0.position.z, p1.position.z, t),
+    },
+    altitude: ascentLerp(p0.altitude, p1.altitude, t),
+  };
+}
+function ascentInterpolatePathPoints(pathA, pathB, f) {
+  const n = Math.max(pathA.length, pathB.length);
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    const frac = n === 1 ? 0 : i / (n - 1);
+    const sa = ascentSampleAlongPath(pathA, frac);
+    const sb = ascentSampleAlongPath(pathB, frac);
+    out.push({
+      time: ascentLerp(sa.time, sb.time, f),
+      position: {
+        x: ascentLerp(sa.position.x, sb.position.x, f),
+        y: ascentLerp(sa.position.y, sb.position.y, f),
+        z: ascentLerp(sa.position.z, sb.position.z, f),
+      },
+      altitude: ascentLerp(sa.altitude, sb.altitude, f),
+    });
+  }
+  return out;
+}
+
+function ascentInterpolatePath(pathA, pathB, f) {
+  return {
+    waypoints: ascentInterpolateWaypoints(pathA.waypoints, pathB.waypoints, f),
+    path: ascentInterpolatePathPoints(pathA.path, pathB.path, f),
+    segments: pathA.segments, // structural only, not numerically consumed
+    windShear: {
+      ground: {
+        vx: ascentLerp(pathA.windShear.ground.vx, pathB.windShear.ground.vx, f),
+        vy: ascentLerp(pathA.windShear.ground.vy, pathB.windShear.ground.vy, f),
+        speed: ascentLerp(pathA.windShear.ground.speed, pathB.windShear.ground.speed, f),
+        directionFromDeg: ascentLerpDirDeg(pathA.windShear.ground.directionFromDeg, pathB.windShear.ground.directionFromDeg, f),
+      },
+      aloft: pathA.windShear.aloft, // not read by any splashcast consumer, structural only
+      speedDeltaMs: pathA.windShear.speedDeltaMs,
+      directionDeltaDeg: pathA.windShear.directionDeltaDeg,
+    },
+    interpolated: true,
+  };
 }
 
 // (x_ft, y_ft) = a specific model's own real sim APOGEE offset from the
@@ -97,19 +271,43 @@ function ascentApogeeFt(ascentPath) {
   };
 }
 
-// Mean across every model in the current sim result -- used wherever ONE
-// representative shift/altitude is needed rather than a specific model's
-// own value: the 2D map's single ground marker (app.js), and the 3D
-// scene's overall Z-axis scaling/apogee-altitude label/the descent-side
-// simulation's own starting altitude (renderDescent3D() -- descentPathsFor()
-// still runs once for all models, same as before this change, not
-// re-simulated per model). Apogee altitude/position barely varies model to
-// model in practice (real wind-shear/weathercocking differences, tenths of
-// a percent, not simulation noise) -- picking an arbitrary "first" model
-// for a value that has to represent all of them would be misleading.
-function ascentMeanApogeeFt() {
-  if (!ASCENT_RESULTS || !ASCENT_RESULTS.results.length) return null;
-  const all = ASCENT_RESULTS.results.map(r => ascentApogeeFt(r.ascentPath));
+// Mean across every CURRENTLY SELECTED model in the current sim result --
+// used wherever ONE representative shift/altitude is needed rather than a
+// specific model's own value: the 2D map's single ground marker (app.js),
+// and the 3D scene's overall Z-axis scaling/apogee-altitude label/the
+// descent-side simulation's own starting altitude (renderDescent3D() --
+// descentPathsFor() still runs once for all models, same as before this
+// change, not re-simulated per model). Filtered by state.selectedModels
+// (2026-08, requested directly: "if only HRRR is showing, then show it...
+// if they change from 6 to 4 models, recalc it") -- apogee differs
+// meaningfully between models because of weathercocking (which eats real
+// altitude, not just position), so a mean across models the visitor has
+// deliberately hidden would misrepresent what's actually on screen. Falls
+// back to every model with data when nothing is deselected
+// (state.selectedModels === null, same "null means everything" convention
+// state.selectedModels uses everywhere else in this app) or when the
+// filtered set would otherwise be empty (e.g. the only selected model has
+// no sim result at all, same as 'actual' never having one) -- an apogee
+// number from a real model that isn't even showing beats no number at
+// all. Takes raw timeMinutes now (2026-08, same interpolation rewrite as
+// ascentPathForModel() above), not a snapped hour -- each model's own
+// ascentApogeeFt() is computed from its own (possibly interpolated)
+// ascentPathForModel() at the exact slider position, so this mean stays
+// consistent with whatever the ascent curves themselves are showing at
+// that same instant, not a separately-snapped value.
+function ascentMeanApogeeFt(timeMinutes) {
+  if (!ASCENT_RESULTS) return null;
+  const allModels = [...new Set(
+    Object.values(ASCENT_RESULTS.resultsByHour).flatMap(results => results.map(r => r.model))
+  )];
+  if (!allModels.length) return null;
+  const selected = state.selectedModels ? allModels.filter(m => state.selectedModels.has(m)) : allModels;
+  const usable = selected.length ? selected : allModels;
+  const all = usable
+    .map(m => ascentPathForModel(m, timeMinutes))
+    .filter(Boolean)
+    .map(ascentApogeeFt);
+  if (!all.length) return null;
   const n = all.length;
   return {
     x: all.reduce((s, a) => s + a.x, 0) / n,
@@ -181,7 +379,12 @@ function ascentWarningsHTML() {
 // "this model's own ascent," not a generic/unlabeled one now that several
 // can be open (one at a time, but for different models) across a session.
 function ascentBoxHTML(kind, model) {
-  const ascentPath = ascentPathForModel(model);
+  // state.timeMinutes read fresh here rather than threaded through
+  // ascentHitPoints/the click event -- this only ever runs interactively
+  // (hover/click), so "whatever's on screen right now" is always the
+  // correct answer, no staleness risk the way a value captured at draw
+  // time could have if the slider moved between render and click.
+  const ascentPath = ascentPathForModel(model, state.timeMinutes);
   const launchrod = ascentPath.waypoints.find(w => w.type === 'LAUNCHROD');
   const burnout = ascentPath.waypoints.find(w => w.type === 'BURNOUT');
   const apogee = ascentPath.waypoints.find(w => w.type === 'APOGEE');
@@ -281,6 +484,18 @@ function path3dDrawAscentPath(toScreen, model, ascentPath) {
   ctx.save();
   ctx.strokeStyle = color;
   ctx.lineWidth = 2;
+  // Dashed + faded when this curve was INTERPOLATED between two real
+  // simulated hours (ascentPath.interpolated, see ascentPathForModel()'s
+  // own comment) rather than landing exactly on one -- requested directly:
+  // "fade or dash the line on the non-sim points to show they were
+  // approximated, not simulated." Same dash pattern/intent
+  // path3dDrawBoostLine() already uses for the dial's own tan(angle)
+  // stand-in (a different kind of "not a real sim," same visual language:
+  // dashed means "derived, not directly computed here").
+  if (ascentPath.interpolated) {
+    ctx.setLineDash([5, 4]);
+    ctx.globalAlpha = 0.6;
+  }
   ctx.beginPath();
   ascentPath.path.forEach((pt, i) => {
     const [sx, sy] = toScreen(pt.position.x * ASCENT_M_TO_FT, pt.position.y * ASCENT_M_TO_FT, pt.altitude * ASCENT_M_TO_FT);
@@ -890,7 +1105,13 @@ function renderDescent3D() {
   // models rather than any one model's own value (this altitude feeds the
   // shared descent-path simulation below, which still runs once for every
   // model, not re-simulated per model).
-  const ascentMean = ASCENT_RESULTS ? ascentMeanApogeeFt() : null;
+  // state.timeMinutes directly, not a snapped hour any more (2026-08,
+  // interpolated between the two bracketing real hours -- see
+  // ascentPathForModel()'s own comment) -- this is what makes the descent
+  // path/apogee actually follow the slider now, instead of staying frozen
+  // at whichever hour the panel was originally opened with (reported
+  // directly: "when the time is switched, apogee doesn't change").
+  const ascentMean = ASCENT_RESULTS ? ascentMeanApogeeFt(state.timeMinutes) : null;
   const altFt = ascentMean ? ascentMean.altFt : resolveMapAltFt();
   mapAltLastResolvedFt = altFt;
   mapAltUpdateSliderUI(altFt);
@@ -1010,7 +1231,7 @@ function path3dDrawScene(paths, altFt, ascentMean) {
   const railShift = ascentMean || railShiftFt(altFt);
   function shiftForModel(model) {
     if (!ASCENT_RESULTS) return railShift; // dial-based, shared, unchanged from before this feature existed
-    const ascentPath = ascentPathForModel(model);
+    const ascentPath = ascentPathForModel(model, state.timeMinutes);
     return ascentPath ? ascentApogeeFt(ascentPath) : railShift; // per-model when rocketry returned one, else the mean (e.g. 'actual')
   }
   let maxXY = 1;
@@ -1125,7 +1346,7 @@ function path3dDrawScene(paths, altFt, ascentMean) {
   ascentHitPoints = [];
   if (ASCENT_RESULTS) {
     paths.forEach(p => {
-      const ascentPath = ascentPathForModel(p.model);
+      const ascentPath = ascentPathForModel(p.model, state.timeMinutes);
       if (ascentPath) {
         path3dDrawAscentPath(toScreen, p.model, ascentPath);
         // Ground-projected reference marker (z=0) at THIS model's own real
@@ -1184,7 +1405,17 @@ function path3dDrawScene(paths, altFt, ascentMean) {
 function path3dDrawApogeeLabel(toScreenPath, altFt) {
   const ctx = path3dCtx;
   const [ax, ay] = toScreenPath(0, 0, altFt);
-  const text = `Apogee ${Math.round(altFt).toLocaleString()} ft`;
+  // Nearest 10ft, not nearest 1ft -- requested directly ("~5,280', round
+  // it to the nearest 10... these are estimators and shouldn't pretend to
+  // be to-the-foot accurate"), particularly once a sim is active: this is
+  // a MEAN across whichever models are currently selected
+  // (ascentMeanApogeeFt()), and real per-model apogees already diverge
+  // from each other (weathercocking eats real altitude, not just
+  // position) -- displaying it to the exact foot would overstate the
+  // precision of an average that's already smoothing over that spread.
+  // Position (toScreenPath above) stays exact -- only the printed number
+  // rounds, so the label still lands visually on the real marker point.
+  const text = `Apogee ${(Math.round(altFt / 10) * 10).toLocaleString()} ft`;
 
   ctx.save();
   ctx.font = `600 12px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`;
