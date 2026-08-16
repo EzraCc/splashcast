@@ -713,11 +713,13 @@ function mapAltSliderMaxFt() {
   return DATA.altitudes[DATA.altitudes.length - 1];
 }
 
-// Priority chain, highest first: this slider's own drag override, then
-// "Specific altitude" (customAlt), then per-mode -- byTime/byHistory read
-// compareAlt (their own single-select "which altitude to compare across
-// hours/captures," unchanged); byAltitude reads whichever altitude is
-// solo'd (state.selectedAlts has exactly one member, via double-click or by
+// Priority chain, highest first: a real rocketry sim result (2026-08,
+// requested directly -- "we need to update the apogee number to match
+// it"), then this slider's own drag override, then "Specific altitude"
+// (customAlt), then per-mode -- byTime/byHistory read compareAlt (their
+// own single-select "which altitude to compare across hours/captures,"
+// unchanged); byAltitude reads whichever altitude is solo'd
+// (state.selectedAlts has exactly one member, via double-click or by
 // manually unchecking every other one) -- with several checked and none
 // solo'd there's no single answer, so this falls back to the top of the
 // site's own ladder, same as when nothing used to be pinned under the old
@@ -726,7 +728,30 @@ function mapAltSliderMaxFt() {
 // OTHER than this slider's own drag (tracked via mapAltSliderJustMoved,
 // reset every call -- so it only "protects" the override for the one
 // update immediately following an actual drag).
+//
+// The sim-result branch wins over EVERYTHING else, including a manual
+// slider drag or a solo'd ladder rung -- once a real physics answer exists
+// for "what altitude does this rocket actually reach," a manually-picked
+// number is stale, not a legitimate alternative choice, same reasoning
+// renderDescent3D() (descent3d.js) already applied to the 3D view's own
+// altitude before this fix brought the 2D map's readout/zone into line
+// with it. ascentMeanApogeeFt() (descent3d.js), not any one model's own
+// value -- same mean-across-models reasoning that function's own comment
+// gives, since this feeds ONE shared descent-simulation altitude, not a
+// plottable per-model position (that's drawPredictedApogeeMarker()'s own
+// per-model markers below, a separate concern).
 function resolveMapAltFt() {
+  if (ASCENT_RESULTS) {
+    const mean = ascentMeanApogeeFt();
+    // Rounded -- ascentMeanApogeeFt() is a genuine float mean (unlike every
+    // other source this function returns, which are always whole-number
+    // ladder rungs/slider positions already), and this value both feeds
+    // the visible readout text (mapAltReadoutText, plain toLocaleString()
+    // with no rounding of its own) and the zoneFor()/descentPathsFor()
+    // cache keys downstream -- confirmed directly via a real sim result:
+    // without this the readout showed "6,841.416 ft" verbatim.
+    if (mean) return Math.round(mean.altFt);
+  }
   const soloAlt = (state.mode === 'byAltitude' && state.selectedAlts && state.selectedAlts.size === 1)
     ? [...state.selectedAlts][0] : null;
   const sig = `${state.mode}|${state.customAlt}|${soloAlt}|${state.compareAlt}`;
@@ -1516,7 +1541,7 @@ function applyIsolation() {
     // directly ("the splash zone isn't being rendered unless it's on a 2k'
     // marker"). null here (not selectedAlts) so the one real zone-group
     // always shows, same as "nothing to filter against."
-    const selected = state.customAlt !== null ? null : state.selectedAlts;
+    const selected = (ASCENT_RESULTS || state.customAlt !== null) ? null : state.selectedAlts;
     document.querySelectorAll('.zone-group').forEach(g => {
       const alt = parseInt(g.dataset.alt, 10);
       g.style.display = (selected === null || selected.has(alt)) ? '' : 'none';
@@ -5635,9 +5660,20 @@ function render() {
     // FIRST toggle but break re-checking a previously-unchecked altitude --
     // applyIsolation() doesn't rebuild, so there'd be nothing in the DOM
     // left to un-hide.
-    altitudeZones = state.customAlt !== null
-      ? [zoneFor(state.timeMinutes, state.deploy, state.customAlt)].filter(Boolean)
-      : zonesFor(state.timeMinutes, state.deploy);
+    // A real rocketry sim result (ASCENT_RESULTS) collapses the whole
+    // ladder down to ONE zone, at resolveMapAltFt()'s own sim-priority
+    // altitude (2026-08, same "apogee number" fix as resolveMapAltFt()'s
+    // own comment -- once a real physics answer exists, the manually-
+    // checked ladder rungs are stale, same reasoning customAlt already
+    // gets below) -- mirrors what renderDescent3D() (descent3d.js) already
+    // does for the 3D view's own altitude, so the two views agree on which
+    // altitude the descent actually starts from instead of the zone here
+    // silently still reflecting whatever was checked before the sim ran.
+    altitudeZones = ASCENT_RESULTS
+      ? [zoneFor(state.timeMinutes, state.deploy, resolveMapAltFt())].filter(Boolean)
+      : state.customAlt !== null
+        ? [zoneFor(state.timeMinutes, state.deploy, state.customAlt)].filter(Boolean)
+        : zonesFor(state.timeMinutes, state.deploy);
     growBaseViewBox(altitudeZones);
   } else if (state.mode === 'byTime') {
     // Unaffected by the time slider -- this mode shows every DATA.hours
@@ -5810,26 +5846,69 @@ function drawPadMarker() {
 // is disabled/irrelevant in this mode -- see the message listener's own
 // `.sim-active` class toggle): the real sim's own weathercocking always
 // produces a nonzero ground offset, unlike the dial defaulting to 0.
-// One marker, not per-model -- unlike the 3D view's per-model ascent
-// curves (tied to each model's own descent path there), this 2D ground
-// marker predates per-model wind data being relevant to it at all and
-// stays a single summary point, using ascentMeanApogeeFt() (descent3d.js)
-// -- the mean across every model in the current sim result -- same
-// reasoning as that function's own comment for why a mean beats picking
-// one model arbitrarily.
+// One marker PER MODEL now while a sim is active (2026-08, requested
+// directly: "Apogee on 2d is still showing as a single triangle... matching
+// the color/symbols for the forecasts... so the user can tell which models
+// are predicting where" -- real per-model apogee offsets are worth
+// distinguishing here, unlike ascentMeanApogeeFt()'s mean, which stays a
+// single number feeding ONE shared descent-simulation start altitude
+// (resolveMapAltFt()), a different concern from "where does each model's
+// own apogee actually land"). Same MODEL_SHAPES/MODEL_COLORS_HEX
+// convention every landing-point marker on this map already uses (see
+// drawPoint()) plus a same-colored ring around each one (requested
+// directly) -- without it a shape+color-matched apogee marker would be
+// visually indistinguishable from an actual landing-point marker at a
+// glance; the ring is this view's equivalent of the 3D view's own hollow
+// apogee circle (path3dDrawPath()), a second visual cue for "this is
+// apogee, not a landing point." Dial mode (no sim) keeps the single
+// triangle below -- there's no per-model position to plot there at all,
+// the dial only ever produces one shared tan(angle) shift.
 function drawPredictedApogeeMarker() {
   const simActive = !!ASCENT_RESULTS;
   if (!simActive && !(railAngleDeg ?? 0)) return;
-  const meanApogee = simActive ? ascentMeanApogeeFt() : null;
-  const altFt = simActive ? meanApogee.altFt : resolveMapAltFt();
-  const shift = simActive ? meanApogee : railShiftFt(altFt);
+
+  if (simActive) {
+    const models = (state.selectedModels ? [...state.selectedModels] : MODEL_LEGEND_ORDER)
+      .filter(model => ascentPathForModel(model));
+    models.forEach(model => {
+      const shift = ascentApogeeFt(ascentPathForModel(model));
+      const color = MODEL_COLORS_HEX[model] || '#888';
+      const [sx, sy] = ftToPx(shift.x, shift.y);
+      const marker = drawMarker(svg, MODEL_SHAPES[model] || 'circle', sx, sy, 9, color);
+      marker.style.cursor = 'help';
+      const ring = document.createElementNS(ns, 'circle');
+      ring.setAttribute('cx', sx); ring.setAttribute('cy', sy); ring.setAttribute('r', 14);
+      ring.setAttribute('fill', 'none');
+      ring.setAttribute('stroke', color);
+      ring.setAttribute('stroke-width', 2);
+      ring.setAttribute('pointer-events', 'none'); // sits over the marker's own hover target, must not steal its events
+      svg.appendChild(ring);
+
+      marker.addEventListener('mousemove', evt => {
+        const dist = Math.hypot(shift.x, shift.y);
+        const heading = ascentBearingDeg(shift.x, shift.y);
+        tooltip.style.display = 'block';
+        tooltip.innerHTML = `<div class="tt-row">${modelNameHTML(model)} &mdash; predicted apogee</div>` +
+          `<div class="tt-row">${Math.round(shift.altFt).toLocaleString()} ft<br>` +
+          `offset: ${shift.x >= 0 ? '+' : ''}${shift.x.toFixed(0)} ft E, ${shift.y >= 0 ? '+' : ''}${shift.y.toFixed(0)} ft N<br>` +
+          `distance from pad: ${dist.toFixed(0)} ft<br>` +
+          `heading: ${Math.round(heading)}&deg; (${compassDir(heading)})</div>`;
+        positionTooltip(evt);
+      });
+      marker.addEventListener('mouseleave', hideTooltip);
+    });
+    return;
+  }
+
+  // Dial mode -- unchanged single triangle (no sim, no per-model data).
+  const altFt = resolveMapAltFt();
+  const shift = railShiftFt(altFt);
   const [sx, sy] = ftToPx(shift.x, shift.y);
   const marker = drawMarker(svg, 'triangle-up', sx, sy, 9, APOGEE_MARKER_COLOR, APOGEE_MARKER_STROKE);
   marker.style.cursor = 'help';
-
   marker.addEventListener('mousemove', evt => {
     const dist = Math.hypot(shift.x, shift.y);
-    const heading = simActive ? ascentBearingDeg(shift.x, shift.y) : effectiveRailHeadingDeg();
+    const heading = effectiveRailHeadingDeg();
     tooltip.style.display = 'block';
     tooltip.innerHTML = `<div class="tt-row"><b>Predicted apogee</b><br>` +
       `${Math.round(altFt).toLocaleString()} ft<br>` +

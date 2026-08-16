@@ -19,6 +19,7 @@ Last updated: 2026-08-16
 - [ ] `postMessage` origin-rejection test (mismatched origin) — blocked, same reason
 - [ ] Delete the local `ascent-path-test.json` fixture once the real path is verified end-to-end
 - [x] Task 7 — Display rocket + motor name when a sim result is active (`app.js`, `index.html`, `app.css`), consuming rocketry's new optional `rocketConfig` field — see "Update 2026-08-16 (2)" below
+- [x] Task 8 — Real-browser bug fixes + per-model apogee markers, found via live production testing — see "Update 2026-08-16 (3)" below
 
 ## Context
 
@@ -487,6 +488,92 @@ Task 4 was built against.
 > ("LOC-IV-X2") when `rocketConfig` is omitted, and clears on
 > close/reset — screenshot confirmed the pill's placement above the dial
 > reads cleanly, no overlap with the map or other controls.
+
+> **Update 2026-08-16 (3) — real-browser bugs found testing on production,
+> plus per-model apogee markers.** The user tested the live round trip on
+> production (Sunday, low traffic, explicitly accepted the risk) and
+> reported four things directly. Investigated each with a real headless-
+> Chromium session (Playwright) dispatching a synthetic `rocketry:
+> ascentResults` message against the real sample payload — no browser
+> automation had been available in this environment for any earlier task
+> in this plan, so this was the first time any of Task 6's per-model
+> rewrite actually ran in a browser at all.
+>
+> 1. **"The 3d map is not working after we get flight data" — real crash,
+>    confirmed and fixed.** `path3dDrawScene()` referenced `ascentMean` at
+>    line 919 (old numbering), a `const` that only ever existed inside
+>    `renderDescent3D()`, a separate top-level function — not a closure
+>    variable. This threw `ReferenceError: ascentMean is not defined` on
+>    **every single 3D render**, confirmed via a real browser test that
+>    reproduced the error even before any sim message arrived (plain page
+>    load with `?view=3d`) — the 3D view had been completely broken since
+>    Task 6 shipped, not just once flight data arrived; the user just
+>    hadn't opened 3D before testing the sim specifically. Fixed by passing
+>    `ascentMean` in explicitly: `path3dDrawScene(paths, altFt, ascentMean)`.
+>    This was live on production between the previous push and this fix —
+>    flagged to the user directly, not glossed over.
+> 2. **"We need to update the apogee number to match it."** `resolveMapAltFt()`
+>    (`app.js`) had no awareness of `ASCENT_RESULTS` at all — the 2D
+>    altitude readout/slider and the `byAltitude` zone(s) actually drawn
+>    still reflected whatever the manual ladder/slider was set to, even
+>    with a real sim result active, while `renderDescent3D()` (3D) already
+>    correctly overrode altitude with `ascentMeanApogeeFt().altFt`. Fixed
+>    by giving the sim result top priority in `resolveMapAltFt()`'s own
+>    chain, and collapsing `render()`'s `byAltitude` ladder to the single
+>    sim-altitude zone (`applyIsolation()` updated to match, same
+>    `selected = null` bypass `customAlt` already gets) — mirrors 3D's
+>    already-established precedent instead of inventing a new rule. Found
+>    and fixed a self-introduced bug while verifying this: the readout
+>    initially rendered `"6,841.416 ft"` (an unrounded float mean, unlike
+>    every other value this function returns) — `resolveMapAltFt()` now
+>    rounds the sim branch explicitly.
+> 3. **"Apogee on 2d is still showing as a single triangle... matching the
+>    color/symbols for the forecasts... putting a same colored circle
+>    around them."** `drawPredictedApogeeMarker()` (`app.js`) now draws one
+>    marker per model while a sim is active — `MODEL_SHAPES`/
+>    `MODEL_COLORS_HEX`, the same convention every landing-point marker
+>    already uses — plus a same-colored ring around each one. Dial mode
+>    (no sim) is unchanged: still the single triangle, since there's no
+>    per-model position to plot there.
+> 4. **"Those are ground markers, even on 3d. they can just follow the
+>    color of the line elsewhere."** New `path3dDrawGroundApogeeMarker()`
+>    (`descent3d.js`) draws each model's own apogee X/Y offset projected
+>    onto the z=0 ground plane in the 3D view too, colored to match that
+>    model's own line (no shape needed there — 3D already ties color to
+>    model via the line itself).
+> 5. **"Make sure the paths (ascent and descent) are mobile friendly and
+>    can be clicked."** Ascent points (weathercock/burnout) already had
+>    touch support (`path3dEndDrag`'s tap hit-test, built with Task 6) —
+>    **descent-path points had none at all**, hover-only
+>    (`path3dHandleHover`, explicitly desktop-only by its own prior
+>    comment). Extracted `path3dFindDescentHit()`/`path3dShowDescentTooltip()`
+>    so hover (desktop) and tap (touch, via `path3dEndDrag`) share one
+>    implementation; tap now toggles the same tooltip hover already shows,
+>    keyed by `model|sx|sy` (not object identity — `path3dHitPoints` is
+>    rebuilt every render). New `PATH3D_TAP_PROXIMITY_PX` (36px, wider than
+>    desktop hover's 22px `PROXIMITY_PX`) for both ascent and descent tap
+>    hit-testing — a finger's contact area is coarser than a mouse cursor
+>    and touch has no hover fallback to recover a near-miss.
+>
+> **Verified**, all via real headless-Chromium sessions (Playwright),
+> dispatching a synthetic `rocketry:ascentResults` message against the real
+> sample payload (rocketry's own embed page still isn't live to test
+> against end-to-end): 3D renders with zero console errors before and after
+> a sim message, both with and without a sim active; 2D readout/zone/marker
+> altitude all agree with 3D's own apogee label (all three read "6,841 ft"
+> off the same real sample); 6 per-model markers + 6 rings render in 2D,
+> color/shape-matched to the model legend; 3D ground markers render at each
+> model's own apogee offset; dial-mode (no sim) single-triangle marker
+> confirmed unchanged (regression check); a real `PointerEvent` with
+> `pointerType: 'touch'` dispatched directly at a descent-path point's
+> screen position opens the tooltip with correct content, and at an ascent
+> point opens the ascent box with correct content — both confirmed via
+> direct `PointerEvent` dispatch after Playwright's own higher-level
+> `touchscreen.tap()` helper showed a false negative (tooltip content set
+> correctly, then immediately hidden by some emulation-layer follow-up
+> event distinct from anything this app's own code fired) that didn't
+> reproduce with a raw dispatched event, i.e. confirmed as a test-harness
+> artifact, not a real bug.
 
 ## Explicitly out of scope for this plan
 

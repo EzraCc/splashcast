@@ -315,6 +315,32 @@ function path3dDrawAscentPath(toScreen, model, ascentPath) {
   );
 }
 
+// Small filled dot + same-colored ring at z=0, positioned at this model's
+// own real apogee X/Y offset -- see path3dDrawScene()'s own call-site
+// comment for why (2D's ground-plane equivalent, requested directly).
+// `toScreen`, not `toScreenPath` -- `shift` (ascentApogeeFt()'s output) is
+// already the real absolute pad-relative offset, same reasoning
+// path3dDrawAscentPath() above already documents for its own points.
+function path3dDrawGroundApogeeMarker(toScreen, model, shift) {
+  const ctx = path3dCtx;
+  const color = MODEL_COLORS_HEX[model] || '#888';
+  const [sx, sy] = toScreen(shift.x, shift.y, 0);
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(sx, sy, 4, 0, Math.PI * 2);
+  ctx.fillStyle = color;
+  ctx.fill();
+  ctx.lineWidth = 1.5;
+  ctx.strokeStyle = path3dCssVar('--point-stroke');
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.arc(sx, sy, 8, 0, Math.PI * 2);
+  ctx.lineWidth = 1.5;
+  ctx.strokeStyle = color;
+  ctx.stroke();
+  ctx.restore();
+}
+
 let path3dYaw = 0;
 let path3dPitch = 22 * Math.PI / 180;
 let path3dZoom = 1;
@@ -545,30 +571,71 @@ path3dCanvas.addEventListener('pointermove', evt => {
   hideTooltip();
   renderDescent3D();
 });
+// Wider than PROXIMITY_PX (22, tuned for a mouse cursor's single pixel) --
+// requested directly ("make sure the paths... are mobile friendly and can
+// be clicked"): a tap's actual contact area is much coarser than a mouse,
+// and touch has no hover fallback to recover a near-miss the way desktop
+// does, so a tap needs a genuinely bigger target to land reliably. Used by
+// BOTH hit-tests below (ascent points and descent-path points), not just
+// one -- same reasoning applies equally to either.
+const PATH3D_TAP_PROXIMITY_PX = 36;
+
+// Tap-toggle state for a descent-path point's tooltip -- a composite key
+// (model + rounded screen position), not a reference into path3dHitPoints
+// itself, since that array is rebuilt fresh on every render() and a stored
+// object reference would never compare equal again even for "the same"
+// point conceptually. null when no tap-opened tooltip is currently up.
+let path3dTapTooltipKey = null;
+
 function path3dEndDrag(evt) {
   if (evt && evt.pointerType === 'touch') path3dActiveTouches.delete(evt.pointerId);
-  // A genuine click (didn't move enough to count as an orbit/pan drag --
-  // same >4px threshold path3dClearViewPreset()'s own call site above
-  // already uses to draw that line) hit-tests against ascentHitPoints and
-  // opens/toggles that point's popup -- this is the ONLY way to open it on
-  // touch (no hover there), and on desktop it's a secondary path alongside
-  // path3dHandleHover()'s own hover-open below, so a second click on an
-  // already-open point closes it explicitly rather than leaving hover to
-  // silently reopen it next mousemove. Checked only on 'pointerup' (not
-  // 'pointercancel', which path3dEndDrag also handles but doesn't
-  // represent a completed click) and only once a sim result is active.
-  if (evt && evt.type === 'pointerup' && ASCENT_RESULTS && path3dDragDistPx <= 4) {
+  // A genuine click/tap (didn't move enough to count as an orbit/pan drag
+  // -- same >4px threshold path3dClearViewPreset()'s own call site above
+  // already uses to draw that line) hit-tests against ascentHitPoints
+  // FIRST, then path3dHitPoints (the descent-path lines) -- this is the
+  // ONLY way to open either on touch (no hover there), and on desktop it's
+  // a secondary path alongside path3dHandleHover()'s own hover-open below,
+  // so a second click on an already-open point closes it explicitly rather
+  // than leaving hover to silently reopen it next mousemove. Checked only
+  // on 'pointerup' (not 'pointercancel', which path3dEndDrag also handles
+  // but doesn't represent a completed click).
+  if (evt && evt.type === 'pointerup' && path3dDragDistPx <= 4) {
     const rect = path3dCanvas.getBoundingClientRect();
     const mx = evt.clientX - rect.left, my = evt.clientY - rect.top;
-    let best = null, bestDist = Infinity;
-    ascentHitPoints.forEach(h => {
-      const d = Math.hypot(h.sx - mx, h.sy - my);
-      if (d < bestDist) { bestDist = d; best = h; }
-    });
-    if (best && bestDist <= PROXIMITY_PX) {
-      if (ascentBoxOpenKind === `${best.model}|${best.kind}`) hideAscentBox();
-      else showAscentBox(evt, best.kind, best.model);
-    } else hideAscentBox();
+
+    let ascentHit = false;
+    if (ASCENT_RESULTS) {
+      let best = null, bestDist = Infinity;
+      ascentHitPoints.forEach(h => {
+        const d = Math.hypot(h.sx - mx, h.sy - my);
+        if (d < bestDist) { bestDist = d; best = h; }
+      });
+      if (best && bestDist <= PATH3D_TAP_PROXIMITY_PX) {
+        ascentHit = true;
+        if (ascentBoxOpenKind === `${best.model}|${best.kind}`) hideAscentBox();
+        else showAscentBox(evt, best.kind, best.model);
+      }
+    }
+
+    // Only reached when the tap didn't already hit an ascent point --
+    // same "ascent checked first" precedence path3dHandleHover()'s own
+    // hover path already establishes, so a tap near both never shows both
+    // at once. Previously this whole branch didn't exist at all -- a
+    // descent-path point (real wind-drift line, every 3D render, sim
+    // active or not) had NO touch affordance whatsoever, only the desktop-
+    // only hover path below could ever show it.
+    if (!ascentHit) {
+      const hit = path3dFindDescentHit(mx, my, PATH3D_TAP_PROXIMITY_PX);
+      if (hit) {
+        const key = `${hit.model}|${Math.round(hit.sx)}|${Math.round(hit.sy)}`;
+        if (path3dTapTooltipKey === key) { hideTooltip(); path3dTapTooltipKey = null; }
+        else { path3dShowDescentTooltip(evt, hit); path3dTapTooltipKey = key; }
+      } else {
+        hideTooltip();
+        path3dTapTooltipKey = null;
+        hideAscentBox();
+      }
+    }
   }
   path3dDragging = false;
   path3dPanMode = false;
@@ -589,6 +656,7 @@ path3dCanvas.addEventListener('pointercancel', path3dEndDrag);
 path3dCanvas.addEventListener('click', evt => evt.stopPropagation());
 path3dCanvas.addEventListener('mouseleave', () => {
   hideTooltip();
+  path3dTapTooltipKey = null;
   // Closes a hover-opened ascent-box when the pointer leaves the canvas
   // entirely -- without this it'd stay stuck open (no more mousemove
   // events to trigger path3dHandleHover()'s own close check) until the
@@ -617,6 +685,50 @@ path3dCanvas.addEventListener('wheel', evt => {
 // something nearby, not just the sparse real-level dots.
 let path3dHitPoints = [];
 
+// Nearest path3dHitPoints entry within maxDist, or null -- shared by the
+// desktop hover path (path3dHandleHover, PROXIMITY_PX) and the touch/click
+// path (path3dEndDrag, the wider PATH3D_TAP_PROXIMITY_PX), so there's one
+// hit-test to keep correct instead of two copies drifting apart.
+function path3dFindDescentHit(mx, my, maxDist) {
+  let best = null, bestDist = Infinity;
+  for (const h of path3dHitPoints) {
+    const d = Math.hypot(h.sx - mx, h.sy - my);
+    if (d < bestDist) { bestDist = d; best = h; }
+  }
+  return (best && bestDist <= maxDist) ? best : null;
+}
+
+// Renders the shared #tooltip for a descent-path hit -- extracted so both
+// the hover path below and path3dEndDrag's own tap-to-toggle path (touch
+// has no hover) show identical content from one place.
+function path3dShowDescentTooltip(evt, hit) {
+  // 'actual' (3D History's T+1 flight) has no entry in DATA.wind_profiles --
+  // that's only ever forecast models, keyed off the currently-selected
+  // capture. Its own profile lives separately (HISTORY.actual_wind_profile,
+  // independent of which capture is pinned -- see historyActualPathForAltitude()'s
+  // own comment) and needs actualProfileForTime() (app.js), not
+  // profilesForTime(), to blend it the same way -- without this branch the
+  // wind row below silently never appeared for actual's own points.
+  const timeProfiles = profilesForTime(state.timeMinutes);
+  const profile = hit.model === 'actual'
+    ? actualProfileForTime(state.timeMinutes)
+    : timeProfiles && timeProfiles[hit.model];
+  // modelNameHTML() (app.js) -- same per-model-colored name every other
+  // tooltip on the page uses now, not a plain bolded --accent-blue name.
+  const rows = [`<div class="tt-row">${modelNameHTML(hit.model)}</div>`,
+    `<div class="tt-row">${Math.round(hit.alt_ft).toLocaleString()} ft AGL</div>`];
+  if (profile) {
+    const [spdMph, drc] = interpWind(profile, hit.alt_ft);
+    // windVaneHTML() (app.js) -- same rotated-arrow-into-the-wind glyph the
+    // 2D weather panel's own wind tooltip uses, not a raw degree number.
+    rows.push(`<div class="tt-row">${Math.round(spdMph)} mph ${windVaneHTML(drc)}</div>`);
+  }
+  rows.push(`<div class="tt-row" style="color:var(--text-muted);">${Math.round(hit.x_ft)} ft E, ${Math.round(hit.y_ft)} ft N of pad</div>`);
+  tooltip.innerHTML = rows.join('');
+  tooltip.style.display = 'block';
+  positionTooltip(evt);
+}
+
 function path3dHandleHover(evt) {
   const rect = path3dCanvas.getBoundingClientRect();
   const mx = evt.clientX - rect.left, my = evt.clientY - rect.top;
@@ -629,7 +741,7 @@ function path3dHandleHover(evt) {
   // function at all (pointermove after pointerdown is always
   // path3dDragging=true there, see that listener's own comment), so this
   // is desktop-only by construction, same as the tooltip hover it's
-  // modeled on -- touch still opens via path3dEndDrag's own click hit-test.
+  // modeled on -- touch opens either via path3dEndDrag's own tap hit-test.
   if (ASCENT_RESULTS) {
     let tBest = null, tBestDist = Infinity;
     ascentHitPoints.forEach(h => {
@@ -644,41 +756,12 @@ function path3dHandleHover(evt) {
     if (ascentBoxOpenKind !== null) hideAscentBox();
   }
 
-  let best = null, bestDist = Infinity;
-  for (const h of path3dHitPoints) {
-    const d = Math.hypot(h.sx - mx, h.sy - my);
-    if (d < bestDist) { bestDist = d; best = h; }
-  }
   // PROXIMITY_PX -- the same "how close counts as a hover hit" constant
   // the 2D map's own point tooltips use (app.js), not a separate figure
   // invented for this view.
-  if (!best || bestDist > PROXIMITY_PX) { hideTooltip(); return; }
-
-  // 'actual' (3D History's T+1 flight) has no entry in DATA.wind_profiles --
-  // that's only ever forecast models, keyed off the currently-selected
-  // capture. Its own profile lives separately (HISTORY.actual_wind_profile,
-  // independent of which capture is pinned -- see historyActualPathForAltitude()'s
-  // own comment) and needs actualProfileForTime() (app.js), not
-  // profilesForTime(), to blend it the same way -- without this branch the
-  // wind row below silently never appeared for actual's own points.
-  const timeProfiles = profilesForTime(state.timeMinutes);
-  const profile = best.model === 'actual'
-    ? actualProfileForTime(state.timeMinutes)
-    : timeProfiles && timeProfiles[best.model];
-  // modelNameHTML() (app.js) -- same per-model-colored name every other
-  // tooltip on the page uses now, not a plain bolded --accent-blue name.
-  const rows = [`<div class="tt-row">${modelNameHTML(best.model)}</div>`,
-    `<div class="tt-row">${Math.round(best.alt_ft).toLocaleString()} ft AGL</div>`];
-  if (profile) {
-    const [spdMph, drc] = interpWind(profile, best.alt_ft);
-    // windVaneHTML() (app.js) -- same rotated-arrow-into-the-wind glyph the
-    // 2D weather panel's own wind tooltip uses, not a raw degree number.
-    rows.push(`<div class="tt-row">${Math.round(spdMph)} mph ${windVaneHTML(drc)}</div>`);
-  }
-  rows.push(`<div class="tt-row" style="color:var(--text-muted);">${Math.round(best.x_ft)} ft E, ${Math.round(best.y_ft)} ft N of pad</div>`);
-  tooltip.innerHTML = rows.join('');
-  tooltip.style.display = 'block';
-  positionTooltip(evt);
+  const hit = path3dFindDescentHit(mx, my, PROXIMITY_PX);
+  if (!hit) { hideTooltip(); return; }
+  path3dShowDescentTooltip(evt, hit);
 }
 
 if (window.ResizeObserver) {
@@ -855,10 +938,18 @@ function renderDescent3D() {
   }
 
   path3dShowCanvas();
-  path3dDrawScene(paths, altFt);
+  path3dDrawScene(paths, altFt, ascentMean);
 }
 
-function path3dDrawScene(paths, altFt) {
+// ascentMean passed in explicitly (not re-read as a free variable) --
+// it's computed in renderDescent3D() above, a SEPARATE top-level function,
+// not an enclosing closure of this one; referencing it here as if it were
+// still in scope threw "ascentMean is not defined" on every single 3D
+// render regardless of whether a sim result was even active (confirmed via
+// a real browser test -- the error fired on plain page load with no sim
+// data at all), which is why the 3D view stopped rendering anything the
+// moment this per-model rewrite shipped.
+function path3dDrawScene(paths, altFt, ascentMean) {
   const dpr = window.devicePixelRatio || 1;
   const rect = path3dCanvas.getBoundingClientRect();
   const w = Math.max(1, Math.round(rect.width * dpr));
@@ -1035,7 +1126,20 @@ function path3dDrawScene(paths, altFt) {
   if (ASCENT_RESULTS) {
     paths.forEach(p => {
       const ascentPath = ascentPathForModel(p.model);
-      if (ascentPath) path3dDrawAscentPath(toScreen, p.model, ascentPath);
+      if (ascentPath) {
+        path3dDrawAscentPath(toScreen, p.model, ascentPath);
+        // Ground-projected reference marker (z=0) at THIS model's own real
+        // apogee X/Y offset -- requested directly ("those are ground
+        // markers, even on 3d"), same per-model apogee-marker treatment
+        // app.js's drawPredictedApogeeMarker() now draws on the 2D map,
+        // just projected onto this view's own ground plane instead. Colored
+        // to match that model's line only (no shape distinction needed the
+        // way 2D's flat top-down view needs one -- "they can just follow
+        // the color of the line elsewhere," per direction), distinct from
+        // the true-altitude hollow apogee circle path3dDrawPath() already
+        // draws at the top of this same model's own curve.
+        path3dDrawGroundApogeeMarker(toScreen, p.model, ascentApogeeFt(ascentPath));
+      }
     });
   } else {
     path3dDrawBoostLine(toScreen, toScreenPath, altFt);
