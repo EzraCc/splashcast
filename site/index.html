@@ -270,6 +270,16 @@ writeLocalBustedTag('<link rel="stylesheet" href="', 'assets/css/app.css', '">')
           <div id="rail-dial-angle-label" class="rail-dial-angle-label"></div>
           <div id="rail-dial-thumb" class="rail-dial-thumb"></div>
         </div>
+        <!-- Opens #ascent-sim-modal (below, outside .map-view-wrap) -- a
+             real RK4 flight sim (rocketry, a separate GPLv3 sibling
+             project, embedded cross-origin via iframe, never vendored into
+             this repo -- see openAscentSimModal()'s own comment in app.js
+             for why) that replaces this dial's own tan(angle) shift with a
+             real simulated ascent path once a result comes back. Always
+             visible alongside the dial, not nested inside its
+             collapsed/expanded flyout -- this opens a full modal, not a
+             small readout panel. -->
+        <button type="button" id="ascent-sim-btn" class="ascent-sim-btn" title="Simulate a real ascent path (pick your own rocket + motor)">&#128640;</button>
         <div class="rail-angle-panel" id="rail-angle-panel">
           <div class="alt-list-title">
             Rail/weather angle <button class="info-btn" type="button" data-hint="rail-angle-hint" title="Show details">i</button>
@@ -439,6 +449,34 @@ writeLocalBustedTag('<link rel="stylesheet" href="', 'assets/css/app.css', '">')
        cell is in) and not a bare title attribute (no native tooltips on
        touch, and this app is mobile-first). -->
   <div class="real-flight-box" id="temp-risk-box"></div>
+  <!-- Click-to-open popup for the burnout/weathercock points on the real
+       ascent-path curve (once a rocketry sim result is active), same
+       mechanism as #real-flight-box/#temp-risk-box above -- always-visible
+       labels were tried first and reported as colliding with the descent
+       paths in a rotatable 3D scene ("interference... not easy to
+       solve"); click-to-reveal sidesteps that instead of trying to solve
+       label placement. -->
+  <div class="real-flight-box" id="ascent-box"></div>
+
+  <!-- Rocketry embed modal -- opened by #ascent-sim-btn (near the rail
+       dial, above). rocketry is a separate GPLv3 project
+       (github.com/EzraCc/rocketry); this app never vendors/imports its
+       code (would force this repo GPLv3 too, or create real licensing
+       exposure) -- instead it's embedded here cross-origin, visibly and
+       interactively (not a hidden background call), so the visitor keeps
+       full rocket/motor selection through rocketry's own real UI. See
+       .claude/plans/rocketry-flight-sim-integration.md for the full
+       postMessage contract this modal/iframe implements. -->
+  <div class="ascent-sim-modal" id="ascent-sim-modal" style="display:none;">
+    <div class="ascent-sim-modal-inner">
+      <div class="ascent-sim-modal-header">
+        <span>Simulate real ascent path</span>
+        <button type="button" id="ascent-sim-close" class="ascent-sim-close" title="Close">&times;</button>
+      </div>
+      <div class="ascent-sim-modal-error" id="ascent-sim-error" style="display:none;"></div>
+      <iframe id="ascent-sim-iframe" class="ascent-sim-iframe" title="Rocketry flight simulator" referrerpolicy="no-referrer"></iframe>
+    </div>
+  </div>
 </div>
 
 <script>writeLocalBustedTag('<script src="', 'assets/js/app.js', '"><' + '/script>');</script>

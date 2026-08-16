@@ -1281,7 +1281,28 @@
      it since 2026-08 -- see that rule's own comment); .zoom-hint (touch-
      only, still 2D-only) is bumped up out of the way below since it shares
      this same bottom-left corner. */
-  .rail-angle-control { position: absolute; left: 10px; bottom: 10px; z-index: 5; }
+  /* display:flex so #ascent-sim-btn can sit as a compact sibling next to
+     the dial, bottom-aligned so it doesn't jump around as the dial itself
+     grows from 56px to 160px on expand (align-items:flex-end keeps the
+     button anchored to the dial's own collapsed-height baseline either
+     way). */
+  .rail-angle-control { position: absolute; left: 10px; bottom: 10px; z-index: 5; display: flex; align-items: flex-end; gap: 6px; }
+  /* Dims and disables the dial while a real rocketry sim result is driving
+     the 3D boost line instead of the rail-angle tan(angle) approximation
+     this dial otherwise controls -- see app.js's message listener
+     (`rocketry:ascentResult`). */
+  .rail-angle-control.sim-active .rail-dial,
+  .rail-angle-control.sim-active .rail-angle-panel { opacity: 0.4; pointer-events: none; }
+  /* Same 30px icon-button treatment .map-fullscreen-toggle already
+     establishes -- a real, always-visible entry point (not hidden behind
+     an existing control), but sized to not compete with the dial itself
+     for "main feature of this corner" status. */
+  .ascent-sim-btn {
+    border: 1px solid var(--border); border-radius: 8px; background: var(--surface-1); color: var(--text-secondary);
+    width: 30px; height: 30px; font-size: var(--fs-md); line-height: 1; cursor: pointer;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.15); flex-shrink: 0;
+  }
+  .ascent-sim-btn:hover { background: var(--surface-2); color: var(--text-primary); }
   /* Circular drag target: angle from center = heading (0deg/N = up, like a
      compass), distance from center = magnitude, capped at the 25deg max --
      see railDialFromClientXY() in app.js. touch-action:none stops the
@@ -1521,6 +1542,47 @@
   }
   .real-flight-box .rf-title { font-weight: 700; color: var(--real-flight-color, #e91e8c); margin-bottom: 2px; }
   .real-flight-box .rf-note { margin-top: var(--sp-2); padding-top: var(--sp-2); border-top: 1px solid var(--border, #dedcd6); font-size: 0.85em; color: var(--text-muted); line-height: 1.4; }
+  /* Same amber --hot-* tokens .rate-warning already uses -- this app's one
+     established warning color, not a new one invented for this feature.
+     Prepended inside #ascent-box's own content (ascentWarningsHTML(),
+     descent3d.js) when rocketry sends stability/parse warnings through
+     alongside a result it computed anyway rather than blocking. */
+  .ascent-warning {
+    margin-bottom: var(--sp-2); padding-bottom: var(--sp-2); border-bottom: 1px solid var(--border);
+    background: var(--hot-bg); color: var(--hot-text); border-radius: 4px; padding: 4px 6px;
+    font-size: 0.85em; line-height: 1.4;
+  }
+
+  /* Full-viewport embed of rocketry's own real UI (rocket library, motor
+     search, simulate) -- position:fixed (not absolute -- this div lives at
+     body level, not inside .map-view-wrap) so it covers the whole page
+     regardless of scroll position. z-index 30: above every other overlay
+     this app has (.real-flight-box's own 21 is the previous highest) --
+     a modal needs to sit on top of literally everything else, including a
+     tooltip or an open fly-out that happened to be up when it opened. */
+  .ascent-sim-modal {
+    position: fixed; inset: 0; z-index: 30; display: flex; align-items: center; justify-content: center;
+    background: rgba(0,0,0,0.6); padding: 16px; box-sizing: border-box;
+  }
+  .ascent-sim-modal-inner {
+    display: flex; flex-direction: column; width: 100%; height: 100%; max-width: 900px; max-height: 800px;
+    background: var(--surface-1); border-radius: 10px; overflow: hidden; box-shadow: 0 8px 40px rgba(0,0,0,0.5);
+  }
+  .ascent-sim-modal-header {
+    display: flex; align-items: center; justify-content: space-between; flex-shrink: 0;
+    padding: 10px 14px; border-bottom: 1px solid var(--border); font-weight: 700; color: var(--text-primary);
+  }
+  .ascent-sim-close {
+    border: none; background: none; color: var(--text-secondary); font-size: 1.4rem; line-height: 1;
+    cursor: pointer; padding: 2px 6px;
+  }
+  .ascent-sim-close:hover { color: var(--text-primary); }
+  .ascent-sim-modal-error {
+    flex-shrink: 0; margin: 10px 14px 0; padding: 6px 8px; border-radius: 6px;
+    background: var(--hot-bg); border: 1px solid var(--hot-border); color: var(--hot-text);
+    font-size: var(--fs-sm); line-height: 1.4;
+  }
+  .ascent-sim-iframe { flex: 1 1 auto; width: 100%; border: none; }
 
   .footnote { margin-top: 18px; font-size: var(--fs-sm); color: var(--text-muted); line-height: 1.6; }
   .footnote code { background: var(--surface-2); padding: 1px 5px; border-radius: 4px; }

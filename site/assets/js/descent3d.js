@@ -45,6 +45,215 @@
 // data/axis bug -- confirmed directly by walking the rotation math for a
 // pure-east unit vector at that angle. Orbiting away from yaw=0 by
 // dragging is still exactly this same rotation, just user-chosen.
+// --- real ascent-path integration: splices a real (rocketry-generated) ----
+// boost-phase simulation into this view in place of the straight-line
+// tan(angle) approximation railShiftFt() (app.js) otherwise stands in for.
+// ASCENT_RESULT (app.js) is null until a visitor opens the "Simulate real
+// ascent path" panel and runs a sim in rocketry's own embedded UI -- see
+// app.js's own "rocketry ascent-path sim" section for the postMessage
+// listener that sets it, and .claude/plans/rocketry-flight-sim-
+// integration.md for the full cross-origin contract. While it's set, the
+// rail-angle dial is disabled (see app.js's message listener) -- its own
+// simple shift would double up against/contradict the real weathercocking
+// physics the sim result already accounts for, and "just move apogee along
+// the same line" isn't how a real sim's own apogee offset works, so the two
+// aren't reconcilable as-is.
+const ASCENT_M_TO_FT = 3.28084; // same literal pipeline/config.py's own elev_ft_for_site() uses
+// (x_ft, y_ft) = the real sim's own APOGEE offset from the pad, converted
+// m->ft -- substituted for railShiftFt(altFt)'s output in path3dDrawScene()
+// below, since it's the same "constant offset from pad to apogee" concept,
+// just from a real simulation instead of a tan(angle) stand-in. altFt comes
+// from the APOGEE waypoint's own `altitude` field (meters AGL, = position.z
+// per rocketry's ascent-path-export.README.md) -- NOT a `summary.
+// apogeeAltitudeFt` convenience field, which only ever existed in this
+// session's earlier hand-built test fixture, not in the real `AscentResult`
+// rocketry's library actually returns (confirmed directly against
+// src/lib.ts) -- substituted for resolveMapAltFt() so the descent side
+// splices on at the altitude the ascent sim actually reached, not whatever
+// the altitude ladder/slider happens to have selected.
+function ascentApogeeFt() {
+  const apogee = ASCENT_RESULT.ascentPath.waypoints.find(w => w.type === 'APOGEE');
+  return {
+    x: apogee.position.x * ASCENT_M_TO_FT,
+    y: apogee.position.y * ASCENT_M_TO_FT,
+    altFt: apogee.altitude * ASCENT_M_TO_FT,
+  };
+}
+function ascentPathColor() { return '#06b6d4'; } // same cyan RAIL_BOOST_LINE_COLOR used for the stand-in it replaces
+
+// Compass bearing (0=N, 90=E, clockwise) of a real East/North offset --
+// NOT a wind "from" bearing like windShear's own directionFromDeg fields,
+// this is the direction the rocket actually leaned/moved TOWARD, so
+// (unlike windVaneHTML()'s own +180 from->toward conversion) the arrow
+// below rotates to this value directly.
+function ascentBearingDeg(xEast, yNorth) {
+  return (Math.atan2(xEast, yNorth) * 180 / Math.PI + 360) % 360;
+}
+// Same rotated-arrow-glyph mechanism/CSS class (.wind-vane, app.css)
+// windVaneHTML() (app.js) already established for wind direction --
+// reused here rather than a second arrow implementation, minus that
+// function's own +180 shift (see ascentBearingDeg()'s own comment for
+// why this bearing doesn't need it). Requested directly: "use arrows for
+// heading, not numbers."
+function ascentArrowHTML(bearingDeg) {
+  const rounded = Math.round(bearingDeg);
+  return `<span class="wind-vane" style="transform:rotate(${rounded}deg)" title="${rounded}&deg;">&uarr;</span>`;
+}
+
+// Real trig, rail (LIFTOFF) GPS position -> the given waypoint's own GPS
+// position -- requested directly, NOT waypoint.tiltFromVerticalDeg, which
+// is the sim's own vehicle ATTITUDE (nose angle) at that instant, a
+// different quantity that can diverge hugely from the actual position
+// angle (confirmed directly against a real fixture: an APOGEE waypoint
+// reporting tiltFromVerticalDeg=87.8 degrees -- the vehicle tumbling/
+// coasting unstably in attitude by apogee -- while its real position was
+// only ~9 degrees off vertical from the rail). "Degree to apogee/motor
+// burnout" means the real geometric angle to that point, not the
+// vehicle's own nose angle when it got there.
+function ascentPositionTiltDeg(waypoint) {
+  const rail = ASCENT_RESULT.ascentPath.waypoints.find(w => w.type === 'LIFTOFF').position;
+  const dx = waypoint.position.x - rail.x, dy = waypoint.position.y - rail.y, dz = waypoint.position.z - rail.z;
+  return Math.atan2(Math.hypot(dx, dy), dz) * 180 / Math.PI;
+}
+
+// Reset each render (path3dDrawScene()), populated by
+// path3dDrawAscentPath() below -- {sx, sy, kind} for the 2 clickable
+// points, same shape convention path3dHitPoints already uses for the
+// descent paths' own hover hit-testing.
+let ascentHitPoints = [];
+
+// Warnings block, prepended when present -- rocketry deliberately sends a
+// flyable:false/warned result through rather than blocking it (see the
+// integration plan's own "Splashcast's half of the contract"), so this is
+// the layer responsible for surfacing that rather than silently plotting
+// an unstable configuration's result as if it were routine.
+function ascentWarningsHTML() {
+  const warnings = [...(ASCENT_RESULT.stability?.warnings ?? []), ...(ASCENT_RESULT.parseWarnings ?? [])];
+  if (!warnings.length) return '';
+  return `<div class="ascent-warning">${warnings.map(w => `&#9888; ${w}`).join('<br>')}</div>`;
+}
+
+function ascentBoxHTML(kind) {
+  const launchrod = ASCENT_RESULT.ascentPath.waypoints.find(w => w.type === 'LAUNCHROD');
+  const burnout = ASCENT_RESULT.ascentPath.waypoints.find(w => w.type === 'BURNOUT');
+  const apogee = ASCENT_RESULT.ascentPath.waypoints.find(w => w.type === 'APOGEE');
+  if (kind === 'burnout') {
+    const ft = Math.round(burnout.altitude * ASCENT_M_TO_FT).toLocaleString();
+    return `${ascentWarningsHTML()}<div class="rf-title">Motor burnout</div>${ft} ft AGL`;
+  }
+  // kind === 'weathercock' -- requested directly: rail exit velocity,
+  // ground wind speed (both converted m/s -> fps, same ASCENT_M_TO_FT
+  // literal the whole path already converts positions with -- ft and fps
+  // share the same per-second/per-foot conversion factor), and degree +
+  // bearing number + arrow-heading to both motor burnout and apogee.
+  // Degree is ascentPositionTiltDeg() -- real trig off the rail/apogee
+  // GPS positions, NOT waypoint.tiltFromVerticalDeg (see that function's
+  // own comment for why those two numbers disagree, sometimes hugely);
+  // bearing/heading is ascentBearingDeg() of that same waypoint's own
+  // real position -- the actual direction it ended up, not assumed to
+  // match the ground wind's own push direction. Every line leads with its
+  // number(s) (requested directly, "numbers on the far left") rather than
+  // a label -- "94 fps rail exit velocity", not "Rail exit velocity: 94
+  // fps".
+  const railFps = (launchrod.speed * ASCENT_M_TO_FT).toFixed(0);
+  const groundWindFps = (ASCENT_RESULT.ascentPath.windShear.ground.speed * ASCENT_M_TO_FT).toFixed(0);
+  // windVaneHTML() (app.js), NOT ascentArrowHTML() -- ground wind is a
+  // real wind "from" bearing (windShear.ground.directionFromDeg), the same
+  // shape/convention every other wind arrow in this app already reads,
+  // unlike the burnout/apogee bearings below (which are real position-
+  // vector "toward" bearings, ascentBearingDeg()'s own case).
+  const groundWindArrow = windVaneHTML(ASCENT_RESULT.ascentPath.windShear.ground.directionFromDeg);
+  const toBurnoutDeg = ascentPositionTiltDeg(burnout).toFixed(1);
+  const toBurnoutBearing = Math.round(ascentBearingDeg(burnout.position.x, burnout.position.y));
+  const toApogeeDeg = ascentPositionTiltDeg(apogee).toFixed(1);
+  const toApogeeBearing = Math.round(ascentBearingDeg(apogee.position.x, apogee.position.y));
+  return `${ascentWarningsHTML()}<div class="rf-title">Weathercocking (rail to burnout)</div>` +
+    `${railFps} fps rail exit velocity<br>` +
+    `${groundWindFps} fps ${groundWindArrow} ground wind speed<br>` +
+    `${toBurnoutDeg}&deg; @ ${toBurnoutBearing}&deg; ${ascentArrowHTML(toBurnoutBearing)} to motor burnout<br>` +
+    `${toApogeeDeg}&deg; @ ${toApogeeBearing}&deg; ${ascentArrowHTML(toApogeeBearing)} to apogee`;
+}
+
+// Opens on hover (desktop, via path3dHandleHover() below -- same as the
+// descent-path waypoints' own tooltip, requested directly to match) AND on
+// click/tap (touch, which has no hover to drive it -- see path3dEndDrag's
+// own click hit-test). showAscentBox() itself is a plain idempotent
+// "set content + show" (safe to call repeatedly every mousemove while
+// hovering, same as tooltip's own positionTooltip(evt) already does);
+// toggle-closed-on-repeat-click is the CALLER's job now (path3dEndDrag),
+// not baked in here, since hover calling this on every mousemove tick
+// would otherwise fight a toggle baked into the function itself.
+// Same underlying mechanism showRealFlightBox()/showTempRiskBox() already
+// established (positionBoxAvoiding(), further down this file/app.js) --
+// tried always-visible labels first, reported as colliding with the
+// descent paths in a rotatable 3D scene ("interference... not easy to
+// solve"); click/hover-to-reveal sidesteps needing to solve label
+// placement instead.
+let ascentBoxOpenKind = null;
+const ascentBox = document.getElementById('ascent-box');
+function showAscentBox(evt, kind) {
+  ascentBox.innerHTML = ascentBoxHTML(kind);
+  const [x, y] = positionBoxAvoiding(evt, []);
+  ascentBox.style.left = x + 'px';
+  ascentBox.style.top = y + 'px';
+  ascentBox.style.display = 'block';
+  ascentBoxOpenKind = kind;
+}
+function hideAscentBox() {
+  ascentBox.style.display = 'none';
+  ascentBoxOpenKind = null;
+}
+document.addEventListener('click', () => {
+  if (ascentBoxOpenKind !== null) hideAscentBox();
+});
+
+// Draws the real multi-point ascent curve (path[], liftoff->apogee) in
+// place of path3dDrawBoostLine()'s straight dashed stand-in -- same toScreen
+// closure the ground plane/axes use (NOT toScreenPath, since these
+// positions are already the real absolute pad-relative trajectory, not a
+// drift-since-apogee value needing railShift added on top the way each
+// model's own descent path does). Solid, not dashed -- unlike the rail-
+// angle stand-in, this really is a simulated trajectory, same visual
+// language path3dDrawPath() already uses for the (real, wind-integrated)
+// descent paths below apogee.
+function path3dDrawAscentPath(toScreen) {
+  const ctx = path3dCtx;
+  const color = ascentPathColor();
+  ctx.save();
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ASCENT_RESULT.ascentPath.path.forEach((pt, i) => {
+    const [sx, sy] = toScreen(pt.position.x * ASCENT_M_TO_FT, pt.position.y * ASCENT_M_TO_FT, pt.altitude * ASCENT_M_TO_FT);
+    if (i === 0) ctx.moveTo(sx, sy); else ctx.lineTo(sx, sy);
+  });
+  ctx.stroke();
+  ctx.restore();
+
+  // Only 2 of the 4 named waypoints get a clickable point now: APOGEE is
+  // dropped entirely (already marked/labeled by the existing, separate
+  // path3dDrawApogeeLabel()/path3dDrawPath() apogee circles a few pixels
+  // away), and LAUNCHROD ("Rod exit") is dropped in favor of LIFTOFF
+  // ("base") as the one ground-level reference point -- same reasoning as
+  // when these were still always-visible labels, still applies to where
+  // the points themselves sit.
+  const base = ASCENT_RESULT.ascentPath.waypoints.find(w => w.type === 'LIFTOFF');
+  const burnout = ASCENT_RESULT.ascentPath.waypoints.find(w => w.type === 'BURNOUT');
+  const [bx, by] = toScreen(base.position.x * ASCENT_M_TO_FT, base.position.y * ASCENT_M_TO_FT, base.altitude * ASCENT_M_TO_FT);
+  const [ux, uy] = toScreen(burnout.position.x * ASCENT_M_TO_FT, burnout.position.y * ASCENT_M_TO_FT, burnout.altitude * ASCENT_M_TO_FT);
+
+  ctx.save();
+  ctx.fillStyle = color;
+  ctx.fillRect(bx - 3, by - 3, 6, 6);
+  ctx.fillRect(ux - 3, uy - 3, 6, 6);
+  ctx.restore();
+
+  ascentHitPoints = [
+    { sx: bx, sy: by, kind: 'weathercock' },
+    { sx: ux, sy: uy, kind: 'burnout' },
+  ];
+}
+
 let path3dYaw = 0;
 let path3dPitch = 22 * Math.PI / 180;
 let path3dZoom = 1;
@@ -277,6 +486,29 @@ path3dCanvas.addEventListener('pointermove', evt => {
 });
 function path3dEndDrag(evt) {
   if (evt && evt.pointerType === 'touch') path3dActiveTouches.delete(evt.pointerId);
+  // A genuine click (didn't move enough to count as an orbit/pan drag --
+  // same >4px threshold path3dClearViewPreset()'s own call site above
+  // already uses to draw that line) hit-tests against ascentHitPoints and
+  // opens/toggles that point's popup -- this is the ONLY way to open it on
+  // touch (no hover there), and on desktop it's a secondary path alongside
+  // path3dHandleHover()'s own hover-open below, so a second click on an
+  // already-open point closes it explicitly rather than leaving hover to
+  // silently reopen it next mousemove. Checked only on 'pointerup' (not
+  // 'pointercancel', which path3dEndDrag also handles but doesn't
+  // represent a completed click) and only once a sim result is active.
+  if (evt && evt.type === 'pointerup' && ASCENT_RESULT && path3dDragDistPx <= 4) {
+    const rect = path3dCanvas.getBoundingClientRect();
+    const mx = evt.clientX - rect.left, my = evt.clientY - rect.top;
+    let best = null, bestDist = Infinity;
+    ascentHitPoints.forEach(h => {
+      const d = Math.hypot(h.sx - mx, h.sy - my);
+      if (d < bestDist) { bestDist = d; best = h; }
+    });
+    if (best && bestDist <= PROXIMITY_PX) {
+      if (ascentBoxOpenKind === best.kind) hideAscentBox();
+      else showAscentBox(evt, best.kind);
+    } else hideAscentBox();
+  }
   path3dDragging = false;
   path3dPanMode = false;
   path3dPinchDist = null;
@@ -284,7 +516,24 @@ function path3dEndDrag(evt) {
 }
 path3dCanvas.addEventListener('pointerup', path3dEndDrag);
 path3dCanvas.addEventListener('pointercancel', path3dEndDrag);
-path3dCanvas.addEventListener('mouseleave', hideTooltip);
+// Prevents the browser's own synthetic 'click' (fired after pointerup on
+// the same element, even after a drag) from bubbling up to the document-
+// level click-away listener showAscentBox()/hideAscentBox() install below
+// -- that listener would otherwise immediately re-close the box this same
+// gesture just opened. The real click handling (hit-testing
+// ascentHitPoints) lives in path3dEndDrag above via 'pointerup', not here
+// -- this listener exists purely to stop propagation, same idiom the
+// real-flight marker's own click handler (app.js) already uses for the
+// same reason.
+path3dCanvas.addEventListener('click', evt => evt.stopPropagation());
+path3dCanvas.addEventListener('mouseleave', () => {
+  hideTooltip();
+  // Closes a hover-opened ascent-box when the pointer leaves the canvas
+  // entirely -- without this it'd stay stuck open (no more mousemove
+  // events to trigger path3dHandleHover()'s own close check) until the
+  // next unrelated document click.
+  if (ascentBoxOpenKind !== null) hideAscentBox();
+});
 path3dCanvas.addEventListener('wheel', evt => {
   evt.preventDefault();
   // Max raised from 3x to 20x -- 3x was tuned back when X/Y/Z were each
@@ -310,6 +559,30 @@ let path3dHitPoints = [];
 function path3dHandleHover(evt) {
   const rect = path3dCanvas.getBoundingClientRect();
   const mx = evt.clientX - rect.left, my = evt.clientY - rect.top;
+
+  // Opens ascent-box on hover, requested directly ("like the descent path
+  // waypoints" -- their own tooltip below already opens this same way, on
+  // plain pointermove with no click needed). Checked first, and returns on
+  // a hit, so an ascent-path point near a descent-path point doesn't show
+  // both the box AND the tooltip at once. Touch never reaches this
+  // function at all (pointermove after pointerdown is always
+  // path3dDragging=true there, see that listener's own comment), so this
+  // is desktop-only by construction, same as the tooltip hover it's
+  // modeled on -- touch still opens via path3dEndDrag's own click hit-test.
+  if (ASCENT_RESULT) {
+    let tBest = null, tBestDist = Infinity;
+    ascentHitPoints.forEach(h => {
+      const d = Math.hypot(h.sx - mx, h.sy - my);
+      if (d < tBestDist) { tBestDist = d; tBest = h; }
+    });
+    if (tBest && tBestDist <= PROXIMITY_PX) {
+      hideTooltip();
+      showAscentBox(evt, tBest.kind);
+      return;
+    }
+    if (ascentBoxOpenKind !== null) hideAscentBox();
+  }
+
   let best = null, bestDist = Infinity;
   for (const h of path3dHitPoints) {
     const d = Math.hypot(h.sx - mx, h.sy - my);
@@ -467,7 +740,10 @@ function renderDescent3D() {
   // (e.g. via applyIsolation(), which calls both) -- resolveMapAltFt()'s
   // own signature check is idempotent across two calls with unchanged state
   // in between, only the FIRST call in a pass can actually flip anything.
-  const altFt = resolveMapAltFt();
+  // Splice at the real ascent sim's own apogee altitude, not whatever the
+  // ladder/slider has selected, once a sim result is active -- see
+  // ascentApogeeFt()'s own comment.
+  const altFt = ASCENT_RESULT ? ascentApogeeFt().altFt : resolveMapAltFt();
   mapAltLastResolvedFt = altFt;
   mapAltUpdateSliderUI(altFt);
 
@@ -566,7 +842,11 @@ function path3dDrawScene(paths, altFt) {
   // path is plotted against, not the path itself, and must stay put
   // regardless of rail angle (only padOffsetFt, a real "what if the pad
   // were somewhere else" scene translation, legitimately moves those too).
-  const railShift = railShiftFt(altFt);
+  // Once a sim result is active, its own real apogee offset stands in for
+  // the tan(angle) approximation -- same "constant offset from pad to
+  // apogee" role, everything downstream (toScreenPath, maxXY, per-model
+  // descent paths) is unchanged by which one produced it.
+  const railShift = ASCENT_RESULT ? ascentApogeeFt() : railShiftFt(altFt);
   let maxXY = 1;
   const maxZ = Math.max(1, altFt);
   paths.forEach(p => p.path.forEach(pt => {
@@ -660,7 +940,13 @@ function path3dDrawScene(paths, altFt) {
   // to it under thrust); the dash pattern is a deliberate "approximate/
   // stand-in" signal, matching this app's usual care about not presenting
   // a derived/simplified value as if it were a measurement or a sim.
-  path3dDrawBoostLine(toScreen, toScreenPath, altFt);
+  // Real multi-point ascent curve instead of the straight dashed stand-in,
+  // once a sim result is active.
+  if (ASCENT_RESULT) {
+    path3dDrawAscentPath(toScreen);
+  } else {
+    path3dDrawBoostLine(toScreen, toScreenPath, altFt);
+  }
 
   // Depth-sort so nearer lines draw over farther ones -- purely visual
   // (disentangles overlapping model lines when orbited), touches no data.

@@ -71,6 +71,11 @@ document.addEventListener('visibilitychange', () => {
 window.addEventListener('pageshow', evt => { if (evt.persisted) checkForUpdate(); });
 
 let DATA = null;
+// The relative path DATA was last fetched from (entry.data_path, set in
+// loadDataset()) -- kept around so openAscentSimModal() can resolve it to
+// an absolute, publicly-fetchable URL to hand to the rocketry embed. Not
+// derivable from DATA itself (the JSON has no self-referential path field).
+let CURRENT_DATA_PATH = null;
 // points_history.json for the current target date -- every capture's splash
 // point per hour/deploy/rate/altitude, for the "History" view mode (see
 // renderHistory()). Loaded alongside DATA; null if this target has no
@@ -2206,6 +2211,117 @@ railAngleResetBtn.addEventListener('click', () => {
   railAngleExplicitlyChosen = false;
   updateRailDialUI();
   render();
+});
+
+// --- rocketry ascent-path sim: cross-origin embed --------------------------
+// Real RK4 3D flight sim (github.com/EzraCc/rocketry, GPLv3), replacing this
+// dial's own tan(angle) shift with a real simulated ascent path once a
+// result comes back. Deliberately NOT vendored into this app -- rocketry
+// ports OpenRocket's own GPLv3 algorithms, and bundling that code into this
+// repo/runtime would make this app a combined work, forcing it GPLv3 too (or
+// at minimum real licensing exposure) -- not something to take on as a side
+// effect of integration convenience. Instead: a visible, interactive iframe
+// embed, cross-origin, postMessage back and forth, zero code sharing. Full
+// contract: .claude/plans/rocketry-flight-sim-integration.md.
+//
+// ?rocketryBase= override lets local dev point at a locally-running
+// rocketry (its own Vite dev server) instead of the deployed site -- same
+// override pattern this app already uses elsewhere for local-vs-prod
+// differences (e.g. ?rocketryOrigin= was considered and dropped in favor of
+// this single value, since the expected postMessage-sender origin is just
+// derived from it below rather than tracked separately).
+const ROCKETRY_EMBED_BASE = URL_PARAMS.get('rocketryBase') || 'https://ezracc.github.io/rocketry/';
+const ROCKETRY_ORIGIN = new URL(ROCKETRY_EMBED_BASE).origin;
+
+const ascentSimBtn = document.getElementById('ascent-sim-btn');
+const ascentSimModal = document.getElementById('ascent-sim-modal');
+const ascentSimIframe = document.getElementById('ascent-sim-iframe');
+const ascentSimClose = document.getElementById('ascent-sim-close');
+const ascentSimError = document.getElementById('ascent-sim-error');
+
+// The full postMessage success payload (`{type, rocketName, parseWarnings,
+// stability, ascentPath}`) once a sim result has come back, else null --
+// null is also the signal every ascent* consumer (descent3d.js) and
+// drawPredictedApogeeMarker() below use to fall back to the plain
+// railShiftFt() dial approximation, same role TEST_ASCENT_DATA played in
+// this session's local-only prototype.
+let ASCENT_RESULT = null;
+
+// Only built when the panel actually opens (not reactively on every
+// render) -- rebuilding the iframe src on an unrelated state change (e.g.
+// dragging the altitude slider while the panel is open) would reload the
+// embed and throw away an in-progress rocket/motor pick over there.
+function openAscentSimModal() {
+  ascentSimError.style.display = 'none';
+  const params = new URLSearchParams({
+    embed: '1',
+    windUrl: new URL(CURRENT_DATA_PATH, location.href).href,
+    hour: String(nearestPublishedHour(state.timeMinutes)),
+    parentOrigin: location.origin,
+  });
+  ascentSimIframe.src = `${ROCKETRY_EMBED_BASE}?${params}`;
+  ascentSimModal.style.display = 'flex';
+}
+// Pure "hide" -- no ASCENT_RESULT change. Used both by the explicit
+// close/reset flow below AND by the message listener's own success path
+// (which auto-closes the modal once a result arrives, but obviously
+// shouldn't then immediately discard the result it just received).
+function closeAscentSimModal() {
+  ascentSimModal.style.display = 'none';
+  ascentSimIframe.src = '';
+}
+// The X button / click-away are the ONLY user-initiated close actions --
+// always a full reset back to manual rail-angle mode, even if a result had
+// already arrived in an earlier open/simulate cycle (a successful sim
+// closes the modal itself via the message listener, a different code path
+// that never reaches this function) -- opening the panel again is a
+// deliberate "let me change this" action, so backing out of it with no new
+// pick shouldn't leave a stale previous result silently still driving the
+// map.
+function resetAscentSim() {
+  ASCENT_RESULT = null;
+  railAngleControl.classList.remove('sim-active');
+  railAngleControl.title = '';
+  closeAscentSimModal();
+  renderDescent3D();
+  render();
+}
+ascentSimBtn.addEventListener('click', evt => { evt.stopPropagation(); openAscentSimModal(); });
+ascentSimClose.addEventListener('click', resetAscentSim);
+// Click-outside-the-inner-box closes too (the modal itself, not its inner
+// content, fills the viewport) -- same "click away to close" convention
+// every other popover/panel in this app already uses.
+ascentSimModal.addEventListener('click', evt => {
+  if (evt.target === ascentSimModal) resetAscentSim();
+});
+
+// Validates event.origin BEFORE touching payload contents at all -- the one
+// real security-relevant piece of this feature (see the plan's own
+// "Verification" section). Anything not from the exact rocketry origin this
+// page's own iframe was pointed at is silently ignored, not just distrusted
+// -- a same-origin-policy violation here would mean an unrelated page could
+// spoof a "flight result" into this app.
+window.addEventListener('message', evt => {
+  if (evt.origin !== ROCKETRY_ORIGIN) return;
+  const data = evt.data;
+  if (!data || typeof data !== 'object') return;
+  if (data.type === 'rocketry:ascentResult') {
+    ASCENT_RESULT = data;
+    railAngleControl.classList.add('sim-active');
+    railAngleControl.title = 'Dial disabled -- a real ascent-path simulation result is active. Its own weathercocking physics already replaces the simple rail-angle shift for this apogee. Use the rocket icon to change or clear it.';
+    closeAscentSimModal();
+    // Both, not just one -- a message arriving after the page's own initial
+    // synchronous render() already happened is the same async-timing shape
+    // as the local prototype's fetch callback (descent3d.js's own comment
+    // on this), and missed exactly the same way if only one dependent view
+    // gets told: renderDescent3D() alone left the 2D map's own predicted-
+    // apogee marker never re-checking ASCENT_RESULT at all.
+    renderDescent3D();
+    render();
+  } else if (data.type === 'rocketry:error') {
+    ascentSimError.textContent = data.message || 'Simulation failed.';
+    ascentSimError.style.display = 'block';
+  }
 });
 
 // --- zone + time-of-day color pickers: no fixed hue survives every site's
@@ -5661,17 +5777,26 @@ function drawPadMarker() {
 // same value the shift itself was computed from, not re-derived via
 // atan2(shift.x, shift.y), which would just be a roundabout way of
 // recovering the same number).
+// With a real rocketry sim result active (ASCENT_RESULT, set by the message
+// listener above), its own apogee ground offset stands in for the
+// tan(angle) approximation here too -- same substitution path3dDrawScene()
+// (descent3d.js) already makes for the 3D view's own boost line/railShift,
+// see that function's own comment. Shown regardless of railAngleDeg (which
+// is disabled/irrelevant in this mode -- see the message listener's own
+// `.sim-active` class toggle): the real sim's own weathercocking always
+// produces a nonzero ground offset, unlike the dial defaulting to 0.
 function drawPredictedApogeeMarker() {
-  if (!(railAngleDeg ?? 0)) return;
-  const altFt = resolveMapAltFt();
-  const shift = railShiftFt(altFt);
-  const [sx, sy] = ftToPxShifted(0, 0, altFt);
+  const simActive = !!ASCENT_RESULT;
+  if (!simActive && !(railAngleDeg ?? 0)) return;
+  const altFt = simActive ? ascentApogeeFt().altFt : resolveMapAltFt();
+  const shift = simActive ? ascentApogeeFt() : railShiftFt(altFt);
+  const [sx, sy] = ftToPx(shift.x, shift.y);
   const marker = drawMarker(svg, 'triangle-up', sx, sy, 9, APOGEE_MARKER_COLOR, APOGEE_MARKER_STROKE);
   marker.style.cursor = 'help';
 
   marker.addEventListener('mousemove', evt => {
     const dist = Math.hypot(shift.x, shift.y);
-    const heading = effectiveRailHeadingDeg();
+    const heading = simActive ? ascentBearingDeg(shift.x, shift.y) : effectiveRailHeadingDeg();
     tooltip.style.display = 'block';
     tooltip.innerHTML = `<div class="tt-row"><b>Predicted apogee</b><br>` +
       `${Math.round(altFt).toLocaleString()} ft<br>` +
@@ -5776,6 +5901,12 @@ function initFromData() {
   updateRailDialUI();
   // Every load, not just first -- see MAX_PAD_MOVE_FT's own declaration.
   MAX_PAD_MOVE_FT = DATA.max_pad_move_ft ?? 2000;
+  // Every load, not just first -- a new dataset means a new windUrl/hour
+  // context, so a previous sim result (a different launch's own ascent
+  // path) would be actively wrong here, not just stale.
+  ASCENT_RESULT = null;
+  railAngleControl.classList.remove('sim-active');
+  railAngleControl.title = '';
   if (!padUrlApplied) {
     padUrlApplied = true;
     const urlPad = URL_PARAMS.get('pad');
@@ -5862,6 +5993,7 @@ async function loadDataset(entry) {
   subtitleEl.textContent = 'Loading…';
   const resp = await fetchData(entry.data_path);
   DATA = await resp.json();
+  CURRENT_DATA_PATH = entry.data_path;
   // wind_profiles/descent_params landed 2026-08, replacing precomputed
   // per-rate points -- everything downstream (freshState()'s rateFps seed,
   // zoneFor(), the rate editor) assumes they exist. Rather than scatter

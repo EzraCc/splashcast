@@ -2,6 +2,18 @@
 
 Dated, terse log of notable changes. For the full design rationale and decision history, see [docs/spec.md](docs/spec.md).
 
+## 2026-08-15
+
+**Added: real rocketry flight-sim integration, replacing the rail-angle dial's tan(angle) approximation**
+- Splashcast's boost-phase weathercocking was a manual, user-draggable rail-angle dial (`railShiftFt()`, pure `tan(angle) * altitude`, no real physics). A sibling project, `rocketry` (github.com/EzraCc/rocketry, a browser-based RK4 3D flight simulator, GPLv3), was independently built with this exact handoff as a design goal.
+- **Deliberately not vendored**: rocketry is GPLv3 (ports OpenRocket's own GPLv3 algorithms) -- bundling its built library into this repo/runtime would make this app a combined work, forcing it GPLv3 too or creating real licensing exposure. Instead, rocketry is embedded cross-origin via a **visible, interactive `<iframe>`** (`#ascent-sim-modal`, opened by a new rocket-icon button next to the rail dial) -- the visitor picks their own real rocket + motor through rocketry's own UI, not a fixed/hidden default; zero code sharing either direction.
+- Splashcast passes the currently-loaded weather JSON's public URL + the current hour via query params (`?embed=1&windUrl=...&hour=...&parentOrigin=...`); rocketry fetches and parses it with its own existing `parseSplashcastWindData()` (already matches this app's exact `wind_profiles` shape, confirmed directly, no format bridging needed), runs the sim, and `postMessage`s the result back. `event.origin` is validated against the exact rocketry origin before any payload contents are touched -- the one real security-relevant piece of this feature.
+- Once a result arrives, it replaces the rail-angle dial everywhere the old approximation fed in: the 2D predicted-apogee marker (`drawPredictedApogeeMarker()`), the 3D boost-phase curve and its click/hover info popups (`descent3d.js`), all generalized from this session's earlier local-only `?testAscent=1` prototype (never committed) which validated the exact same `AscentPath` consumer shape against a hand-built fixture. Fixed one real discrepancy while generalizing: the real `AscentResult` (rocketry's `src/lib.ts`) has no `summary.apogeeAltitudeFt` convenience field the way the old prototype's fixture did -- apogee altitude is now derived directly from the APOGEE waypoint's own `altitude` field (meters AGL) instead.
+- `stability`/`parseWarnings` are surfaced in the ascent info popup when present -- rocketry sends a `flyable:false`/warned result through rather than blocking it, so splashcast is responsible for making that visible rather than silently plotting an unstable configuration's result as routine.
+- Full cross-origin contract (query params in, both success/error `postMessage` payload shapes, an independent acceptance test for the rocketry side) written up in `.claude/plans/rocketry-flight-sim-integration.md` -- the rocketry-side "embed mode" itself is being built separately, in that repo.
+- Scope, confirmed directly: boost-phase visualization only for now, not yet feeding the descent-side drift Monte Carlo (`simulateDrift()` still starts from a fixed `x=y=0` at apogee); no silent/automatic default simulation on load (the marker only appears once a visitor explicitly runs a sim).
+- Verified: JS brace/paren balance (no Node runtime in this environment), no duplicate/dangling DOM ids, all `ASCENT_RESULT`/`ascent-*` references resolve, served content confirmed live via the local dev server. Full interactive round-trip (rocketry side, real rocket/motor pick, live postMessage) still pending until rocketry's own embed page exists.
+
 ## 2026-08-14
 
 **Fixed: Hutto's Aug 15 launch stopped getting cron updates, stuck at T-3**
