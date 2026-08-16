@@ -1290,9 +1290,19 @@
   /* Dims and disables the dial while a real rocketry sim result is driving
      the 3D boost line instead of the rail-angle tan(angle) approximation
      this dial otherwise controls -- see app.js's message listener
-     (`rocketry:ascentResult`). */
+     (`rocketry:ascentResults`). */
   .rail-angle-control.sim-active .rail-dial,
   .rail-angle-control.sim-active .rail-angle-panel { opacity: 0.4; pointer-events: none; }
+  /* Rocket+motor name for the active sim result -- .rail-angle-control is
+     already position:absolute, which is a valid containing block for this
+     too, so it just anchors above the dial/button row (bottom:100%)
+     instead of needing its own separate positioning context. */
+  .ascent-sim-label {
+    position: absolute; left: 0; bottom: 100%; margin-bottom: 6px; white-space: nowrap;
+    background: var(--surface-1); border: 1px solid var(--border); border-radius: 6px;
+    padding: 3px 8px; font-size: var(--fs-xs); font-weight: 600; color: var(--text-primary);
+    box-shadow: 0 1px 4px rgba(0,0,0,0.15);
+  }
   /* Same 30px icon-button treatment .map-fullscreen-toggle already
      establishes -- a real, always-visible entry point (not hidden behind
      an existing control), but sized to not compete with the dial itself

@@ -2238,14 +2238,27 @@ const ascentSimModal = document.getElementById('ascent-sim-modal');
 const ascentSimIframe = document.getElementById('ascent-sim-iframe');
 const ascentSimClose = document.getElementById('ascent-sim-close');
 const ascentSimError = document.getElementById('ascent-sim-error');
+const ascentSimLabel = document.getElementById('ascent-sim-label');
 
 // The full postMessage success payload (`{type, rocketName, parseWarnings,
-// stability, ascentPath}`) once a sim result has come back, else null --
-// null is also the signal every ascent* consumer (descent3d.js) and
-// drawPredictedApogeeMarker() below use to fall back to the plain
-// railShiftFt() dial approximation, same role TEST_ASCENT_DATA played in
-// this session's local-only prototype.
-let ASCENT_RESULT = null;
+// stability, results: [{model, ascentPath}, ...], rocketConfig?}`) once a
+// sim result has come back, else null -- rocketry computes one ascent per
+// forecast model (the same wind profile each model's own descent path
+// already integrates), not a single result, so `results` is an array, one
+// entry per model. null is also the signal every ascent* consumer
+// (descent3d.js) and drawPredictedApogeeMarker() below use to fall back to
+// the plain railShiftFt() dial approximation, same role TEST_ASCENT_DATA
+// played in this session's local-only prototype.
+//
+// `rocketConfig` (2026-08-16, rocketry's repeat-visit caching update,
+// `rocketry/tmp/splashcast-caching-update.md`) is optional -- present only
+// when rocketry has a cached rocket+motor config to attach, absent
+// (`undefined`) otherwise. Its `label` (e.g. "LOC-IV X2 + AeroTech K400C")
+// is the one field this side actually reads from it today (see the message
+// listener below) -- everything else in that object (`rocketSource`,
+// `motorId`, `overrides`) is for a possible future "remember the pick on
+// splashcast's own side too" feature, explicitly deferred, not read here.
+let ASCENT_RESULTS = null;
 
 // Only built when the panel actually opens (not reactively on every
 // render) -- rebuilding the iframe src on an unrelated state change (e.g.
@@ -2262,7 +2275,7 @@ function openAscentSimModal() {
   ascentSimIframe.src = `${ROCKETRY_EMBED_BASE}?${params}`;
   ascentSimModal.style.display = 'flex';
 }
-// Pure "hide" -- no ASCENT_RESULT change. Used both by the explicit
+// Pure "hide" -- no ASCENT_RESULTS change. Used both by the explicit
 // close/reset flow below AND by the message listener's own success path
 // (which auto-closes the modal once a result arrives, but obviously
 // shouldn't then immediately discard the result it just received).
@@ -2279,9 +2292,11 @@ function closeAscentSimModal() {
 // pick shouldn't leave a stale previous result silently still driving the
 // map.
 function resetAscentSim() {
-  ASCENT_RESULT = null;
+  ASCENT_RESULTS = null;
   railAngleControl.classList.remove('sim-active');
   railAngleControl.title = '';
+  ascentSimLabel.style.display = 'none';
+  ascentSimLabel.textContent = '';
   closeAscentSimModal();
   renderDescent3D();
   render();
@@ -2305,17 +2320,27 @@ window.addEventListener('message', evt => {
   if (evt.origin !== ROCKETRY_ORIGIN) return;
   const data = evt.data;
   if (!data || typeof data !== 'object') return;
-  if (data.type === 'rocketry:ascentResult') {
-    ASCENT_RESULT = data;
+  if (data.type === 'rocketry:ascentResults') {
+    ASCENT_RESULTS = data;
     railAngleControl.classList.add('sim-active');
     railAngleControl.title = 'Dial disabled -- a real ascent-path simulation result is active. Its own weathercocking physics already replaces the simple rail-angle shift for this apogee. Use the rocket icon to change or clear it.';
+    // rocketConfig.label ("LOC-IV X2 + AeroTech K400C") is the human-
+    // friendly rocket+motor string rocketry sends ready to display as-is;
+    // it's optional (only present when rocketry has a cached config to
+    // attach), so fall back to the plain rocketName (rocket only, no
+    // motor) rather than showing nothing.
+    const label = data.rocketConfig?.label || data.rocketName;
+    if (label) {
+      ascentSimLabel.textContent = label;
+      ascentSimLabel.style.display = 'block';
+    }
     closeAscentSimModal();
     // Both, not just one -- a message arriving after the page's own initial
     // synchronous render() already happened is the same async-timing shape
     // as the local prototype's fetch callback (descent3d.js's own comment
     // on this), and missed exactly the same way if only one dependent view
     // gets told: renderDescent3D() alone left the 2D map's own predicted-
-    // apogee marker never re-checking ASCENT_RESULT at all.
+    // apogee marker never re-checking ASCENT_RESULTS at all.
     renderDescent3D();
     render();
   } else if (data.type === 'rocketry:error') {
@@ -5777,19 +5802,27 @@ function drawPadMarker() {
 // same value the shift itself was computed from, not re-derived via
 // atan2(shift.x, shift.y), which would just be a roundabout way of
 // recovering the same number).
-// With a real rocketry sim result active (ASCENT_RESULT, set by the message
-// listener above), its own apogee ground offset stands in for the
+// With a real rocketry sim result active (ASCENT_RESULTS, set by the
+// message listener above), its own apogee ground offset stands in for the
 // tan(angle) approximation here too -- same substitution path3dDrawScene()
 // (descent3d.js) already makes for the 3D view's own boost line/railShift,
 // see that function's own comment. Shown regardless of railAngleDeg (which
 // is disabled/irrelevant in this mode -- see the message listener's own
 // `.sim-active` class toggle): the real sim's own weathercocking always
 // produces a nonzero ground offset, unlike the dial defaulting to 0.
+// One marker, not per-model -- unlike the 3D view's per-model ascent
+// curves (tied to each model's own descent path there), this 2D ground
+// marker predates per-model wind data being relevant to it at all and
+// stays a single summary point, using ascentMeanApogeeFt() (descent3d.js)
+// -- the mean across every model in the current sim result -- same
+// reasoning as that function's own comment for why a mean beats picking
+// one model arbitrarily.
 function drawPredictedApogeeMarker() {
-  const simActive = !!ASCENT_RESULT;
+  const simActive = !!ASCENT_RESULTS;
   if (!simActive && !(railAngleDeg ?? 0)) return;
-  const altFt = simActive ? ascentApogeeFt().altFt : resolveMapAltFt();
-  const shift = simActive ? ascentApogeeFt() : railShiftFt(altFt);
+  const meanApogee = simActive ? ascentMeanApogeeFt() : null;
+  const altFt = simActive ? meanApogee.altFt : resolveMapAltFt();
+  const shift = simActive ? meanApogee : railShiftFt(altFt);
   const [sx, sy] = ftToPx(shift.x, shift.y);
   const marker = drawMarker(svg, 'triangle-up', sx, sy, 9, APOGEE_MARKER_COLOR, APOGEE_MARKER_STROKE);
   marker.style.cursor = 'help';
@@ -5904,7 +5937,7 @@ function initFromData() {
   // Every load, not just first -- a new dataset means a new windUrl/hour
   // context, so a previous sim result (a different launch's own ascent
   // path) would be actively wrong here, not just stale.
-  ASCENT_RESULT = null;
+  ASCENT_RESULTS = null;
   railAngleControl.classList.remove('sim-active');
   railAngleControl.title = '';
   if (!padUrlApplied) {

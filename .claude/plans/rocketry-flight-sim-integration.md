@@ -1,7 +1,7 @@
 Status: in-progress
 Priority: high
 Type: new-feature
-Last updated: 2026-08-15
+Last updated: 2026-08-16
 
 # Rocketry flight-sim integration (embedded, cross-origin — no code sharing)
 
@@ -13,10 +13,12 @@ Last updated: 2026-08-15
 - [x] Task 4 — Generalize `?testAscent=1` prototype to real `ASCENT_RESULT` (`descent3d.js` + `app.js`) — includes a real fix found while generalizing: the actual `AscentResult` has no `summary.apogeeAltitudeFt` convenience field (that only existed in the old hand-built test fixture), so apogee altitude is now derived from the APOGEE waypoint's own `altitude` field directly.
 - [x] CSS: modal, button, `.rail-angle-control.sim-active` (renamed from `.test-ascent-disabled`)
 - [x] Static verification: JS brace/paren balance (no Node runtime available), no duplicate/dangling DOM ids, served content confirmed live via local dev server, CHANGELOG entry added
-- [ ] Rocketry-side "embed mode" itself — separate repo, out of scope here, contract already specified above
+- [x] Rocketry-side "embed mode" — **shipped, contract evolved**: rocketry actually returns one ascent per forecast model (`results: [{model, ascentPath}]`, `type: "rocketry:ascentResults"`), not the single `ascentPath`/`rocketry:ascentResult` originally specified below. Confirmed against a real sample payload rocketry provided (`/home/ezrac/github/rocketry/sim-files/hutto-0815-loc-iv-k400-ascent-results.json`). See "Update 2026-08-16" callout after the original contract section for the actual shape and the splashcast-side consumer changes this required — kept as an addendum rather than rewriting the original spec, since that's still an accurate record of what was asked for.
+- [x] Task 6 — Per-model ascent-path consumer rewrite (`descent3d.js` + `app.js`), tying each model's ascent curve to its own descent path so they toggle together via `state.selectedModels` — requested directly, see the Update callout.
 - [ ] Full interactive round-trip verification (real rocket/motor pick → live `postMessage` → renders correctly) — blocked until rocketry's own embed page exists
 - [ ] `postMessage` origin-rejection test (mismatched origin) — blocked, same reason
 - [ ] Delete the local `ascent-path-test.json` fixture once the real path is verified end-to-end
+- [x] Task 7 — Display rocket + motor name when a sim result is active (`app.js`, `index.html`, `app.css`), consuming rocketry's new optional `rocketConfig` field — see "Update 2026-08-16 (2)" below
 
 ## Context
 
@@ -248,6 +250,46 @@ populates, a real rocket+motor selection runs a simulation, and the
 console listener logs a well-formed `rocketry:ascentResult` (or
 `rocketry:error` when deliberately forcing a bad `windUrl`/`hour`).
 
+> **Update 2026-08-16 — actual shipped contract differs from the spec
+> above.** Rocketry's real embed page computes one ascent simulation **per
+> forecast model** (the same 6 wind profiles each model's own descent path
+> already integrates), not a single result — confirmed directly against a
+> real sample payload rocketry provided:
+> `/home/ezrac/github/rocketry/sim-files/hutto-0815-loc-iv-k400-ascent-results.json`.
+> The actual success payload:
+> ```json
+> {
+>   "type": "rocketry:ascentResults",
+>   "rocketName": "string",
+>   "parseWarnings": ["string", "..."],
+>   "stability": { "margin": 4.22, "flyable": true, "warnings": ["..."] },
+>   "results": [
+>     { "model": "gfs", "ascentPath": { "waypoints": [...], "path": [...], "segments": [...], "windShear": {...} } },
+>     { "model": "ecmwf", "ascentPath": { ... } },
+>     { "model": "gem", "ascentPath": { ... } },
+>     { "model": "icon", "ascentPath": { ... } },
+>     { "model": "arpege", "ascentPath": { ... } },
+>     { "model": "hrrr", "ascentPath": { ... } }
+>   ]
+> }
+> ```
+> `type` is `rocketry:ascentResults` (plural), `results` replaces the old
+> top-level `ascentPath` with an array of `{model, ascentPath}`. `stability`/
+> `parseWarnings` stay shared/top-level — they come from the rocket+motor
+> config, not the wind, so they don't vary per model. The sample's 6 models
+> (`gfs`/`ecmwf`/`gem`/`icon`/`arpege`/`hrrr`) match `MODEL_LEGEND_ORDER`
+> (`app.js`) exactly. `rocketry:error` is unchanged.
+>
+> **Why**: requested directly — "The ascent paths per forecast model should
+> be tied to the descent paths, and toggle with them as models are selected/
+> deselected." A single shared ascent path couldn't do that; per-model
+> results, tied 1:1 to each model's own descent path via the same
+> `state.selectedModels` filtering, can. Splashcast's consumer code
+> (`ASCENT_RESULTS`, `descent3d.js`/`app.js`) has been updated to match —
+> see Task 6 below. No further rocketry-side change expected for this; note
+> here only so this doc's earlier spec isn't mistaken for the current
+> contract.
+
 ### Splashcast's half of the contract (this plan's actual job, below)
 
 - Build the iframe `src` with all three query params (`windUrl`, `hour`,
@@ -358,6 +400,93 @@ console listener logs a well-formed `rocketry:ascentResult` (or
   only, safe to remove once superseded).
 - CHANGELOG entry + README staleness check before any push, per this
   repo's standing convention (`CLAUDE.md`).
+
+### Task 6 — Per-model ascent-path consumer rewrite (2026-08-16, once rocketry actually shipped)
+
+Added once rocketry's real embed page returned real per-model results (see
+the "Update 2026-08-16" callout above) instead of the single-result shape
+Task 4 was built against.
+
+- `app.js`: `ASCENT_RESULT` → `ASCENT_RESULTS` (renamed), stores the whole
+  `{rocketName, parseWarnings, stability, results: [{model, ascentPath}]}`
+  payload. Message listener now matches `rocketry:ascentResults`.
+- `descent3d.js`: every ascent function now takes an explicit `ascentPath`
+  (or `model`) argument instead of reading one global —
+  `ascentPathForModel(model)`, `ascentApogeeFt(ascentPath)`,
+  `ascentPositionTiltDeg(waypoint, ascentPath)`, `ascentBoxHTML(kind,
+  model)`. New `ascentMeanApogeeFt()` (mean across every model in the
+  result) for the few places that need ONE representative value rather
+  than a specific model's own (Z-axis scaling, the apogee-altitude label,
+  the shared descent-simulation starting altitude, and the 2D map's single
+  ground marker) — apogee position/altitude varies only ~0.5% model to
+  model in the real sample data, so a mean is honest, not a fudge.
+- `path3dDrawAscentPath(toScreen, model, ascentPath)` now draws ONE
+  model's ascent curve, colored via `MODEL_COLORS_HEX[model]` — the exact
+  same color as that model's own descent line, which is what visually
+  "ties" the two together (one continuous color, liftoff through apogee
+  down to landing).
+- `path3dDrawScene()`: ascent curves are drawn by iterating `paths` (the
+  descent-path list already filtered by `state.selectedModels` — see
+  `renderDescent3D()`), one `path3dDrawAscentPath()` call per entry that
+  has a matching model in `ASCENT_RESULTS.results`. This is the actual
+  toggle mechanism requested — no separate ascent-visibility flag exists
+  to fall out of sync with the descent-path model selection, because
+  ascent visibility is *derived from* the same already-filtered list.
+- Each model's own descent path now starts from THAT model's own true
+  ascent apogee offset (`shiftForModel(model)`), not one shared value —
+  previously (Task 4) every model's descent line was rigidly offset by a
+  single shift regardless of that model's own simulated weathercocking.
+- `ascentHitPoints` gained a `model` tag; `ascentBoxOpenKind` became a
+  composite `${model}|${kind}` key so several models' weathercock/burnout
+  popups don't collide; popup titles now use `modelNameHTML(model)` (same
+  colored model name every descent-path tooltip already uses).
+- 2D map's `drawPredictedApogeeMarker()` deliberately stayed a single
+  summary marker (not exploded per model) — the "tied to descent paths"
+  request was specifically about the 3D view (the 2D map has no per-model
+  descent-*path* curve, only point scatter/zones, to tie an ascent curve
+  to); it now uses `ascentMeanApogeeFt()` instead of one model's value.
+- Verified: JS brace/paren balance, no stray singular
+  `ASCENT_RESULT`/`rocketry:ascentResult` references, the sample payload's
+  6 models confirmed to match `MODEL_LEGEND_ORDER` exactly, served content
+  confirmed live via the local dev server. Full interactive round-trip
+  (real rocket/motor pick in rocketry's UI → live `postMessage` → renders
+  correctly with per-model toggling) still not yet done in an actual
+  browser — no browser automation available in this environment.
+
+> **Update 2026-08-16 (2) — rocket+motor name display, from rocketry's
+> repeat-visit caching update.** Rocketry's caching write-up
+> (`/home/ezrac/github/rocketry/tmp/splashcast-caching-update.md`) added
+> one new optional field to `rocketry:ascentResults`: `rocketConfig?:
+> { label: string; rocketSource; motorId; overrides }`, present whenever
+> rocketry has a cached rocket+motor config to attach (absent otherwise).
+> `label` is human-friendly and ready to display as-is (e.g. "LOC-IV X2 +
+> AeroTech K400C" — rocket **and** motor, unlike the existing top-level
+> `rocketName`, which is rocket-only). Requested directly: show this when a
+> flight profile is loaded.
+>
+> Implementation: new `#ascent-sim-label` element (`index.html`), a small
+> pill anchored above `#rail-angle-control` (`.ascent-sim-label`,
+> `app.css`) — `.rail-angle-control` is already `position: absolute`, so it
+> doubles as the containing block, no new positioning context needed. The
+> message listener (`app.js`) sets its text to
+> `data.rocketConfig?.label || data.rocketName` (falls back to the
+> rocket-only name on any payload that predates the caching update, or any
+> visit where rocketry has no cached config yet — e.g. private browsing,
+> first-ever pick before a sim has run) and shows it; `resetAscentSim()`
+> clears and hides it. Only `label` is read — `rocketSource`/`motorId`/
+> `overrides` are for a possible future "remember the pick on splashcast's
+> own side too" feature (mentioned as optional/deferred in rocketry's
+> write-up), not implemented here.
+>
+> Verified via a local Playwright script dispatching a synthetic
+> `message` event (real rocketry embed page not available in this
+> environment) against the sample payload
+> (`rocketry/sim-files/hutto-0815-loc-iv-k400-ascent-results.json`) with a
+> hand-added `rocketConfig.label`: label renders correctly
+> ("LOC-IV X2 + AeroTech K400C"), falls back to `rocketName` alone
+> ("LOC-IV-X2") when `rocketConfig` is omitted, and clears on
+> close/reset — screenshot confirmed the pill's placement above the dial
+> reads cleanly, no overlap with the map or other controls.
 
 ## Explicitly out of scope for this plan
 

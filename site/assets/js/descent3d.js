@@ -45,41 +45,78 @@
 // data/axis bug -- confirmed directly by walking the rotation math for a
 // pure-east unit vector at that angle. Orbiting away from yaw=0 by
 // dragging is still exactly this same rotation, just user-chosen.
-// --- real ascent-path integration: splices a real (rocketry-generated) ----
-// boost-phase simulation into this view in place of the straight-line
+// --- real ascent-path integration: splices real (rocketry-generated) ------
+// boost-phase simulations into this view in place of the straight-line
 // tan(angle) approximation railShiftFt() (app.js) otherwise stands in for.
-// ASCENT_RESULT (app.js) is null until a visitor opens the "Simulate real
+// ASCENT_RESULTS (app.js) is null until a visitor opens the "Simulate real
 // ascent path" panel and runs a sim in rocketry's own embedded UI -- see
 // app.js's own "rocketry ascent-path sim" section for the postMessage
 // listener that sets it, and .claude/plans/rocketry-flight-sim-
-// integration.md for the full cross-origin contract. While it's set, the
-// rail-angle dial is disabled (see app.js's message listener) -- its own
-// simple shift would double up against/contradict the real weathercocking
-// physics the sim result already accounts for, and "just move apogee along
-// the same line" isn't how a real sim's own apogee offset works, so the two
-// aren't reconcilable as-is.
+// integration.md for the full cross-origin contract. Rocketry computes one
+// ascent per forecast model (the same wind profile each model's own descent
+// path already integrates), not a single result -- ASCENT_RESULTS.results
+// is `[{model, ascentPath}, ...]`. Every function below that used to read
+// "the" ascent path now takes a specific model's `ascentPath` object
+// explicitly, and every draw site below is keyed off `paths` (the SAME
+// already state.selectedModels-filtered list path3dDrawPath() draws descent
+// lines from, see renderDescent3D()) -- an ascent curve only ever gets drawn
+// for a model whose descent line is also currently showing, which is what
+// ties the two together and makes them toggle as one unit. While a sim
+// result is active, the rail-angle dial is disabled (see app.js's message
+// listener) -- its own simple shift would double up against/contradict the
+// real weathercocking physics the sim result already accounts for, and
+// "just move apogee along the same line" isn't how a real sim's own apogee
+// offset works, so the two aren't reconcilable as-is.
 const ASCENT_M_TO_FT = 3.28084; // same literal pipeline/config.py's own elev_ft_for_site() uses
-// (x_ft, y_ft) = the real sim's own APOGEE offset from the pad, converted
-// m->ft -- substituted for railShiftFt(altFt)'s output in path3dDrawScene()
-// below, since it's the same "constant offset from pad to apogee" concept,
-// just from a real simulation instead of a tan(angle) stand-in. altFt comes
-// from the APOGEE waypoint's own `altitude` field (meters AGL, = position.z
-// per rocketry's ascent-path-export.README.md) -- NOT a `summary.
-// apogeeAltitudeFt` convenience field, which only ever existed in this
-// session's earlier hand-built test fixture, not in the real `AscentResult`
+
+// {model: ascentPath} for the given model, or null if rocketry didn't
+// return one for it (e.g. 'actual' -- History mode's real-flight overlay --
+// never has a matching sim result).
+function ascentPathForModel(model) {
+  if (!ASCENT_RESULTS) return null;
+  return ASCENT_RESULTS.results.find(r => r.model === model)?.ascentPath ?? null;
+}
+
+// (x_ft, y_ft) = a specific model's own real sim APOGEE offset from the
+// pad, converted m->ft -- substituted for railShiftFt(altFt)'s output at
+// that model's own draw sites in path3dDrawScene() below, since it's the
+// same "constant offset from pad to apogee" concept, just from a real
+// simulation instead of a tan(angle) stand-in. altFt comes from the APOGEE
+// waypoint's own `altitude` field (meters AGL, = position.z per rocketry's
+// ascent-path-export.README.md) -- NOT a `summary.apogeeAltitudeFt`
+// convenience field, which only ever existed in this session's earlier
+// hand-built single-model test fixture, not in the real per-model results
 // rocketry's library actually returns (confirmed directly against
-// src/lib.ts) -- substituted for resolveMapAltFt() so the descent side
-// splices on at the altitude the ascent sim actually reached, not whatever
-// the altitude ladder/slider happens to have selected.
-function ascentApogeeFt() {
-  const apogee = ASCENT_RESULT.ascentPath.waypoints.find(w => w.type === 'APOGEE');
+// src/lib.ts).
+function ascentApogeeFt(ascentPath) {
+  const apogee = ascentPath.waypoints.find(w => w.type === 'APOGEE');
   return {
     x: apogee.position.x * ASCENT_M_TO_FT,
     y: apogee.position.y * ASCENT_M_TO_FT,
     altFt: apogee.altitude * ASCENT_M_TO_FT,
   };
 }
-function ascentPathColor() { return '#06b6d4'; } // same cyan RAIL_BOOST_LINE_COLOR used for the stand-in it replaces
+
+// Mean across every model in the current sim result -- used wherever ONE
+// representative shift/altitude is needed rather than a specific model's
+// own value: the 2D map's single ground marker (app.js), and the 3D
+// scene's overall Z-axis scaling/apogee-altitude label/the descent-side
+// simulation's own starting altitude (renderDescent3D() -- descentPathsFor()
+// still runs once for all models, same as before this change, not
+// re-simulated per model). Apogee altitude/position barely varies model to
+// model in practice (real wind-shear/weathercocking differences, tenths of
+// a percent, not simulation noise) -- picking an arbitrary "first" model
+// for a value that has to represent all of them would be misleading.
+function ascentMeanApogeeFt() {
+  if (!ASCENT_RESULTS || !ASCENT_RESULTS.results.length) return null;
+  const all = ASCENT_RESULTS.results.map(r => ascentApogeeFt(r.ascentPath));
+  const n = all.length;
+  return {
+    x: all.reduce((s, a) => s + a.x, 0) / n,
+    y: all.reduce((s, a) => s + a.y, 0) / n,
+    altFt: all.reduce((s, a) => s + a.altFt, 0) / n,
+  };
+}
 
 // Compass bearing (0=N, 90=E, clockwise) of a real East/North offset --
 // NOT a wind "from" bearing like windShear's own directionFromDeg fields,
@@ -101,45 +138,56 @@ function ascentArrowHTML(bearingDeg) {
 }
 
 // Real trig, rail (LIFTOFF) GPS position -> the given waypoint's own GPS
-// position -- requested directly, NOT waypoint.tiltFromVerticalDeg, which
-// is the sim's own vehicle ATTITUDE (nose angle) at that instant, a
-// different quantity that can diverge hugely from the actual position
-// angle (confirmed directly against a real fixture: an APOGEE waypoint
-// reporting tiltFromVerticalDeg=87.8 degrees -- the vehicle tumbling/
-// coasting unstably in attitude by apogee -- while its real position was
-// only ~9 degrees off vertical from the rail). "Degree to apogee/motor
-// burnout" means the real geometric angle to that point, not the
-// vehicle's own nose angle when it got there.
-function ascentPositionTiltDeg(waypoint) {
-  const rail = ASCENT_RESULT.ascentPath.waypoints.find(w => w.type === 'LIFTOFF').position;
+// position, both from the SAME model's ascentPath -- requested directly,
+// NOT waypoint.tiltFromVerticalDeg, which is the sim's own vehicle
+// ATTITUDE (nose angle) at that instant, a different quantity that can
+// diverge hugely from the actual position angle (confirmed directly
+// against a real fixture: an APOGEE waypoint reporting
+// tiltFromVerticalDeg=87.8 degrees -- the vehicle tumbling/coasting
+// unstably in attitude by apogee -- while its real position was only ~9
+// degrees off vertical from the rail). "Degree to apogee/motor burnout"
+// means the real geometric angle to that point, not the vehicle's own
+// nose angle when it got there.
+function ascentPositionTiltDeg(waypoint, ascentPath) {
+  const rail = ascentPath.waypoints.find(w => w.type === 'LIFTOFF').position;
   const dx = waypoint.position.x - rail.x, dy = waypoint.position.y - rail.y, dz = waypoint.position.z - rail.z;
   return Math.atan2(Math.hypot(dx, dy), dz) * 180 / Math.PI;
 }
 
-// Reset each render (path3dDrawScene()), populated by
-// path3dDrawAscentPath() below -- {sx, sy, kind} for the 2 clickable
-// points, same shape convention path3dHitPoints already uses for the
-// descent paths' own hover hit-testing.
+// Reset once per render (path3dDrawScene(), before the per-model draw
+// loop), appended to by path3dDrawAscentPath() below for EACH model drawn
+// -- {sx, sy, kind, model} for the 2 clickable points per model, same shape
+// convention path3dHitPoints already uses for the descent paths' own hover
+// hit-testing, plus a `model` tag so a hit can be traced back to which
+// model's own ascentPath to read.
 let ascentHitPoints = [];
 
-// Warnings block, prepended when present -- rocketry deliberately sends a
-// flyable:false/warned result through rather than blocking it (see the
-// integration plan's own "Splashcast's half of the contract"), so this is
-// the layer responsible for surfacing that rather than silently plotting
-// an unstable configuration's result as if it were routine.
+// Warnings are shared across every model (stability/parse warnings come
+// from the rocket+motor config, not the wind), so this stays a single
+// top-level block, prepended into whichever popup is open regardless of
+// model -- rocketry deliberately sends a flyable:false/warned result
+// through rather than blocking it (see the integration plan's own
+// "Splashcast's half of the contract"), so this is the layer responsible
+// for surfacing that rather than silently plotting an unstable
+// configuration's result as if it were routine.
 function ascentWarningsHTML() {
-  const warnings = [...(ASCENT_RESULT.stability?.warnings ?? []), ...(ASCENT_RESULT.parseWarnings ?? [])];
+  const warnings = [...(ASCENT_RESULTS.stability?.warnings ?? []), ...(ASCENT_RESULTS.parseWarnings ?? [])];
   if (!warnings.length) return '';
   return `<div class="ascent-warning">${warnings.map(w => `&#9888; ${w}`).join('<br>')}</div>`;
 }
 
-function ascentBoxHTML(kind) {
-  const launchrod = ASCENT_RESULT.ascentPath.waypoints.find(w => w.type === 'LAUNCHROD');
-  const burnout = ASCENT_RESULT.ascentPath.waypoints.find(w => w.type === 'BURNOUT');
-  const apogee = ASCENT_RESULT.ascentPath.waypoints.find(w => w.type === 'APOGEE');
+// modelNameHTML() (app.js) in the title -- same per-model-colored name
+// every descent-path tooltip already uses, so this popup visibly reads as
+// "this model's own ascent," not a generic/unlabeled one now that several
+// can be open (one at a time, but for different models) across a session.
+function ascentBoxHTML(kind, model) {
+  const ascentPath = ascentPathForModel(model);
+  const launchrod = ascentPath.waypoints.find(w => w.type === 'LAUNCHROD');
+  const burnout = ascentPath.waypoints.find(w => w.type === 'BURNOUT');
+  const apogee = ascentPath.waypoints.find(w => w.type === 'APOGEE');
   if (kind === 'burnout') {
     const ft = Math.round(burnout.altitude * ASCENT_M_TO_FT).toLocaleString();
-    return `${ascentWarningsHTML()}<div class="rf-title">Motor burnout</div>${ft} ft AGL`;
+    return `${ascentWarningsHTML()}<div class="rf-title">${modelNameHTML(model)} &mdash; motor burnout</div>${ft} ft AGL`;
   }
   // kind === 'weathercock' -- requested directly: rail exit velocity,
   // ground wind speed (both converted m/s -> fps, same ASCENT_M_TO_FT
@@ -156,18 +204,18 @@ function ascentBoxHTML(kind) {
   // a label -- "94 fps rail exit velocity", not "Rail exit velocity: 94
   // fps".
   const railFps = (launchrod.speed * ASCENT_M_TO_FT).toFixed(0);
-  const groundWindFps = (ASCENT_RESULT.ascentPath.windShear.ground.speed * ASCENT_M_TO_FT).toFixed(0);
+  const groundWindFps = (ascentPath.windShear.ground.speed * ASCENT_M_TO_FT).toFixed(0);
   // windVaneHTML() (app.js), NOT ascentArrowHTML() -- ground wind is a
   // real wind "from" bearing (windShear.ground.directionFromDeg), the same
   // shape/convention every other wind arrow in this app already reads,
   // unlike the burnout/apogee bearings below (which are real position-
   // vector "toward" bearings, ascentBearingDeg()'s own case).
-  const groundWindArrow = windVaneHTML(ASCENT_RESULT.ascentPath.windShear.ground.directionFromDeg);
-  const toBurnoutDeg = ascentPositionTiltDeg(burnout).toFixed(1);
+  const groundWindArrow = windVaneHTML(ascentPath.windShear.ground.directionFromDeg);
+  const toBurnoutDeg = ascentPositionTiltDeg(burnout, ascentPath).toFixed(1);
   const toBurnoutBearing = Math.round(ascentBearingDeg(burnout.position.x, burnout.position.y));
-  const toApogeeDeg = ascentPositionTiltDeg(apogee).toFixed(1);
+  const toApogeeDeg = ascentPositionTiltDeg(apogee, ascentPath).toFixed(1);
   const toApogeeBearing = Math.round(ascentBearingDeg(apogee.position.x, apogee.position.y));
-  return `${ascentWarningsHTML()}<div class="rf-title">Weathercocking (rail to burnout)</div>` +
+  return `${ascentWarningsHTML()}<div class="rf-title">${modelNameHTML(model)} &mdash; weathercocking (rail to burnout)</div>` +
     `${railFps} fps rail exit velocity<br>` +
     `${groundWindFps} fps ${groundWindArrow} ground wind speed<br>` +
     `${toBurnoutDeg}&deg; @ ${toBurnoutBearing}&deg; ${ascentArrowHTML(toBurnoutBearing)} to motor burnout<br>` +
@@ -189,15 +237,20 @@ function ascentBoxHTML(kind) {
 // descent paths in a rotatable 3D scene ("interference... not easy to
 // solve"); click/hover-to-reveal sidesteps needing to solve label
 // placement instead.
+// ascentBoxOpenKind is a composite "model|kind" key now (not just kind) --
+// several models can each have their own open-able weathercock/burnout
+// point on screen at once, so the toggle-closed-on-repeat-click/hover
+// check needs to know WHICH model's point is currently open, not just
+// which kind.
 let ascentBoxOpenKind = null;
 const ascentBox = document.getElementById('ascent-box');
-function showAscentBox(evt, kind) {
-  ascentBox.innerHTML = ascentBoxHTML(kind);
+function showAscentBox(evt, kind, model) {
+  ascentBox.innerHTML = ascentBoxHTML(kind, model);
   const [x, y] = positionBoxAvoiding(evt, []);
   ascentBox.style.left = x + 'px';
   ascentBox.style.top = y + 'px';
   ascentBox.style.display = 'block';
-  ascentBoxOpenKind = kind;
+  ascentBoxOpenKind = `${model}|${kind}`;
 }
 function hideAscentBox() {
   ascentBox.style.display = 'none';
@@ -207,23 +260,29 @@ document.addEventListener('click', () => {
   if (ascentBoxOpenKind !== null) hideAscentBox();
 });
 
-// Draws the real multi-point ascent curve (path[], liftoff->apogee) in
-// place of path3dDrawBoostLine()'s straight dashed stand-in -- same toScreen
-// closure the ground plane/axes use (NOT toScreenPath, since these
-// positions are already the real absolute pad-relative trajectory, not a
-// drift-since-apogee value needing railShift added on top the way each
-// model's own descent path does). Solid, not dashed -- unlike the rail-
-// angle stand-in, this really is a simulated trajectory, same visual
-// language path3dDrawPath() already uses for the (real, wind-integrated)
-// descent paths below apogee.
-function path3dDrawAscentPath(toScreen) {
+// Draws one model's real multi-point ascent curve (ascentPath.path[],
+// liftoff->apogee), colored to match that SAME model's own descent line
+// (MODEL_COLORS_HEX, app.js) -- this is what visually "ties" an ascent
+// curve to its descent path: one continuous color from liftoff through
+// apogee down to landing, and (since this is only ever called for models
+// present in `paths`, which is already filtered by state.selectedModels --
+// see path3dDrawScene()'s own call site) toggling a model off hides both
+// halves together for free, no separate visibility flag to keep in sync.
+// Draws with plain `toScreen` (NOT toScreenPath), since these positions are
+// already the real absolute pad-relative trajectory, not a drift-since-
+// apogee value needing a shift added on top the way each model's own
+// descent path does. Solid, not dashed -- unlike the rail-angle stand-in,
+// this really is a simulated trajectory, same visual language
+// path3dDrawPath() already uses for the (real, wind-integrated) descent
+// paths below apogee.
+function path3dDrawAscentPath(toScreen, model, ascentPath) {
   const ctx = path3dCtx;
-  const color = ascentPathColor();
+  const color = MODEL_COLORS_HEX[model] || '#06b6d4'; // same fallback cyan RAIL_BOOST_LINE_COLOR used for the single-line stand-in
   ctx.save();
   ctx.strokeStyle = color;
   ctx.lineWidth = 2;
   ctx.beginPath();
-  ASCENT_RESULT.ascentPath.path.forEach((pt, i) => {
+  ascentPath.path.forEach((pt, i) => {
     const [sx, sy] = toScreen(pt.position.x * ASCENT_M_TO_FT, pt.position.y * ASCENT_M_TO_FT, pt.altitude * ASCENT_M_TO_FT);
     if (i === 0) ctx.moveTo(sx, sy); else ctx.lineTo(sx, sy);
   });
@@ -237,8 +296,8 @@ function path3dDrawAscentPath(toScreen) {
   // ("base") as the one ground-level reference point -- same reasoning as
   // when these were still always-visible labels, still applies to where
   // the points themselves sit.
-  const base = ASCENT_RESULT.ascentPath.waypoints.find(w => w.type === 'LIFTOFF');
-  const burnout = ASCENT_RESULT.ascentPath.waypoints.find(w => w.type === 'BURNOUT');
+  const base = ascentPath.waypoints.find(w => w.type === 'LIFTOFF');
+  const burnout = ascentPath.waypoints.find(w => w.type === 'BURNOUT');
   const [bx, by] = toScreen(base.position.x * ASCENT_M_TO_FT, base.position.y * ASCENT_M_TO_FT, base.altitude * ASCENT_M_TO_FT);
   const [ux, uy] = toScreen(burnout.position.x * ASCENT_M_TO_FT, burnout.position.y * ASCENT_M_TO_FT, burnout.altitude * ASCENT_M_TO_FT);
 
@@ -248,10 +307,12 @@ function path3dDrawAscentPath(toScreen) {
   ctx.fillRect(ux - 3, uy - 3, 6, 6);
   ctx.restore();
 
-  ascentHitPoints = [
-    { sx: bx, sy: by, kind: 'weathercock' },
-    { sx: ux, sy: uy, kind: 'burnout' },
-  ];
+  // Appended, not reassigned -- path3dDrawScene() resets this to [] once,
+  // before calling this function once per visible model.
+  ascentHitPoints.push(
+    { sx: bx, sy: by, kind: 'weathercock', model },
+    { sx: ux, sy: uy, kind: 'burnout', model },
+  );
 }
 
 let path3dYaw = 0;
@@ -496,7 +557,7 @@ function path3dEndDrag(evt) {
   // silently reopen it next mousemove. Checked only on 'pointerup' (not
   // 'pointercancel', which path3dEndDrag also handles but doesn't
   // represent a completed click) and only once a sim result is active.
-  if (evt && evt.type === 'pointerup' && ASCENT_RESULT && path3dDragDistPx <= 4) {
+  if (evt && evt.type === 'pointerup' && ASCENT_RESULTS && path3dDragDistPx <= 4) {
     const rect = path3dCanvas.getBoundingClientRect();
     const mx = evt.clientX - rect.left, my = evt.clientY - rect.top;
     let best = null, bestDist = Infinity;
@@ -505,8 +566,8 @@ function path3dEndDrag(evt) {
       if (d < bestDist) { bestDist = d; best = h; }
     });
     if (best && bestDist <= PROXIMITY_PX) {
-      if (ascentBoxOpenKind === best.kind) hideAscentBox();
-      else showAscentBox(evt, best.kind);
+      if (ascentBoxOpenKind === `${best.model}|${best.kind}`) hideAscentBox();
+      else showAscentBox(evt, best.kind, best.model);
     } else hideAscentBox();
   }
   path3dDragging = false;
@@ -569,7 +630,7 @@ function path3dHandleHover(evt) {
   // path3dDragging=true there, see that listener's own comment), so this
   // is desktop-only by construction, same as the tooltip hover it's
   // modeled on -- touch still opens via path3dEndDrag's own click hit-test.
-  if (ASCENT_RESULT) {
+  if (ASCENT_RESULTS) {
     let tBest = null, tBestDist = Infinity;
     ascentHitPoints.forEach(h => {
       const d = Math.hypot(h.sx - mx, h.sy - my);
@@ -577,7 +638,7 @@ function path3dHandleHover(evt) {
     });
     if (tBest && tBestDist <= PROXIMITY_PX) {
       hideTooltip();
-      showAscentBox(evt, tBest.kind);
+      showAscentBox(evt, tBest.kind, tBest.model);
       return;
     }
     if (ascentBoxOpenKind !== null) hideAscentBox();
@@ -742,8 +803,12 @@ function renderDescent3D() {
   // in between, only the FIRST call in a pass can actually flip anything.
   // Splice at the real ascent sim's own apogee altitude, not whatever the
   // ladder/slider has selected, once a sim result is active -- see
-  // ascentApogeeFt()'s own comment.
-  const altFt = ASCENT_RESULT ? ascentApogeeFt().altFt : resolveMapAltFt();
+  // ascentMeanApogeeFt()'s own comment for why this is a mean across
+  // models rather than any one model's own value (this altitude feeds the
+  // shared descent-path simulation below, which still runs once for every
+  // model, not re-simulated per model).
+  const ascentMean = ASCENT_RESULTS ? ascentMeanApogeeFt() : null;
+  const altFt = ascentMean ? ascentMean.altFt : resolveMapAltFt();
   mapAltLastResolvedFt = altFt;
   mapAltUpdateSliderUI(altFt);
 
@@ -842,16 +907,29 @@ function path3dDrawScene(paths, altFt) {
   // path is plotted against, not the path itself, and must stay put
   // regardless of rail angle (only padOffsetFt, a real "what if the pad
   // were somewhere else" scene translation, legitimately moves those too).
-  // Once a sim result is active, its own real apogee offset stands in for
-  // the tan(angle) approximation -- same "constant offset from pad to
-  // apogee" role, everything downstream (toScreenPath, maxXY, per-model
-  // descent paths) is unchanged by which one produced it.
-  const railShift = ASCENT_RESULT ? ascentApogeeFt() : railShiftFt(altFt);
+  // Once a sim result is active, EACH model's own real apogee offset
+  // stands in for the tan(angle) approximation for THAT model's own
+  // descent path -- shiftForModel() below resolves that per model
+  // (falling back to the mean, e.g. for 'actual', which never has its own
+  // sim result). railShift itself stays the single representative/default
+  // value (the mean) used for scene bounds, the apogee-altitude label, and
+  // the boost-line fallback when no sim result is active at all -- see
+  // ascentMeanApogeeFt()'s own comment for why a mean rather than picking
+  // one model arbitrarily.
+  const railShift = ascentMean || railShiftFt(altFt);
+  function shiftForModel(model) {
+    if (!ASCENT_RESULTS) return railShift; // dial-based, shared, unchanged from before this feature existed
+    const ascentPath = ascentPathForModel(model);
+    return ascentPath ? ascentApogeeFt(ascentPath) : railShift; // per-model when rocketry returned one, else the mean (e.g. 'actual')
+  }
   let maxXY = 1;
   const maxZ = Math.max(1, altFt);
-  paths.forEach(p => p.path.forEach(pt => {
-    maxXY = Math.max(maxXY, Math.abs(pt.x_ft + padOffsetFt.x + railShift.x), Math.abs(pt.y_ft + padOffsetFt.y + railShift.y));
-  }));
+  paths.forEach(p => {
+    const shift = shiftForModel(p.model);
+    p.path.forEach(pt => {
+      maxXY = Math.max(maxXY, Math.abs(pt.x_ft + padOffsetFt.x + shift.x), Math.abs(pt.y_ft + padOffsetFt.y + shift.y));
+    });
+  });
   const maxX = maxXY, maxY = maxXY;
 
   // How much Z actually contributes to the CURRENT view's vertical screen
@@ -907,13 +985,20 @@ function path3dDrawScene(paths, altFt) {
     const r = path3dRotate((xFt + padOffsetFt.x) / scaleFt, (yFt + padOffsetFt.y) / scaleFt, zFt / scaleFt);
     return [cx + r.sx * radius, cy - r.sy * radius, r.depth];
   }
-  // Same as toScreen(), plus the constant rail-angle shift computed above
-  // -- used only for the actual flight path/apogee marker (path3dDrawPath
-  // below), never for the ground plane/axes/origin, which stay anchored
-  // to the real, unshifted coordinate grid.
-  function toScreenPath(xFt, yFt, zFt) {
-    return toScreen(xFt + railShift.x, yFt + railShift.y, zFt);
+  // Same as toScreen(), plus a constant rail-angle/ascent shift -- used
+  // only for the actual flight path/apogee marker (path3dDrawPath below),
+  // never for the ground plane/axes/origin, which stay anchored to the
+  // real, unshifted coordinate grid. A factory, not one fixed closure, now
+  // that each model can have its own shift (shiftForModel() above) --
+  // toScreenPath itself is kept as the default/mean-shifted version, used
+  // wherever ONE representative version is still wanted (the depth-sort
+  // below, the boost-line fallback, the apogee label); the per-model
+  // descent-path draw loop further down asks for its own per-model version
+  // explicitly instead.
+  function toScreenPathFor(shift) {
+    return (xFt, yFt, zFt) => toScreen(xFt + shift.x, yFt + shift.y, zFt);
   }
+  const toScreenPath = toScreenPathFor(railShift);
 
   // Ground plane first, before axes/paths, so it reads as a floor
   // underneath them -- wide layer behind (broad coverage), detail layer
@@ -940,10 +1025,18 @@ function path3dDrawScene(paths, altFt) {
   // to it under thrust); the dash pattern is a deliberate "approximate/
   // stand-in" signal, matching this app's usual care about not presenting
   // a derived/simplified value as if it were a measurement or a sim.
-  // Real multi-point ascent curve instead of the straight dashed stand-in,
-  // once a sim result is active.
-  if (ASCENT_RESULT) {
-    path3dDrawAscentPath(toScreen);
+  // Real multi-point ascent curve per model instead of the single straight
+  // dashed stand-in, once a sim result is active -- one call per entry in
+  // `paths` (already filtered by state.selectedModels, see
+  // renderDescent3D()'s own comment), so a model with no matching sim
+  // result (e.g. 'actual') or one the visitor has deselected simply never
+  // gets a curve drawn, no separate visibility check needed here.
+  ascentHitPoints = [];
+  if (ASCENT_RESULTS) {
+    paths.forEach(p => {
+      const ascentPath = ascentPathForModel(p.model);
+      if (ascentPath) path3dDrawAscentPath(toScreen, p.model, ascentPath);
+    });
   } else {
     path3dDrawBoostLine(toScreen, toScreenPath, altFt);
   }
@@ -952,13 +1045,21 @@ function path3dDrawScene(paths, altFt) {
   // (disentangles overlapping model lines when orbited), touches no data.
   // toScreenPath(), not toScreen() -- sorting by the ACTUAL (shifted)
   // rendered depth, not the unshifted one, so the sort matches what's
-  // actually drawn a few lines down.
+  // actually drawn a few lines down. Uses the default/mean-shifted
+  // toScreenPath for ordering purposes even though each model draws with
+  // its own per-model shift below -- the shifts are close enough
+  // (apogee position barely varies model to model, see
+  // ascentMeanApogeeFt()'s own comment) that draw order never visibly
+  // flips from this simplification.
   const ordered = paths
     .map(p => ({ p, depth: p.path.reduce((s, pt) => s + toScreenPath(pt.x_ft, pt.y_ft, pt.alt_ft)[2], 0) / p.path.length }))
     .sort((a, b) => a.depth - b.depth)
     .map(o => o.p);
 
-  ordered.forEach(p => path3dDrawPath(p, toScreenPath, altFt, railShift));
+  ordered.forEach(p => {
+    const shift = shiftForModel(p.model);
+    path3dDrawPath(p, toScreenPathFor(shift), altFt, shift);
+  });
 
   // Drawn LAST -- on top of the ground plane, axes, and every model's own
   // path/apogee marker, so it's never occluded by any of them regardless
@@ -971,10 +1072,11 @@ function path3dDrawScene(paths, altFt) {
 // fine over this app's own surface color) washed out against real map
 // imagery. Solid white background, independent of light/dark theme, since
 // the point is contrast against a photo, not matching the app's own
-// palette. One label, not per-model -- same reasoning as
-// path3dDrawBoostLine() above: every path shares the identical apogee
-// point (toScreenPath(0, 0, altFt)), so a per-model version would just be
-// the same text stacked on itself.
+// palette. One label, not per-model -- positioned at the mean apogee
+// point/altitude across all models (railShift/altFt, see
+// ascentMeanApogeeFt()'s own comment), since real per-model apogees sit
+// close enough together that per-model labels would just stack
+// unreadably on top of each other for little real information gained.
 function path3dDrawApogeeLabel(toScreenPath, altFt) {
   const ctx = path3dCtx;
   const [ax, ay] = toScreenPath(0, 0, altFt);

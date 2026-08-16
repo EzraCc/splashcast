@@ -249,6 +249,11 @@ writeLocalBustedTag('<link rel="stylesheet" href="', 'assets/css/app.css', '">')
            exclusive display:none siblings with no extra padding around
            them) -- no per-mode positioning logic needed. -->
       <div class="rail-angle-control" id="rail-angle-control">
+        <!-- Rocket + motor name for whichever sim result is currently
+             driving the boost line -- e.g. "LOC-IV X2 + AeroTech K400C".
+             Hidden until a rocketry:ascentResults message arrives (see
+             app.js's message listener), cleared on resetAscentSim(). -->
+        <div class="ascent-sim-label" id="ascent-sim-label" style="display:none;"></div>
         <!-- The dial itself -- not a stand-in icon -- is always visible
              and always draggable, collapsed or not. It's a real,
              distinctive circular widget (not another 30px square button
