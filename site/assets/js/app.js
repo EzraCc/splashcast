@@ -621,6 +621,101 @@ function buildToggle(containerId, options, labels, stateKey, onChange) {
   });
 }
 
+// Extracted from the #deploy-toggle buildToggle() call below (2026-08) so
+// it's also reusable from applyDeployMode() -- rocketry's own real
+// descent-device data (see that function's own comment) needs to trigger
+// the exact same follow-up as a manual Single/Dual click, not a
+// re-implementation of it.
+function onDeployChanged() {
+  deployExplicitlyChosen = true;
+  // Which altitudes have a real zone changes with deploy (single-deploy
+  // drops above SINGLE_DEPLOY_MAX_ALT_FT pipeline-side) -- refresh the row
+  // list's unavailable rows/selectedAlts revalidation.
+  buildAltList();
+  // Single deploy's phase construction (zoneFor()) never reads the drogue
+  // rate at all -- disable those inputs rather than leave them editable
+  // and silently ignored.
+  buildRateEditor();
+  syncAltCustomUI(); // single/dual changes whether the custom altitude has a zone at all
+}
+// Same effect as clicking the Single/Dual toggle directly (state + the
+// toggle's own active-highlight + onDeployChanged()'s follow-up), for use
+// from code instead of a real click -- applyDescentDevices() below is the
+// only caller today. No-op if already on that mode (rocketry's descent
+// devices reflect the currently-active rocket, so a repeat sim result for
+// the same rocket shouldn't visibly re-flash the toggle).
+function applyDeployMode(mode) {
+  if (state.deploy === mode) return;
+  state.deploy = mode;
+  buildToggle('deploy-toggle', DATA.deploys, DEPLOY_LABELS, 'deploy', onDeployChanged);
+  onDeployChanged();
+}
+
+// Real, computed drogue/main descent rates from the currently-simulated
+// rocket's actual recovery hardware (rocketry's `descentDevices`, added
+// 2026-08 -- `rocketry/tmp/splashcast-caching-update.md`'s "descentDevices"
+// section) -- terminal-velocity physics against that rocket's real
+// descending mass, not a stub. Requested directly: "are we getting descent
+// rates from rocketry... and adjusting them... to affect the landing
+// zone?" -- this is that wiring. Pre-fills state.rateFps/state.deploy the
+// same way clicking Fast/Slow or Single/Dual would (one-time seed, not a
+// live override tied to ASCENT_RESULTS -- unlike apogee altitude, a
+// descent rate is normal user-editable state elsewhere in this app, so it
+// should behave like any other edit: stays put after the visitor closes
+// the ascent panel, and remains hand-editable afterward same as always).
+// `deployAltitudeM` is always null in the real contract right now (RockSim
+// .rkt has no field for it at all) -- DATA.descent_params.main_deploy_altitude_ft
+// (the site's own generic pipeline constant, read-only in this UI) is
+// deliberately left untouched; per direction, a visitor who wants a
+// different value has no in-app way to change it today ("they'll have to
+// manually fix it or fix their sim file").
+//
+// Exactly one device -> single-stage (one canopy the whole way), applied
+// to `main` -- a device's own `role` ("drogue"/"main") already tells
+// rocketry's real recovery hardware apart (smaller device = drogue, larger
+// = main, physically, which is what that role assignment reflects), not
+// something this function re-derives from size. Two devices -> dual,
+// mapped by role directly. Anything else (3+ devices, or a role missing
+// from a 2-device set) is left alone rather than guessed at.
+function applyDescentDevices(descentDevices) {
+  if (!descentDevices || !descentDevices.length) return;
+  const limits = DATA.descent_params.rate_limits_fps;
+  // Same integer-fps/clamp/Tripoli-35fps-warning treatment the rate
+  // editor's own manual-edit handler applies -- a real rocket's real
+  // computed rate deserves the identical scrutiny a hand-typed one gets,
+  // not a silent bypass. mainOverLimit tracked separately and applied via
+  // showRateWarning() AFTER buildRateEditor() below, not before --
+  // buildRateEditor() unconditionally resets the warning banner to hidden
+  // as part of its own rebuild (see its own comment), so calling
+  // showRateWarning() before it would just get immediately clobbered
+  // (confirmed directly: a real over-limit rate silently showed no
+  // warning at all until this ordering fix).
+  let mainOverLimit = false;
+  const toFps = mps => Math.round(mps * ASCENT_M_TO_FT);
+  const setPart = (part, mps) => {
+    const raw = toFps(mps);
+    if (part === 'main' && raw > limits.main[1]) mainOverLimit = true;
+    state.rateFps[part] = Math.min(limits[part][1], Math.max(limits[part][0], raw));
+  };
+
+  if (descentDevices.length === 1) {
+    applyDeployMode('single');
+    setPart('main', descentDevices[0].descentRateMs);
+  } else {
+    const drogue = descentDevices.find(d => d.role === 'drogue');
+    const main = descentDevices.find(d => d.role === 'main');
+    if (drogue && main) {
+      applyDeployMode('dual');
+      setPart('drogue', drogue.descentRateMs);
+      setPart('main', main.descentRateMs);
+    }
+  }
+  state.rateName = rateNameMatching(state.rateFps);
+  invalidateZones();
+  buildRateEditor();
+  showRateWarning(mainOverLimit);
+}
+
 function setMode(mode) {
   // 3D only supports byAltitude and byHistory (renderDescent3D() shows an
   // empty-state hint for byTime, see its own guard) -- switching to byTime
@@ -2570,6 +2665,13 @@ window.addEventListener('message', evt => {
       rocketConfig: data.rocketConfig,
       resultsByHour: { [ascentSimRequestedHour]: data.results },
     };
+    // Real per-rocket descent rates (and, when there's only one recovery
+    // device, a real single-vs-dual deploy correction) -- see
+    // applyDescentDevices()'s own comment. Rocket-level, not wind/hour-
+    // level (same as rocketName/stability/rocketConfig above), so this
+    // only needs to run once here, not repeated on every background
+    // prefetch response.
+    applyDescentDevices(data.descentDevices);
     railAngleControl.classList.add('sim-active');
     railAngleControl.title = 'Dial disabled -- a real ascent-path simulation result is active. Its own weathercocking physics already replaces the simple rail-angle shift for this apogee. Use the rocket icon to change or clear it.';
     // rocketConfig.label ("LOC-IV X2 + AeroTech K400C") is the human-
@@ -6326,18 +6428,7 @@ function initFromData() {
   buildToggle('mode-toggle', ['byAltitude', 'byTime', 'byHistory'], MODE_LABELS, 'mode', () => setMode(state.mode));
   // Hour selection is built as part of renderWeatherPanel() below (its
   // header row's own time slider) -- no standalone #hour-toggle any more.
-  buildToggle('deploy-toggle', DATA.deploys, DEPLOY_LABELS, 'deploy', () => {
-    deployExplicitlyChosen = true;
-    // Which altitudes have a real zone changes with deploy (single-deploy
-    // drops above SINGLE_DEPLOY_MAX_ALT_FT pipeline-side) -- refresh the row
-    // list's unavailable rows/selectedAlts revalidation.
-    buildAltList();
-    // Single deploy's phase construction (zoneFor()) never reads the drogue
-    // rate at all -- disable those inputs rather than leave them editable
-    // and silently ignored.
-    buildRateEditor();
-    syncAltCustomUI(); // single/dual changes whether the custom altitude has a zone at all
-  });
+  buildToggle('deploy-toggle', DATA.deploys, DEPLOY_LABELS, 'deploy', onDeployChanged);
   buildTimeLegend();
   buildAltList();
   buildModelLegend();

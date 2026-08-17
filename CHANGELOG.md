@@ -2,6 +2,14 @@
 
 Dated, terse log of notable changes. For the full design rationale and decision history, see [docs/spec.md](docs/spec.md).
 
+## 2026-08-17
+
+**Added: real per-rocket descent rates from rocketry now drive the landing zone**
+- Asked directly whether descent rates/main-deploy altitude were coming from rocketry and adjusting the landing zone. They weren't -- confirmed both sides: splashcast's descent sim only ever read generic site-level `state.rateFps`/`DATA.descent_params.main_deploy_altitude_ft`, and rocketry didn't even parse recovery hardware (`.ork` parser explicitly skips `parachute` as "known but ignored"). Rocketry has since added `descentDevices` (real terminal-velocity physics against the actual rocket's mass, present for RockSim `.rkt` uploads/library picks only) -- `deployAltitudeM` is always `null` (RockSim's format has no field for it at all), so `main_deploy_altitude_ft` stays the site's generic constant, untouched.
+- New `applyDescentDevices()` (`app.js`), applied once per rocket pick (not per prefetched hour -- this data doesn't vary by wind): exactly one recovery device switches to single-stage deploy; two devices map by their own `role` field (drogue/main) and switch to dual. Real m/s rates convert to integer fps and run through the same clamp/Tripoli-35fps-warning treatment a hand-typed rate gets. One-time seed, not a live override -- behaves like clicking Fast/Slow or Single/Dual, stays put after the ascent panel closes and remains hand-editable afterward.
+- Found and fixed a real bug during verification: the 35fps safety warning silently never fired, even for a genuinely over-limit rate -- `buildRateEditor()`'s own rebuild unconditionally resets the warning banner, and the new code was setting it before that rebuild ran, getting immediately clobbered. Fixed by reordering.
+- Verified via headless-Chromium: a real 2-device payload (LOC-IV X2's actual 21.37/6.95 m/s drogue/main) produced exactly 70/23 fps dual deploy in both internal state and the rate editor's own inputs; a 1-device payload correctly switched to single-stage with drogue disabled; an oversized main rate correctly triggered the warning and clamped to 35fps; a payload with no `descentDevices` left everything unchanged (backward compatible); and `zoneFor()`'s own output points differ before/after -- the landing zone itself actually changes, not just the displayed numbers.
+
 ## 2026-08-16
 
 **Added: draggable, resizable, full-screen-toggleable ascent-sim modal**

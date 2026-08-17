@@ -1,7 +1,7 @@
 Status: in-progress
 Priority: high
 Type: new-feature
-Last updated: 2026-08-16
+Last updated: 2026-08-17
 
 # Rocketry flight-sim integration (embedded, cross-origin — no code sharing)
 
@@ -24,6 +24,7 @@ Last updated: 2026-08-16
 - [x] Task 10 — `autoSend=1` param on prefetch-only requests, model-selection-aware apogee mean (rounded to nearest 10ft in 3D), and a real click-to-open popup for the Clouds row's warning badge — see "Update 2026-08-16 (5)" below. **`autoSend=1` needs matching rocketry-side support** (contract addition, not yet confirmed shipped) — everything else in this task is splashcast-only.
 - [x] Task 11 — 15-minute ascent interpolation between the two bracketing real prefetched hours, dashed/faded when shown — **splashcast-side only, no rocketry change needed** (same reasoning as Task 9) — see "Update 2026-08-16 (6)" below
 - [x] Task 12 — Draggable/resizable/full-screen-toggleable ascent-sim modal (`index.html`, `app.css`, `app.js`) — **splashcast-side only, entirely a wrapper around the existing iframe, no rocketry change needed** — see "Update 2026-08-16 (7)" below
+- [x] Task 13 — Real per-rocket descent rates (`descentDevices`) now adjust `state.rateFps`/`state.deploy`, actually affecting the landing zone — see "Update 2026-08-17 (1)" below
 
 ## Context
 
@@ -845,6 +846,86 @@ Task 4 was built against.
 > rect, not the original default; a drag attempt while full-screen is
 > correctly a no-op; closing and reopening the modal resets fully back to
 > the default layout. Zero console errors throughout.
+
+> **Update 2026-08-17 (1) — real per-rocket descent rates now drive the
+> landing zone.** Asked directly: "are we getting descent rates from
+> rocketry after the handoff and adjusting them, along with main deploy
+> altitude, to affect the landing zone?" Answer at the time: no, on either
+> count — splashcast's descent simulation only ever read
+> `state.rateFps`/`DATA.descent_params.main_deploy_altitude_ft` (generic,
+> site-level), and rocketry didn't even parse recovery hardware at all
+> (`.ork` parser explicitly skips `parachute` as a "known but ignored"
+> tag). Confirmed both independently before answering — not a guess.
+>
+> Rocketry has since added `descentDevices` (see
+> `rocketry/tmp/splashcast-caching-update.md`'s own "descentDevices"
+> section) — a new, optional, single top-level field (not per-model,
+> descent rate doesn't depend on wind):
+> ```ts
+> descentDevices?: { role: "drogue" | "main"; type: "parachute" | "streamer"; descentRateMs: number; deployAltitudeM: number | null }[]
+> ```
+> Real terminal-velocity physics against the actual rocket's descending
+> mass and launch-site air density (rocketry's own existing local
+> "Recovery devices" panel calculation, not a stub), present only for
+> RockSim `.rkt` uploads/library picks (`.ork`/RASAero recovery-device
+> extraction doesn't exist yet). **`deployAltitudeM` is always `null`** —
+> RockSim's own file format has no field for it at all (confirmed against
+> every device in rocketry's vendored library and against OpenRocket's own
+> RockSim importer). Per direction: `main_deploy_altitude_ft` stays the
+> site's generic pipeline constant, untouched — "they'll have to manually
+> fix it or fix their sim file" (there's no in-app way to edit it today;
+> `main_deploy_altitude_ft` is explicitly read-only in this UI, per its
+> own existing comment).
+>
+> **Implementation** (`app.js`): new `applyDescentDevices(descentDevices)`,
+> called once from the interactive-result branch of the message listener
+> (not the background-prefetch branch — rocket-level data doesn't vary by
+> hour, so applying it once per rocket pick is correct). Exactly one
+> device → single-stage, applied to `main` (a device's own `role` already
+> tells drogue/main apart physically — smaller device is drogue, larger is
+> main, which is what that role assignment reflects — not something this
+> function re-derives from size, per direction). Two devices → mapped by
+> `role` directly, switches deploy to `dual`. Real m/s values converted to
+> integer fps (`ASCENT_M_TO_FT`, descent3d.js's own conversion constant,
+> reused rather than duplicated) and run through the exact same
+> clamp/Tripoli-35fps-warning treatment the rate editor's own manual-edit
+> handler applies — a real rocket's real computed rate gets the identical
+> scrutiny a hand-typed one does, not a silent bypass. New `applyDeployMode()`/
+> `onDeployChanged()` (the latter extracted from the existing Single/Dual
+> toggle's own click handler, now shared) apply the deploy-mode switch the
+> same way a real click would, keeping the toggle buttons' own
+> active-highlight and every deploy-dependent UI element in sync.
+>
+> Deliberately a **one-time seed, not a live override** — unlike apogee
+> altitude (which genuinely reverts once `ASCENT_RESULTS` clears, since
+> dial-mode apogee is a different concept entirely), a descent rate is
+> normal user-editable state elsewhere in this app; pre-filling it from a
+> real rocket should behave like any other edit (Fast/Slow preset, manual
+> typing) — it stays put after the ascent panel closes, and remains
+> hand-editable afterward exactly as before.
+>
+> **A real bug found and fixed during verification**: the Tripoli-35fps
+> safety warning silently never appeared, even for a genuinely over-limit
+> rate. Root cause: `buildRateEditor()` unconditionally resets the warning
+> banner to hidden as part of its own rebuild (needed so a stale warning
+> from an earlier edit doesn't linger) — `applyDescentDevices()` was
+> calling `showRateWarning()` BEFORE that rebuild, so it got immediately
+> clobbered. Fixed by tracking the over-limit flag locally and calling
+> `showRateWarning()` after `buildRateEditor()`, not before.
+>
+> **Verified** via headless-Chromium (Playwright): a 2-device payload
+> (drogue 21.37 m/s, main 6.95 m/s — the same real LOC-IV X2 numbers the
+> rocketry-side doc's own worked example cites) correctly produced dual
+> deploy at 70/23 fps, matching both the internal state AND the rate
+> editor's own displayed input values; a 1-device payload switched to
+> single-stage with the drogue input correctly disabled; a deliberately
+> oversized main rate (49fps raw) correctly triggered the safety warning
+> and clamped display to 35fps; a payload with no `descentDevices` field
+> at all left `state.deploy`/`state.rateFps` completely unchanged
+> (backward compatible); and — the real point of the whole feature —
+> `zoneFor()`'s own output points differ before/after applying real
+> descent rates, confirming the landing zone itself actually changes, not
+> just the displayed numbers. Zero console errors throughout.
 
 ## Explicitly out of scope for this plan
 
