@@ -1,6 +1,6 @@
 {
   "site_id": "tripoli_houston_south",
-  "generated_at": "2026-08-17T23:34:34",
+  "generated_at": "2026-08-18T11:42:00",
   "site_geometry": {
     "site_px": [
       1460.0,
@@ -28,10 +28,10 @@
   "launch_dates": [
     {
       "target_date": "2026-08-22",
-      "capture_date": "2026-08-17",
-      "lead_days": 5,
-      "label": "Sat, Aug 22 (T-5)",
-      "data_path": "data/tripoli_houston_south/live/2026-08-22/splash_zones_captured_2026-08-17.json",
+      "capture_date": "2026-08-18",
+      "lead_days": 4,
+      "label": "Sat, Aug 22 (T-4)",
+      "data_path": "data/tripoli_houston_south/live/2026-08-22/splash_zones_captured_2026-08-18.json",
       "history_path": "data/tripoli_houston_south/live/2026-08-22/points_history.json",
       "real_flight_paths": []
     },
