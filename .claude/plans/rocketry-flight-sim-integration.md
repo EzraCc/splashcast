@@ -1,7 +1,7 @@
 Status: in-progress
 Priority: high
 Type: new-feature
-Last updated: 2026-08-17
+Last updated: 2026-08-24
 
 # Rocketry flight-sim integration (embedded, cross-origin — no code sharing)
 
@@ -25,6 +25,7 @@ Last updated: 2026-08-17
 - [x] Task 11 — 15-minute ascent interpolation between the two bracketing real prefetched hours, dashed/faded when shown — **splashcast-side only, no rocketry change needed** (same reasoning as Task 9) — see "Update 2026-08-16 (6)" below
 - [x] Task 12 — Draggable/resizable/full-screen-toggleable ascent-sim modal (`index.html`, `app.css`, `app.js`) — **splashcast-side only, entirely a wrapper around the existing iframe, no rocketry change needed** — see "Update 2026-08-16 (7)" below
 - [x] Task 13 — Real per-rocket descent rates (`descentDevices`) now adjust `state.rateFps`/`state.deploy`, actually affecting the landing zone — see "Update 2026-08-17 (1)" below
+- [x] Task 14 — Fixed real-flight landing-point popups showing blank/nothing once `ASCENT_RESULTS` is active — see "Update 2026-08-24 (1)" below
 
 ## Context
 
@@ -926,6 +927,48 @@ Task 4 was built against.
 > `zoneFor()`'s own output points differ before/after applying real
 > descent rates, confirming the landing zone itself actually changes, not
 > just the displayed numbers. Zero console errors throughout.
+
+> **Update 2026-08-24 (1)**: Reported directly — "when we get back data
+> from rocketry for actual flights, the landing point popups aren't
+> working. The apogee markers are working." Two independent bugs, both
+> tracing back to the `ASCENT_RESULTS` single-zone-override work, neither
+> touching the apogee markers (`drawPredictedApogeeMarker()`, which reads
+> `ascentPathForModel()` directly, not `zoneFor()`).
+>
+> **Bug 1 — `isPointVisible()` (`app.js`)**: its byAltitude branch only
+> exempted `state.customAlt` from the `selectedAlts` ladder-rung check
+> (2000/4000/6000/8000/10000ft) — its own comment already documents why: a
+> `customAlt` value is "essentially never a member of `selectedAlts`,"
+> since that Set only ever holds the discrete ladder's own rungs. A real
+> sim apogee has the exact same problem and never got the same exemption.
+> `applyIsolation()` (marker *visibility*) already had this bypass; only
+> `isPointVisible()` (marker *tooltip content*, used by `showTooltip()`'s
+> `nearby` filter) was missing it — so for nearly every real flight (any
+> apogee not landing exactly on a rung), the marker drew fine but hovering
+> it opened a tooltip box with **zero content**. Fixed by adding the same
+> `!!ASCENT_RESULTS` bypass already used in `applyIsolation()`.
+>
+> **Bug 2 — `zoneFor()`/`descentPathsFor()` (`app.js`)**: both skip
+> computing anything at all when `deploy === 'single' && altitudeFt >
+> single_deploy_max_alt_ft` (10,000ft), mirroring
+> `compute_splash_points()`'s own server-side skip — a guardrail for the
+> generic dial's assumed single-deploy altitude range, not a real hardware
+> limit. Since `applyDescentDevices()` (Task 13) sets `state.deploy` from
+> rocketry's own real device count, a real single-device flight legitimately
+> flying past 10,000ft (common on single-deploy-at-apogee L2/L3 builds at
+> high-waiver sites) is real, not an operator mistake — produced **zero**
+> zone-groups/points at all, not just an empty tooltip. Fixed by bypassing
+> the cap in both functions whenever `ASCENT_RESULTS` is active; the
+> ordinary (no-sim) dial path is untouched.
+>
+> **Verified** via headless-Chromium with a synthetic `rocketry:ascentResults`
+> payload: before the fix, a dual-deploy flight with a non-round apogee
+> (3,000ft) rendered its 6 landing points but opened a blank tooltip; a
+> single-device flight with a 12,000ft apogee rendered zero zone-
+> groups/points. After both fixes, both cases render fully populated
+> tooltips. Confirmed no regression: a manual (non-sim) single-deploy pick
+> with `customAlt` above 10,000ft is still correctly suppressed, and
+> ordinary ladder/`customAlt` tooltips are unchanged.
 
 ## Explicitly out of scope for this plan
 

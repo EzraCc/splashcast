@@ -2801,7 +2801,16 @@ function isPointVisible(rp) {
     // shouldn't still show a tooltip on hover just because its zone-group
     // is hidden, not removed -- but that's only a real concept when
     // selectedAlts is actually what's driving visibility.
-    return state.customAlt !== null || state.selectedAlts === null || state.selectedAlts.has(rp.altitude);
+    // ASCENT_RESULTS is the same bypass, for the same reason: a real sim
+    // apogee (resolveMapAltFt()) is essentially never exactly one of the
+    // ladder's rungs either. Missing here was a real, confirmed bug --
+    // applyIsolation() already had this bypass (so the marker itself drew
+    // fine), but hovering it found isPointVisible() false, so showTooltip()'s
+    // `nearby` filter came back empty and the tooltip opened with NO content
+    // (display:block, blank) rather than not opening at all -- reads exactly
+    // like "the popup doesn't work," for every real flight whose apogee
+    // doesn't happen to land on 2000/4000/6000/8000/10000ft.
+    return state.customAlt !== null || !!ASCENT_RESULTS || state.selectedAlts === null || state.selectedAlts.has(rp.altitude);
   } else {
     const active = state.isolatedHour ?? state.pinnedHour;
     return active === null || rp.hour === active;
@@ -4883,7 +4892,20 @@ function zoneFor(timeMinutes, deploy, altitudeFt) {
   const dp = DATA.descent_params;
   const profiles = profilesForTime(timeMinutes);
   let zone = null;
-  if (profiles && !(deploy === 'single' && altitudeFt > dp.single_deploy_max_alt_ft)) {
+  // single_deploy_max_alt_ft is a guardrail for the GENERIC dial (the
+  // assumption behind compute_splash_points()'s own skip: nobody flies a
+  // single-deploy-at-apogee config to a wildly high altitude on purpose, so
+  // past this point a single-deploy zone is more likely a mis-set dial than
+  // a real plan). A real rocketry sim result (ASCENT_RESULTS) already knows
+  // the ACTUAL hardware -- applyDescentDevices() only picks 'single' when
+  // rocketry reported exactly one real recovery device -- so a real single-
+  // deploy flight with a genuinely high real apogee is real, not a mistake,
+  // and skipping it here silently produced a zone-less, point-less map (no
+  // landing markers/popups at all) with apogee markers still showing fine
+  // (those come from ascentPathForModel(), not zoneFor()) -- confirmed
+  // directly: a single-device flight with a >10,000ft real apogee rendered
+  // zero .zone-group/.pt elements until this bypass was added.
+  if (profiles && !(!ASCENT_RESULTS && deploy === 'single' && altitudeFt > dp.single_deploy_max_alt_ft)) {
     const r = groundEquivalentRateFps(state.rateFps, dp.site_elev_ft);
     // Mirrors compute_splash_points()'s own phase construction exactly:
     // dual is a drogue phase down to main-deploy altitude then a main
@@ -4923,7 +4945,11 @@ function descentPathsFor(timeMinutes, deploy, altitudeFt) {
   const dp = DATA.descent_params;
   const profiles = profilesForTime(timeMinutes);
   const out = [];
-  if (profiles && !(deploy === 'single' && altitudeFt > dp.single_deploy_max_alt_ft)) {
+  // Same ASCENT_RESULTS bypass as zoneFor() above, and for the same reason
+  // -- this is the 3D view's own path source, which hit the identical
+  // zero-output failure for a real single-device flight above the generic
+  // dial's altitude cap.
+  if (profiles && !(!ASCENT_RESULTS && deploy === 'single' && altitudeFt > dp.single_deploy_max_alt_ft)) {
     const r = groundEquivalentRateFps(state.rateFps, dp.site_elev_ft);
     const phases = deploy === 'dual'
       ? [[r.drogue, altitudeFt, dp.main_deploy_altitude_ft], [r.main, dp.main_deploy_altitude_ft, 0]]

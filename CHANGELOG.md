@@ -2,6 +2,14 @@
 
 Dated, terse log of notable changes. For the full design rationale and decision history, see [docs/spec.md](docs/spec.md).
 
+## 2026-08-24
+
+**Fixed: real-flight landing point popups showed blank (or nothing at all) once a rocketry sim result was active**
+- Reported directly: "when we get back data from rocketry for actual flights, the landing point popups aren't working. The apogee markers are working." Two separate bugs, both dating to the `ASCENT_RESULTS`/single-zone-override work: apogee markers (`drawPredictedApogeeMarker()`) are computed straight from `ascentPathForModel()` and were never affected; landing-point markers go through `zoneFor()`/`isPointVisible()`, which were.
+- Bug 1 (`isPointVisible()`, `app.js`): the byAltitude branch only ever exempted `state.customAlt` from the `selectedAlts` ladder-rung check (2000/4000/6000/8000/10000ft), the same "essentially never a member of that Set" problem its own comment already documents for `customAlt` -- but `ASCENT_RESULTS` never got the same exemption. A real sim apogee is just as unlikely to land exactly on a rung, so `showTooltip()`'s `nearby` filter came back empty for nearly every real flight: the marker drew fine, but hovering it opened a tooltip box with zero content -- reads exactly like "the popup doesn't work." `applyIsolation()` already had this exact bypass for marker *visibility*; `isPointVisible()` (marker *tooltip content*) was the one place it was missing.
+- Bug 2 (`zoneFor()`/`descentPathsFor()`, `app.js`): single-deploy real flights with a genuine apogee above splashcast's own generic `single_deploy_max_alt_ft` (10,000ft -- a guardrail for the assumed dial default, not a real hardware limit) hit the same skip `compute_splash_points()` uses server-side, silently producing **zero** zone-groups/points at all (not just an empty tooltip). Since `applyDescentDevices()` derives single-vs-dual straight from rocketry's own real device count, a real single-device flight legitimately flying past 10,000ft (common on larger single-deploy-at-apogee L2/L3 builds at high-waiver sites) is real, not an operator mistake -- bypassed the cap whenever `ASCENT_RESULTS` is active, in both functions.
+- Verified via headless-Chromium with a synthetic `rocketry:ascentResults` payload: before the fix, a dual-deploy flight with a non-round apogee (3,000ft, not a ladder rung) rendered its 6 landing points but opened a blank tooltip on hover; a single-device flight with a 12,000ft apogee rendered zero zone-groups/points. After both fixes, both cases render normal populated tooltips (`"HRRR · 23 fps · apogee 12,000 ft · offset: ... · distance from pad: ..."`). Confirmed no regression to the ordinary (non-sim) dial path: a manual single-deploy pick with `customAlt` above 10,000ft is still correctly suppressed, and normal ladder/customAlt tooltips are unchanged.
+
 ## 2026-08-17
 
 **Added: real per-rocket descent rates from rocketry now drive the landing zone**
