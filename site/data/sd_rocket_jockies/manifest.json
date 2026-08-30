@@ -1,6 +1,6 @@
 {
   "site_id": "sd_rocket_jockies",
-  "generated_at": "2026-08-11T15:14:30",
+  "generated_at": "2026-08-30T12:00:28",
   "site_geometry": {
     "site_px": [
       1430.0,
@@ -26,6 +26,15 @@
     "site_lon": -96.8551149
   },
   "launch_dates": [
+    {
+      "target_date": "2026-09-05",
+      "capture_date": "2026-08-30",
+      "lead_days": 6,
+      "label": "Sat, Sep 5 (T-6)",
+      "data_path": "data/sd_rocket_jockies/live/2026-09-05/splash_zones_captured_2026-08-30.json",
+      "history_path": "data/sd_rocket_jockies/live/2026-09-05/points_history.json",
+      "real_flight_paths": []
+    },
     {
       "target_date": "2026-08-01",
       "capture_date": "2026-08-01",
