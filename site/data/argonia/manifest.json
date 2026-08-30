@@ -1,6 +1,6 @@
 {
   "site_id": "argonia",
-  "generated_at": "2026-08-29T20:54:11",
+  "generated_at": "2026-08-30T05:22:03",
   "site_geometry": {
     "site_px": [
       4568.5,
@@ -37,10 +37,10 @@
     },
     {
       "target_date": "2026-08-30",
-      "capture_date": "2026-08-29",
-      "lead_days": 1,
-      "label": "Sun, Aug 30 (T-1)",
-      "data_path": "data/argonia/live/2026-08-30/splash_zones_captured_2026-08-29.json",
+      "capture_date": "2026-08-30",
+      "lead_days": 0,
+      "label": "Sun, Aug 30 (T-0)",
+      "data_path": "data/argonia/live/2026-08-30/splash_zones_captured_2026-08-30.json",
       "history_path": "data/argonia/live/2026-08-30/points_history.json",
       "real_flight_paths": []
     },
