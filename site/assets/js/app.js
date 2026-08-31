@@ -6514,6 +6514,19 @@ async function loadDataset(entry) {
   const resp = await fetchData(entry.data_path);
   DATA = await resp.json();
   CURRENT_DATA_PATH = entry.data_path;
+  // zoneCache/pathCache/historyZoneCache below are keyed on
+  // `${timeMinutes}_${deploy}_${altitude}` only -- no site or dataset
+  // identifier -- despite zoneCache's own comment already claiming this was
+  // cleared "on dataset load". It wasn't: switching sites (or dates) via the
+  // dropdown calls loadDataset() without a page reload, so a cache hit here
+  // silently returned a PREVIOUS site's zone for the same time/deploy/
+  // altitude combo. Confirmed directly: SD Rocket Jockies at 9am/dual/
+  // 10,000ft, then switching to Hutto at the same 9am/dual/10,000ft, kept
+  // returning SD Rocket Jockies' own drift points (a different site's
+  // geometry entirely) until a full page reload cleared the in-memory
+  // cache -- reported as "Hutto disagreeing with itself at exactly 9am,"
+  // which it wasn't; it was disagreeing with a different site's zones.
+  invalidateZones();
   // wind_profiles/descent_params landed 2026-08, replacing precomputed
   // per-rate points -- everything downstream (freshState()'s rateFps seed,
   // zoneFor(), the rate editor) assumes they exist. Rather than scatter

@@ -2,6 +2,14 @@
 
 Dated, terse log of notable changes. For the full design rationale and decision history, see [docs/spec.md](docs/spec.md).
 
+## 2026-08-30
+
+**Fixed: switching site or launch date without a page reload silently reused another dataset's landing zones**
+- Reported as "Hutto 9am shows a lot of model disagreement, but 8:45/9:15 agree" -- the underlying wind data and `zoneFor()` output were verified clean and smooth across all three times, on both the local checkout and production, ruling out a math/data bug. The real cause surfaced once the user described their actual browsing path: they'd loaded SD Rocket Jockies first, then switched to Hutto via the site dropdown (no reload), and a hard refresh made the issue disappear.
+- Root cause (`app.js`): `zoneCache`/`pathCache`/`historyZoneCache` key on `` `${timeMinutes}_${deploy}_${altitude}` `` only -- no site or dataset identifier -- despite `zoneCache`'s own comment already (incorrectly) claiming it was cleared "on dataset load." `loadDataset()` (run on every site-dropdown change and every launch-date change, never a page reload) reassigned `DATA` but never called the existing `invalidateZones()`. Any time/deploy/altitude combo already cached from the previous site or date came back byte-for-byte unchanged for the new one.
+- Confirmed two ways: (1) loading SD Rocket Jockies at 9am/dual/10,000ft then switching to Hutto reproduced the user's exact reported point (ecmwf `x=310.6, y=-1760.3`) coming from SD Rocket Jockies' own wind field, not Hutto's; (2) the reverse direction the user separately reported -- Hutto then back to SD Rocket Jockies, 9am showing Hutto's numbers at every altitude SD Rocket Jockies shares with Hutto (2000-10,000ft) but *correct* SD Rocket Jockies data at 14,000ft (Hutto has no 14,000ft rung, so that cache key was never warmed) and correct data at every non-9am time (never touched by the earlier Hutto visit either) -- both predicted by the cache-key gap and both confirmed present on live production before the fix.
+- Fix: `loadDataset()` now calls `invalidateZones()` immediately after reassigning `DATA`, before `initFromData()` runs. Verified via headless-Chromium that both reproduction directions now match a fresh page load byte-for-byte at every altitude.
+
 ## 2026-08-24
 
 **Fixed: real-flight landing point popups showed blank (or nothing at all) once a rocketry sim result was active**
