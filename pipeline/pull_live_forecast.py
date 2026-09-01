@@ -286,10 +286,16 @@ def _split_grouped_response(raw: dict, model_keys: list[str], site_id: str = "hu
 # Separate from fetch_model() above -- hits Open-Meteo's Single Runs API
 # (free tier, despite its pricing page's summary text suggesting otherwise)
 # instead of the live-forecast endpoints, letting us pull a SPECIFIC past
-# model run (run=<cycle time>) rather than only "the current forecast."
-# Returns that run's full ~7-day horizon from its init time forward (no
-# start_date/end_date param accepted), so backfill_capture() filters down to
-# the target date after parsing.
+# model run (run=<cycle time>) rather than only "the current forecast." No
+# start_date/end_date param accepted, but forecast_days IS -- omitting it
+# (the original version of this function did) silently caps the response at
+# Open-Meteo's own default horizon, which doesn't reach a real T-7 request:
+# confirmed directly backfilling argonia's 2026-09-07 target from an
+# 2026-08-31 run came back completely empty (every model's own max valid
+# date topped out at 2026-09-06, one day short) even though the SAME run
+# with an explicit forecast_days=10 reaches 2026-09-09 fine. backfill_capture()
+# below now sizes forecast_days off the actual lead_days requested, the same
+# "+2" margin fetch_model()'s own live forecast_days already uses.
 #
 # Archive floor is ~2026-04-02 for most models (checked empirically -- docs
 # have been wrong here before). GEM errors on every run tested (raw
@@ -307,7 +313,7 @@ def _split_grouped_response(raw: dict, model_keys: list[str], site_id: str = "hu
 SINGLE_RUNS_URL = "https://single-runs-api.open-meteo.com/v1/forecast"
 
 
-def fetch_model_at_run(model_key: str, run_dt: datetime, site_id: str = "hutto", attempts: int = 3, timeout: int = REQUEST_TIMEOUT_S) -> dict:
+def fetch_model_at_run(model_key: str, run_dt: datetime, site_id: str = "hutto", attempts: int = 3, timeout: int = REQUEST_TIMEOUT_S, forecast_days: int = None) -> dict:
     site = config.SITES[site_id]
     model_info = config.LIVE_MODELS[model_key]
     variables = [v for v in _hourly_variables(model_key, site_id) if v != "precipitation_probability"]
@@ -322,6 +328,8 @@ def fetch_model_at_run(model_key: str, run_dt: datetime, site_id: str = "hutto",
         "temperature_unit": "fahrenheit",
         "precipitation_unit": "inch",
     }
+    if forecast_days is not None:
+        params["forecast_days"] = forecast_days
     last_exc = None
     for attempt in range(attempts):
         if attempt:
@@ -347,12 +355,18 @@ def backfill_capture(target_date: date, lead_days: int, site_id: str = "hutto") 
     only, meaningless for a backfilled past date)."""
     run_dt = datetime.combine(target_date - timedelta(days=lead_days), time(0, 0))
     capture_date = run_dt.date()
+    # +2, same margin fetch_model()'s own live forecast_days uses (see its
+    # comment) -- Open-Meteo's forecast_days countdown is inclusive of the
+    # run's own day, so lead_days alone would land exactly ON target_date
+    # with zero slack; the timezone-anchoring edge case that comment
+    # describes applies just as much to a past run as a live one.
+    forecast_days = lead_days + 2
     frames = []
     for i, model_key in enumerate(config.LIVE_MODELS):
         if i:
             _sleep(0.5)  # observed transient 502s hammering this endpoint back-to-back with no pause
         try:
-            raw = fetch_model_at_run(model_key, run_dt, site_id)
+            raw = fetch_model_at_run(model_key, run_dt, site_id, forecast_days=forecast_days)
             df = parse_hourly(raw, model_key)
             if not df.empty:
                 df = df[df["valid_time_local"].dt.date == target_date]
