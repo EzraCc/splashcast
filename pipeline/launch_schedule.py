@@ -414,20 +414,37 @@ def run_live_pulls_near(today: date = None, dry_run: bool = False) -> None:
 # Meteo load with no meaningfully fresher data at that lead time). Requested
 # directly, "adjust for UTC" -- Chicago's UTC offset flips with DST, so a
 # fixed cron hour would silently drift an hour off local 6am/6pm for half the
-# year. Instead .github/workflows/cron-pulls.yml fires this at BOTH UTC times
-# that could possibly be 06:15/18:15 local (11:15 & 12:15 UTC for the AM
-# case, 23:15 & 00:15 UTC for the PM case -- 12:15 and 00:15 already coincide
-# with run_live_pulls_near()'s own grid, so only 11:15/23:15 needed adding),
-# and this function's own local-hour check throws away whichever of each
-# pair is the wrong DST state for right now -- self-correcting across the
-# March/November transitions with no twice-a-year workflow edit required.
-# Checking local_hour alone (not minute) is enough: of any firing pair, only
-# the DST-correct one ever lands on local hour 6 or 18 at all, regardless of
-# which of the paired UTC times actually triggered this run.
-def run_live_pulls_far(today: date = None, dry_run: bool = False) -> None:
-    local_hour = datetime.now(_SITE_TZ).hour
-    if local_hour not in (6, 18):
-        print(f"skip far-tier (T-4..T-7) pull: local hour is {local_hour}, not 6 or 18 -- "
+# year. .github/workflows/cron-pulls.yml fires this at all 4 UTC times that
+# could possibly be 06:15/18:15 local across the two DST states (00:15/11:15/
+# 12:15/23:15 -- see that file's own comment), each passing the UTC offset
+# ITS OWN slot assumes (e.g. the 11:15 UTC slot assumes CDT/-5, since
+# 11:15-5=6:15 local) via `assume_utc_offset_hours`.
+#
+# Originally this checked `datetime.now(_SITE_TZ).hour` against (6, 18)
+# instead -- self-correcting in theory (of any DST pair, only the
+# currently-correct one would ever land on local hour 6 or 18), but that
+# assumed the firing actually executes at its scheduled minute. It doesn't:
+# GitHub Actions schedules aren't guaranteed to fire on time, and this
+# workflow's own concurrency group (cron-pulls-live, cancel-in-progress:
+# false) serializes all 6 daily open-meteo-live firings, so any backlog
+# compounds. Confirmed directly: every far-tier firing from 2026-08-30 16:38
+# through 2026-09-01 05:03 UTC landed on a wall-clock local hour other than
+# 6 or 18 (11, 16, 20, 0, 8, 13, 17, 20, 0), rejecting every one of them --
+# a full day with zero far-tier pulls, silently (each run still reported
+# "success"), which is what left T-5 (and T-6/T-7 that day) never generated
+# for any site.
+#
+# Checking the CURRENT utc offset against what THIS SLOT assumes is instead
+# immune to ordinary scheduling delay -- a firing hours late still has the
+# same DST state almost always, since DST only flips twice a year, unlike
+# wall-clock hour which is guaranteed wrong the moment a firing drifts more
+# than about an hour off its target.
+def run_live_pulls_far(today: date = None, dry_run: bool = False, *, assume_utc_offset_hours: int) -> None:
+    actual_offset = datetime.now(_SITE_TZ).utcoffset()
+    assumed_offset = timedelta(hours=assume_utc_offset_hours)
+    if actual_offset != assumed_offset:
+        print(f"skip far-tier (T-4..T-7) pull: this slot assumes UTC{assume_utc_offset_hours:+d}, "
+              f"but {config.SITE_TZ} is currently UTC{int(actual_offset.total_seconds() // 3600):+d} -- "
               f"this firing belongs to the other DST state's pair")
         return
     run_live_pulls(today, dry_run, min_lead=4, max_lead=max(config.LEAD_DAYS))
@@ -491,6 +508,7 @@ if __name__ == "__main__":
     parser.add_argument("--run-live", action="store_true", help="cron entry point: Open-Meteo pulls for every site T-0..T-7 out, unconditional (see run_live_pulls()) -- manual/workflow_dispatch use")
     parser.add_argument("--run-live-near", action="store_true", help="cron entry point: Open-Meteo pulls for T-0..T-3, every 6h (see run_live_pulls_near())")
     parser.add_argument("--run-live-far", action="store_true", help="cron entry point: Open-Meteo pulls for T-4..T-7, twice daily at local 0600/1800 (see run_live_pulls_far())")
+    parser.add_argument("--assume-utc-offset", type=int, metavar="HOURS", help="with --run-live-far: the UTC offset (e.g. -5 for CDT, -6 for CST) this specific cron slot assumes is currently in effect -- required, see run_live_pulls_far()'s own comment")
     parser.add_argument("--run-actuals", action="store_true", help="cron entry point: NOAA actual pull for every site that launched yesterday (see run_actual_pulls())")
     parser.add_argument("--dry-run", action="store_true", help="with --run-today/--run-live/--run-live-near/--run-live-far/--run-actuals, print what would run without pulling")
 
@@ -531,7 +549,9 @@ if __name__ == "__main__":
     elif args.run_live_near:
         run_live_pulls_near(dry_run=args.dry_run)
     elif args.run_live_far:
-        run_live_pulls_far(dry_run=args.dry_run)
+        if args.assume_utc_offset is None:
+            raise SystemExit("error: --run-live-far requires --assume-utc-offset HOURS (e.g. -5 or -6 for America/Chicago)")
+        run_live_pulls_far(dry_run=args.dry_run, assume_utc_offset_hours=args.assume_utc_offset)
     elif args.run_actuals:
         run_actual_pulls(dry_run=args.dry_run)
     elif args.run_today:

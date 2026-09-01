@@ -2,6 +2,14 @@
 
 Dated, terse log of notable changes. For the full design rationale and decision history, see [docs/spec.md](docs/spec.md).
 
+## 2026-09-01
+
+**Fixed: far-tier (T-4..T-7) live pulls silently skipped for a full day, leaving T-5 never generated for any site**
+- Reported directly: "I'm not seeing a T-5 data for hutto on 9/5." Checked GitHub Actions run logs (`gh run list`/`gh api .../logs`) for the `open-meteo-live` job rather than guessing: every far-tier firing from 2026-08-30T16:38Z through 2026-09-01T05:03Z printed `skip far-tier (T-4..T-7) pull: local hour is <N>, not 6 or 18` and returned success with zero commits -- a full day of far-tier opportunities rejected, confirmed identical for argonia/sd_rocket_jockies/apache_pass too (not hutto-specific).
+- Root cause (`pipeline/launch_schedule.py`'s `run_live_pulls_far()`): the DST self-correction check compared `datetime.now(_SITE_TZ).hour` (wall clock **at the moment the job executes**) against `(6, 18)`, assuming a cron firing actually executes at its scheduled minute. GitHub Actions doesn't guarantee that, and this job's own `cron-pulls-live` concurrency group (`cancel-in-progress: false`) serializes all 6 daily `open-meteo-live` firings -- once one firing backs up, every later one that day drifts further from its nominal time, until wall-clock hour stops matching 6 or 18 for any firing at all. The 2026-08-30 18:15 UTC ("18:00 local") slot and both 2026-08-31 slots landed in that dead zone.
+- Fix: `run_live_pulls_far()` now takes a required `assume_utc_offset_hours` param and compares the **current UTC offset** against what that specific cron slot assumes (e.g. the 11:15 UTC slot assumes CDT/-5), instead of reading the clock at execution time -- immune to ordinary scheduling delay, since DST only flips twice a year rather than being wrong the moment a firing drifts more than ~an hour. Required splitting `.github/workflows/cron-pulls.yml`'s shared `"15 0,6,12,18 * * *"` entry into 4 individual cron lines (needed so `github.event.schedule` can tell them apart and route the right offset), each `open-meteo-live` scheduled slot now passes `--assume-utc-offset` explicitly via a `case` dispatch. `README.md`'s automation table updated to match.
+- Verified: `--run-live-far --assume-utc-offset -5 --dry-run` lists the real T-4..T-7 launches under the current (CDT) offset; `--assume-utc-offset -6 --dry-run` correctly no-ops with the new message; omitting `--assume-utc-offset` fails fast instead of silently defaulting; `yaml.safe_load()` validates the workflow file, 7 total schedule entries (6 open-meteo-live + 1 noaa-actuals) as intended.
+
 ## 2026-08-30
 
 **Fixed: switching site or launch date without a page reload silently reused another dataset's landing zones**

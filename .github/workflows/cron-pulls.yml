@@ -16,17 +16,31 @@ name: Scheduled data pulls
 #     out, one fresh pull covering the overnight model-run cycle and one
 #     covering the day's later runs is enough; the extra two daily pulls this
 #     replaces weren't buying meaningfully fresher data at that lead time.
-#     Since Chicago's UTC offset flips with DST, this fires at BOTH UTC times
-#     that could be 06:15/18:15 local (11:15 & 23:15 UTC are the two genuinely
-#     new entries below; the other two DST candidates, 12:15 & 00:15 UTC,
-#     already coincide with the near-tier's own 0,6,12,18 grid) -- the far
-#     tier's own local-hour check throws away whichever half of each pair is
-#     the wrong DST state for right now, so this never needs a manual edit
-#     across the March/November transitions.
-#   Every firing of this job runs the near-tier pull ONLY on the original
-#   0,6,12,18 grid (matched via github.event.schedule) and attempts the
-#   far-tier pull on every firing, letting run_live_pulls_far()'s own
-#   local-hour gate no-op it on the wrong 4 of 6 daily firings.
+#     Since Chicago's UTC offset flips with DST, this fires at all 4 UTC
+#     times that could be 06:15/18:15 local across the two DST states
+#     (00:15/11:15/12:15/23:15 -- 12:15 and 00:15 coincide with two of the
+#     near-tier grid's own four entries below, so only 11:15/23:15 needed
+#     adding as dedicated far-tier-only entries). Each slot passes
+#     run_live_pulls_far() the UTC offset IT assumes via --assume-utc-offset
+#     (below); that function no-ops if the actual current offset doesn't
+#     match, i.e. this is the "other DST state's" slot right now.
+#
+#     This used to be one single "15 0,6,12,18 * * *" cron line with
+#     run_live_pulls_far() attempted on every firing, self-gated by checking
+#     `datetime.now(_SITE_TZ).hour` against (6, 18) at execution time. That
+#     assumed a firing actually executes at its scheduled minute, which
+#     GitHub Actions does not guarantee -- confirmed directly: this job's own
+#     concurrency group below (cancel-in-progress: false) serializes all 6
+#     daily firings, and once one backs up, every later firing that day
+#     drifts further from its nominal time, until wall-clock hour no longer
+#     matches 6 or 18 for ANY firing -- a full day (2026-08-30 16:38 through
+#     2026-09-01 05:03 UTC) of far-tier pulls silently skipped, still
+#     reporting "success", leaving T-5 (and that day's T-6/T-7) never
+#     generated for any site. Split into 4 individual near-tier cron lines
+#     (needed anyway so github.event.schedule can tell them apart) plus the
+#     2 dedicated far-tier ones, each tagged with the offset ITS OWN slot
+#     assumes rather than reading the clock at execution time -- immune to
+#     ordinary scheduling delay, since DST only flips twice a year.
 #
 #     Fires at :15 past the hour, not exactly on the boundary -- a buffer for
 #     Open-Meteo's own documented "eventually consistent" server sync (they
@@ -56,10 +70,13 @@ name: Scheduled data pulls
 
 on:
   schedule:
-    - cron: "15 0,6,12,18 * * *"  # open-meteo-live near-tier (T-0..T-3, 4x daily) + far-tier's winter-DST candidates
-    - cron: "15 11 * * *"         # open-meteo-live far-tier only (T-4..T-7): 0600 CDT / gated off outside CDT
-    - cron: "15 23 * * *"         # open-meteo-live far-tier only (T-4..T-7): 1800 CDT / gated off outside CDT
-    - cron: "0 11 * * *"          # noaa-actuals, once daily
+    - cron: "15 0 * * *"   # open-meteo-live near-tier + far-tier's CST-PM candidate (00:15 UTC = 18:15 CST)
+    - cron: "15 6 * * *"   # open-meteo-live near-tier only -- never a valid far-tier local-6/18 time in either DST state
+    - cron: "15 11 * * *"  # open-meteo-live far-tier only (T-4..T-7): CDT-AM candidate (11:15 UTC = 06:15 CDT)
+    - cron: "15 12 * * *"  # open-meteo-live near-tier + far-tier's CST-AM candidate (12:15 UTC = 06:15 CST)
+    - cron: "15 18 * * *"  # open-meteo-live near-tier only -- never a valid far-tier local-6/18 time in either DST state
+    - cron: "15 23 * * *"  # open-meteo-live far-tier only (T-4..T-7): CDT-PM candidate (23:15 UTC = 18:15 CDT)
+    - cron: "0 11 * * *"   # noaa-actuals, once daily
   workflow_dispatch:
     inputs:
       job:
@@ -112,14 +129,14 @@ jobs:
         # UX for a one-off "pull now" request.
         #
         # The scheduled cron trigger instead runs the near/far split: near
-        # (T-0..T-3) only on the original 0,6,12,18 grid (this job also fires
-        # at 11:15/23:15 UTC now, purely for the far tier -- matching
-        # github.event.schedule keeps those two from ALSO running an extra
-        # near-tier pull outside the intended 6h cadence); far (T-4..T-7) is
-        # attempted on every firing and self-gates on local time internally
-        # (see run_live_pulls_far()'s own comment for why that's safe/cheap
-        # to just always attempt rather than also matching schedule strings
-        # here).
+        # (T-0..T-3) on every one of the 4 individual 6h-grid entries above
+        # (15 0/6/12/18 UTC -- split into separate cron lines specifically so
+        # github.event.schedule can tell them apart, see this file's own
+        # top comment); far (T-4..T-7) only on the 2 slots that are actually
+        # DST candidates for that grid (00:15, 12:15) plus the 2 dedicated
+        # far-tier-only entries (11:15, 23:15), each passed the UTC offset
+        # ITS OWN slot assumes -- run_live_pulls_far() no-ops if that's not
+        # the DST state actually in effect right now.
         run: |
           if [ -n "${{ github.event.inputs.site }}" ]; then
             python pull_live_forecast.py "${{ github.event.inputs.date }}" --site "${{ github.event.inputs.site }}"
@@ -127,10 +144,17 @@ jobs:
           elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             python launch_schedule.py --run-live
           else
-            if [ "${{ github.event.schedule }}" = "15 0,6,12,18 * * *" ]; then
-              python launch_schedule.py --run-live-near
-            fi
-            python launch_schedule.py --run-live-far
+            case "${{ github.event.schedule }}" in
+              "15 0 * * *"|"15 6 * * *"|"15 12 * * *"|"15 18 * * *")
+                python launch_schedule.py --run-live-near
+                ;;
+            esac
+            case "${{ github.event.schedule }}" in
+              "15 11 * * *") python launch_schedule.py --run-live-far --assume-utc-offset -5 ;;  # CDT-AM
+              "15 12 * * *") python launch_schedule.py --run-live-far --assume-utc-offset -6 ;;  # CST-AM
+              "15 23 * * *") python launch_schedule.py --run-live-far --assume-utc-offset -5 ;;  # CDT-PM
+              "15 0 * * *")  python launch_schedule.py --run-live-far --assume-utc-offset -6 ;;  # CST-PM
+            esac
           fi
       - name: Commit and push updated data
         id: commit
