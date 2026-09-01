@@ -6572,6 +6572,16 @@ dateSelect.addEventListener('change', () => {
 // link almost certainly doesn't exist in a different site's manifest anyway.
 let urlDateApplied = false;
 
+// Viewer's own local calendar date as "YYYY-MM-DD" -- lexicographically
+// comparable directly against target_date strings with no Date parsing on
+// the other side. Local (not UTC) so a page loaded a few hours either side
+// of midnight still reads "today" the way the person looking at it would.
+function todayLocalISO() {
+  const d = new Date();
+  const pad = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
 function loadSiteManifest(manifestPath) {
   fetchData(manifestPath)
     .then(r => r.json())
@@ -6589,7 +6599,20 @@ function loadSiteManifest(manifestPath) {
         opt.textContent = entry.label;
         dateSelect.appendChild(opt);
       });
-      let initialEntry = manifestEntries[0];
+      // Default to the NEXT upcoming launch (soonest target_date >= today),
+      // not the latest one overall -- a real, reported bug: a multi-day event
+      // (e.g. AIRFest spanning 9/4-9/7) defaulted to 9/7, the LAST day, since
+      // manifestEntries is sorted descending and [0] is simply the largest
+      // target_date regardless of whether it's already passed. People
+      // planning ahead want the next thing coming up, not the last one on
+      // the books. manifestEntries stays sorted descending here (upcoming is
+      // a prefix of it, in the same order), so the soonest upcoming entry is
+      // the LAST element of that filtered prefix, not its first.
+      // Falls back to entries[0] (the most recent past date) exactly when no
+      // entry is upcoming at all -- the requested "last date only if nothing
+      // future is filled in" behavior.
+      const upcoming = manifestEntries.filter(e => e.target_date >= todayLocalISO());
+      let initialEntry = upcoming.length ? upcoming[upcoming.length - 1] : manifestEntries[0];
       if (!urlDateApplied) {
         urlDateApplied = true;
         const urlDate = URL_PARAMS.get('date');

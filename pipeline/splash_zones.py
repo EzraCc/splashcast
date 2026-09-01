@@ -989,11 +989,13 @@ def regenerate_manifest(site_id: str, published_live_dir: Path) -> Path:
             "history_path": f"data/{site_id}/live/{target_date}/points_history.json" if history_path.exists() else None,
             "real_flight_paths": [f"data/{site_id}/real_flights/{p.name}" for p in real_flight_paths],
         })
-    # Descending -- the viewer's date <select> lists these in this order and
-    # defaults to entries[0] (see loadSiteManifest() in app.js), so this is
-    # what makes "load the site" default to the soonest upcoming launch
-    # (or, in the gap after one's passed and before the next enters the
-    # pull window, the most recent one) instead of the oldest backfilled date.
+    # Descending -- the viewer's date <select> lists these in this order.
+    # loadSiteManifest() (app.js) no longer just defaults to entries[0]
+    # (that picked the LATEST target_date overall, not the next upcoming
+    # one -- a real, reported bug for a multi-day event like AIRFest: it
+    # defaulted to the event's last day, not its first) -- it filters to
+    # target_date >= today and takes the last (soonest) of those, falling
+    # back to entries[0] only when nothing is upcoming at all.
     entries.sort(key=lambda e: e["target_date"], reverse=True)
     manifest = {
         "site_id": site_id, "generated_at": datetime.now().isoformat(timespec="seconds"),
