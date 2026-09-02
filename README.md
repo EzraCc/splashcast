@@ -84,7 +84,8 @@ pipeline/                Python: pulls data, runs the simulation, publishes JSON
   fetch_site_maps.py         Satellite/road map imagery fetch, per site.
   analyze_real_flight.py     Real GPS-tracked flight vs. this pipeline's own forecasts/actuals (see below).
   grid_position_report.py    Read-only diagnostic: where each site sits within each wind model's own native grid cell, flagging sites near a cell edge/corner. Not wired into the live pipeline -- run by hand.
-  grid_edge_accuracy_check.py Read-only follow-up to grid_position_report.py: for one site/model near a grid-cell corner, compares the own-cell forecast and its 3 grid neighbors against the HRRR-analysis actual proxy, to check whether cell-blending would be worth building. Not wired into the live pipeline -- run by hand.
+  grid_edge_accuracy_check.py Read-only follow-up to grid_position_report.py: for one site/model near a grid-cell corner, compares the own-cell forecast against a decided-in-advance bilinear blend of its 3 grid neighbors, against the HRRR-analysis actual proxy. Not wired into the live pipeline -- run by hand.
+  grid_edge_error_correlation.py Read-only: cross-site/model forecast-vs-actual error, using data already on disk, cross-referenced against grid_position_report.py's edge/corner flags -- does a flagged model show consistently worse error than an unflagged one at the same site? Not wired into the live pipeline -- run by hand.
   data/                      Working data (gitignored raw pulls; live captures ARE tracked, see .gitignore).
 site/                     The deployable static app -- no backend, no local build step.
   index.html, assets/        Markup, CSS, and the viewer's JS (rendering, interaction, permalinks). index.html/app.js reference the plain, unminified app.js -- pages.yml minifies it at deploy time only (see below), so local dev is just opening the files, nothing to build first.
