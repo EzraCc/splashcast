@@ -5,3 +5,4 @@
 | Mobile map layout fix (no tabs)    | done        | high     | refinement  | plans-archive/map-control-pane-redesign.md    | 2026-08-10   |
 | Rate editor row + cloud line + temp warnings | done | high | refinement | plans-archive/temp-warnings-and-layout.md | 2026-08-12   |
 | Rocketry flight-sim integration | in-progress | high | new-feature | rocketry-flight-sim-integration.md | 2026-08-24 |
+| Grid-edge accuracy investigation | blocked | medium | new-feature | grid-edge-accuracy-investigation.md | 2026-09-02 |

@@ -313,13 +313,19 @@ def _split_grouped_response(raw: dict, model_keys: list[str], site_id: str = "hu
 SINGLE_RUNS_URL = "https://single-runs-api.open-meteo.com/v1/forecast"
 
 
-def fetch_model_at_run(model_key: str, run_dt: datetime, site_id: str = "hutto", attempts: int = 3, timeout: int = REQUEST_TIMEOUT_S, forecast_days: int = None) -> dict:
+def fetch_model_at_run(model_key: str, run_dt: datetime, site_id: str = "hutto", attempts: int = 3, timeout: int = REQUEST_TIMEOUT_S, forecast_days: int = None, lat: float = None, lon: float = None) -> dict:
     site = config.SITES[site_id]
     model_info = config.LIVE_MODELS[model_key]
     variables = [v for v in _hourly_variables(model_key, site_id) if v != "precipitation_probability"]
     params = {
-        "latitude": site["lat"],
-        "longitude": site["lon"],
+        # lat/lon default to the real site coordinate; overridable so a
+        # diagnostic can pull a specific NEIGHBORING grid cell for the same
+        # site/model (see grid_edge_accuracy_check.py) without duplicating
+        # this request-building logic -- site_id still selects which
+        # variables/pressure levels to request (config.levels_mb_for_site()
+        # depends on the site's own waiver, not its exact coordinate).
+        "latitude": lat if lat is not None else site["lat"],
+        "longitude": lon if lon is not None else site["lon"],
         "hourly": ",".join(variables),
         "models": model_info["model"],
         "timezone": config.SITE_TZ,

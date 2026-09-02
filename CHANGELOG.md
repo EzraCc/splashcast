@@ -2,6 +2,14 @@
 
 Dated, terse log of notable changes. For the full design rationale and decision history, see [docs/spec.md](docs/spec.md).
 
+## 2026-09-02 (2)
+
+**Added: grid-edge accuracy check (`pipeline/grid_edge_accuracy_check.py`) -- follow-up spike to the grid-position diagnostic**
+- Requested directly: pick one test case from the 7 grid-corner-flagged site/model pairs and check whether the neighboring cell's forecast is different enough, and would have been more accurate historically, to justify building any cell-blending logic. Read-only, no forecast-math changes.
+- Test case: hearne/ecmwf (a true corner, pct_x=1.0%/pct_y=94.5%), chosen because it's the only one of the 7 flagged corners with real HRRR-analysis "actual" ground-truth data already pulled for all 3 of its historical target dates. Reused `splash_zones.py`'s `simulate()`/`interp()`/`compute_actual_points()`/`_latest_capture()`, `pull_live_forecast.py`'s `fetch_model_at_run()` (extended with optional `lat`/`lon` overrides so a diagnostic can query an arbitrary nudged coordinate without duplicating the request-building logic), and `pull_historical.py`'s `pull_actual()` -- no reimplemented physics.
+- Real result across 72 hour/altitude/rate combos over the 3 dates: the own-cell forecast averaged 515ft off the HRRR-analysis proxy; the best of the 3 neighboring cells averaged 285ft off -- a neighbor beat the cell actually used in **57/72 (79%)** of combos. This is a real, consistent signal, not the "probably negligible" outcome the initial hypothesis floated -- worth widening to the other 4 corner-flagged sites before deciding whether to build blending, per this investigation's own plan file (`.claude/plans/grid-edge-accuracy-investigation.md`).
+- Caveats stated explicitly in the script's own output: HRRR-analysis is a proxy for ground truth, not verified real GPS truth (matches `analyze_real_flight.py`'s own `hrrr_analysis_actual_proxy` framing); the "neighbor cell" comparison uses a same-day single-runs-api pull rather than the exact same model run the live capture used (Open-Meteo's live endpoint has no pinned run); one of the 3 dates' "own cell" was actually a T-7 capture, not T-0, since the daily pull had stopped early before that launch (noted, not excluded). `single-runs-api.open-meteo.com` showed real transient flakiness (502s, occasional timeouts) during this investigation on hearne's larger multi-pressure-level requests -- added a longer timeout (30s vs. the live pipeline's 10s) and one extra retry beyond `fetch_model_at_run()`'s own built-in attempts.
+
 ## 2026-09-02
 
 **Added: grid-edge diagnostic (`pipeline/grid_position_report.py`) -- where each site sits within each model's own native grid cell**
