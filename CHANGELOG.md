@@ -2,6 +2,15 @@
 
 Dated, terse log of notable changes. For the full design rationale and decision history, see [docs/spec.md](docs/spec.md).
 
+## 2026-09-02 (4)
+
+**Resolved: grid-edge accuracy investigation -- no evidence that edge/corner-sited models are less accurate**
+- Requested directly: stop looking at neighbor-cell blending for a moment and instead use the full historical forecast-vs-actual record (every capture T-7..T-0 already on disk, not just the latest) across every site/model, categorized middle/edge/corner (or continuously by %-distance-from-an-edge), to check for a real statistical difference before building any adjacent-grid math.
+- `grid_edge_error_correlation.py` rebuilt to pool every capture (`splash_zones.py`'s `_all_captures()`, not `_latest_capture()`) across every site with a real HRRR-analysis actual pulled: 8,488 rows, 8 sites, 44 (site, model) pairs, every lead time T-0 through T-7.
+- Two properly-confound-controlled views agree: a **per-pair Spearman correlation** (one point per (site,model), avoiding pseudo-replication) of edge-closeness vs. mean error came back at rho=0.042, p=0.79 -- no relationship. A **within-site comparison** (same site/dates/weather, only the model's grid position differs, fully controlling for site identity) showed corner models averaging 0.98x middle's error and edge models 1.03x -- both noise-level.
+- A naive pooled-row Kruskal-Wallis test WAS significant (p<0.0001) but in the physically implausible direction (edge/corner looked *better*) -- traced to a real site-identity confound: argonia/seymour have inherently large drift errors and happen to be classified "middle," while hearne/gunter/apache_pass have smaller inherent errors and happen to have more edge/corner-flagged models. Once site is controlled for, the effect vanishes -- a real example of why a raw pooled comparison isn't trustworthy for this kind of question.
+- **Conclusion: no evidence, in the data available, that edge/corner-sited models are inherently less accurate.** The neighbor-cell blending investigated in the two entries above is not worth pursuing further on this basis. Investigation plan closed and archived (`.claude/plans/plans-archive/grid-edge-accuracy-investigation.md`).
+
 ## 2026-09-02 (3)
 
 **Corrected: grid_edge_accuracy_check.py's methodology was a hindsight pick, not a real signal -- redone with a decided-in-advance blend, plus a new cross-site correlation check**

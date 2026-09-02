@@ -1,4 +1,4 @@
-Status: in-progress
+Status: done
 Priority: medium
 Type: new-feature
 Last updated: 2026-09-02
@@ -74,19 +74,38 @@ own problems unrelated to grid position) and different specific models
 flagged varies site to site) -- the within-site comparison is the
 meaningful one, and it does not show a clean signal either way.
 
-## Where this leaves the original question
+## Result: definitive statistical check (rebuilt `grid_edge_error_correlation.py`)
 
-No clean, decisive evidence yet in either direction. Real constraints on
-what we have: 1-3 dates per site, confounding between model identity and
-edge-flag status at different sites, and the ground-truth proxy (HRRR-
-analysis) has its own error characteristics we haven't separately verified.
-Two live open questions for the user, not yet decided: (1) whether to
-backfill more `--actual-only` dates for sites with existing live captures to
-grow the existing-data sample cheaply (no waiting) before deciding, and/or
-start genuinely new forward-looking neighbor-cell collection for a real
-(not retrospective) sample over time; (2) how/where to surface a persistent
-near-edge/corner flag until this is resolved -- scope not yet clarified
-(pipeline log line vs. published site JSON field vs. viewer UI badge).
+Requested directly: stop looking at neighboring grids/blending for a moment
+-- use the full historical record (every capture T-7..T-0 already on disk
+for every site with a real actual, not just the latest one) and check
+whether edge/corner-sited models are inherently less accurate, categorically
+(middle/edge/corner) or continuously (%-distance-from-an-edge vs error).
+
+Pooled 8,488 rows across 8 sites, 44 (site, model) pairs, every lead time
+T-0 through T-7. Two views, both properly controlling for confounds:
+- **Per-pair correlation** (one point per (site,model), avoiding
+  pseudo-replication): Spearman rho=0.042, p=0.79 -- **no relationship**.
+- **Within-site comparison** (same site/dates/weather, only the model's
+  grid position differs -- fully controls for site identity): corner models
+  averaged 0.98x middle's error (worse at only 1/3 sites); edge models
+  averaged 1.03x middle's error (worse at 4/6 sites, but only 3% on
+  average) -- both **noise-level, not a real effect**.
+- A naive pooled-row Kruskal-Wallis test WAS significant (p<0.0001), but in
+  the physically implausible direction (corner/edge looked BETTER than
+  middle) -- traced to a real site-identity confound: argonia/seymour have
+  inherently large drift errors and happen to be classified "middle," while
+  hearne/gunter/apache_pass have smaller inherent errors and happen to have
+  more edge/corner-flagged models. Once site is controlled for (either view
+  above), the effect vanishes. This is the reason NOT to trust a raw pooled
+  comparison for this kind of question.
+
+**Conclusion: no evidence, in the data available, that edge/corner-sited
+models are inherently less accurate than centered ones.** The neighbor-cell
+blending math from `grid_edge_accuracy_check.py` is not worth pursuing
+further on this basis -- consistent with (and now backed by real statistics
+across every site, not just one) that script's own decided-in-advance-blend
+result for hearne/ecmwf.
 
 ## Decisions
 - Test case: hearne/ecmwf, chosen over sd_rocket_jockies/gfs specifically
@@ -104,15 +123,19 @@ near-edge/corner flag until this is resolved -- scope not yet clarified
 (none yet)
 
 ## Open questions
-- Widen further: backfill more `--actual-only` dates for sites with
-  existing live captures (cheap, immediate, no waiting) to grow the
-  cross-site correlation's sample -- asked, not yet decided.
-- Start genuinely new forward-looking neighbor-cell collection (a real,
-  non-retrospective sample validated against real future actuals) -- asked,
-  not yet decided; a bigger commitment (new ongoing pipeline behavior) than
-  anything else in this investigation so far.
-- Where/how to surface a persistent near-edge/corner flag until this is
-  resolved, per direct request -- scope not yet clarified.
+- The accuracy question itself is now settled (no evidence of an effect,
+  see the definitive statistical check above) -- backfilling more data or
+  starting forward-looking neighbor-cell collection is no longer needed on
+  this basis.
+- Whether to still surface a persistent near-edge/corner flag "somehow"
+  (per an earlier direct request) purely for informational/transparency
+  reasons, given the data doesn't show it currently matters for accuracy --
+  worth checking with the user now that the underlying question is answered,
+  not asked yet since the accuracy investigation took priority.
+- `pull_historical.py`'s legacy top-level `data/raw/` (hutto's original
+  pre-multi-site NOAA-only Saturday backfill) was deliberately excluded from
+  the statistical check (different schema/model set) -- not revisited, no
+  need to.
 
 ## Explicitly out of scope
 - No changes to `app.js`, the live pipeline's forecast math, or site
