@@ -83,6 +83,7 @@ pipeline/                Python: pulls data, runs the simulation, publishes JSON
   splash_zones.py            Wind capture -> drift simulation -> convex-hull zone JSON for the viewer.
   fetch_site_maps.py         Satellite/road map imagery fetch, per site.
   analyze_real_flight.py     Real GPS-tracked flight vs. this pipeline's own forecasts/actuals (see below).
+  grid_position_report.py    Read-only diagnostic: where each site sits within each wind model's own native grid cell, flagging sites near a cell edge/corner. Not wired into the live pipeline -- run by hand.
   data/                      Working data (gitignored raw pulls; live captures ARE tracked, see .gitignore).
 site/                     The deployable static app -- no backend, no local build step.
   index.html, assets/        Markup, CSS, and the viewer's JS (rendering, interaction, permalinks). index.html/app.js reference the plain, unminified app.js -- pages.yml minifies it at deploy time only (see below), so local dev is just opening the files, nothing to build first.

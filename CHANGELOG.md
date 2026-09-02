@@ -2,6 +2,14 @@
 
 Dated, terse log of notable changes. For the full design rationale and decision history, see [docs/spec.md](docs/spec.md).
 
+## 2026-09-02
+
+**Added: grid-edge diagnostic (`pipeline/grid_position_report.py`) -- where each site sits within each model's own native grid cell**
+- Raised directly: each wind model pulls from a grid, and a launch site near an edge or corner of its cell means a real forecast difference between it and the neighboring cell could matter, unnoticed, since this app always just uses whichever single node Open-Meteo snapped to. Asked to check whether grid coordinates/span data even exist before building anything.
+- Confirmed directly against the live API: Open-Meteo returns the actual grid node it snapped to (`latitude`/`longitude` in the response, distinct from the query), and empirically measured (not trusted from docs) each model's real native spacing by sweeping small lat/lon steps and finding where the returned node jumps: `gfs≈0.117°`, `ecmwf=0.25°`, `gem=0.15°`, `icon=0.125°`, `arpege=0.25°`, `hrrr≈0.027°×0.034°` (non-square -- a ~3km grid reprojected from Lambert-conformal). None of the 6 profile models' grids are aligned to each other -- different spacing, different origins -- so no single site coordinate can be "centered" in every model's cell simultaneously.
+- New script computes, per site per `config.LIVE_PROFILE_MODELS` model, the site's position within its cell as %x(lon)/%y(lat) (50/50 = centered, 0/100 = at the boundary) plus an approximate distance to the nearest edge in km, flagging anything within 15% of either edge on either axis. Real result across all 10 sites x 6 models: **33 of 60 combinations flagged** -- apache_pass, hearne, tripoli_houston_south, gunter, sd_rocket_jockies, leonard, and pawhuska each have 3-4 of their 6 models sitting within a km or two of a cell boundary.
+- Deliberately a read-only diagnostic, not wired into the live pipeline or the app's forecast math -- run by hand (`python grid_position_report.py`) to decide, site by site, which model+site combinations are worth distrusting or investigating further. `MODEL_GRID_SPACING_DEG`'s measurements would need re-verifying if a model provider changes its native grid resolution.
+
 ## 2026-09-01
 
 **Fixed: launch-date auto-select defaulted to the latest date overall, not the next upcoming one**
