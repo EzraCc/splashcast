@@ -2,7 +2,16 @@
 
 Dated, terse log of notable changes. For the full design rationale and decision history, see [docs/spec.md](docs/spec.md).
 
-## 2026-09-02 (4)
+## 2026-09-03
+
+**Fixed: "Specific altitude" box kept showing a stale manually-typed value once a real ascent sim result arrived**
+- Reported directly with a real example: "Loc big nuke 3e on an AT K1000T has apogee around 5500'. If you start at 8k' before adding the rocket, the value doesn't update even if the drift paths do." Confirmed: `resolveMapAltFt()`'s sim-priority branch and the byAltitude zone computation both already correctly used the real sim apogee once `ASCENT_RESULTS` existed (drift paths/zone were right), but two UI-only spots still gated on `state.customAlt === null`/`!== null` alone, with no `ASCENT_RESULTS` check: `updateMapAltControl()`'s readout-text update, and `syncAltCustomUI()`'s decision to show the editable "Specific altitude" input vs. the plain readout. Result: the editable input kept showing the old typed number (8,000ft) even while the actual zone had already moved to 5,501ft.
+- Fixed both to treat `ASCENT_RESULTS` as overriding "Specific altitude" for display too, matching `resolveMapAltFt()`'s own documented priority order -- `state.customAlt` itself is left untouched (not cleared), so if the sim result is later reset, the original typed value reappears in the input automatically, no extra state needed.
+- Verified via headless-Chromium with a synthetic `rocketry:ascentResults` payload (apogee ~5,501ft): before the fix, the input stayed at "8000" while the zone-group's own altitude was already 5501; after, the readout correctly shows "5,501 ft" and the input row hides itself (since it has zero effect once a sim result exists); resetting the sim afterward correctly restores the "8000" input.
+
+**Added: a clear/reset icon on the active ascent-sim label**
+- Requested directly: "put a reset icon near the rocket + motor name, so the user can clear the ascent path, if desired." The existing reset path (`resetAscentSim()`) was only reachable via the modal's own X or click-away, both unavailable once a result has arrived and the modal auto-closes -- there was no way to clear an already-active sim result without reopening the modal first. New small `&times;` button inside `#ascent-sim-label` (next to the rocket+motor text), wired to the same `resetAscentSim()` the modal's own X already uses.
+
 
 **Resolved: grid-edge accuracy investigation -- no evidence that edge/corner-sited models are less accurate**
 - Requested directly: stop looking at neighbor-cell blending for a moment and instead use the full historical forecast-vs-actual record (every capture T-7..T-0 already on disk, not just the latest) across every site/model, categorized middle/edge/corner (or continuously by %-distance-from-an-edge), to check for a real statistical difference before building any adjacent-grid math.

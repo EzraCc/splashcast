@@ -1,7 +1,7 @@
 Status: in-progress
 Priority: high
 Type: new-feature
-Last updated: 2026-08-24
+Last updated: 2026-09-03
 
 # Rocketry flight-sim integration (embedded, cross-origin — no code sharing)
 
@@ -26,6 +26,7 @@ Last updated: 2026-08-24
 - [x] Task 12 — Draggable/resizable/full-screen-toggleable ascent-sim modal (`index.html`, `app.css`, `app.js`) — **splashcast-side only, entirely a wrapper around the existing iframe, no rocketry change needed** — see "Update 2026-08-16 (7)" below
 - [x] Task 13 — Real per-rocket descent rates (`descentDevices`) now adjust `state.rateFps`/`state.deploy`, actually affecting the landing zone — see "Update 2026-08-17 (1)" below
 - [x] Task 14 — Fixed real-flight landing-point popups showing blank/nothing once `ASCENT_RESULTS` is active — see "Update 2026-08-24 (1)" below
+- [x] Task 15 — Fixed "Specific altitude" box showing a stale manually-typed value once a real sim result arrived, plus a reset icon on the active ascent-sim label — see "Update 2026-09-03 (1)" below
 
 ## Context
 
@@ -969,6 +970,41 @@ Task 4 was built against.
 > tooltips. Confirmed no regression: a manual (non-sim) single-deploy pick
 > with `customAlt` above 10,000ft is still correctly suppressed, and
 > ordinary ladder/`customAlt` tooltips are unchanged.
+
+> ## Update 2026-09-03 (1)
+>
+> **Task 15 — "Specific altitude" readout mismatch + ascent-sim reset icon.**
+>
+> Reported directly with a real example: "Loc big nuke 3e on an AT K1000T
+> has apogee around 5500'. If you start at 8k' before adding the rocket,
+> the value doesn't update even if the drift paths do." `resolveMapAltFt()`
+> (Task priorities already documented in its own comment) and the byAltitude
+> zone computation both already correctly used the real sim apogee once
+> `ASCENT_RESULTS` existed — the drift paths/zone were genuinely right. Two
+> UI-only spots weren't: `updateMapAltControl()`'s readout-text update and
+> `syncAltCustomUI()`'s input-vs-readout visibility decision both gated on
+> `state.customAlt` alone, with no `ASCENT_RESULTS` check — so the editable
+> "Specific altitude" box kept showing the old manually-typed number (8,000ft)
+> even while the zone had already moved to the real 5,501ft apogee.
+>
+> Fixed both to treat `ASCENT_RESULTS` as overriding "Specific altitude" for
+> display too, matching `resolveMapAltFt()`'s own priority order.
+> `state.customAlt` itself is left untouched (not cleared) — resetting the
+> sim afterward brings the original typed value right back with no extra
+> state needed.
+>
+> Also added, per direct request ("put a reset icon near the rocket + motor
+> name, so the user can clear the ascent path, if desired"): a small `×`
+> button inside `#ascent-sim-label`, wired to the existing `resetAscentSim()`
+> — previously only reachable via the modal's own X/click-away, both
+> unavailable once a result has arrived and the modal auto-closes.
+>
+> **Verified** via headless-Chromium with a synthetic `rocketry:ascentResults`
+> payload (apogee ~5,501ft): before the fix, the input stayed at "8000"
+> while the zone-group's own altitude was already 5501; after, the readout
+> correctly shows "5,501 ft" and the input row hides itself; clicking the
+> new reset icon correctly clears `ASCENT_RESULTS` and restores the "8000"
+> input.
 
 ## Explicitly out of scope for this plan
 

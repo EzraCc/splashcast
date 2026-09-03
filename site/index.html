@@ -252,8 +252,14 @@ writeLocalBustedTag('<link rel="stylesheet" href="', 'assets/css/app.css', '">')
         <!-- Rocket + motor name for whichever sim result is currently
              driving the boost line -- e.g. "LOC-IV X2 + AeroTech K400C".
              Hidden until a rocketry:ascentResults message arrives (see
-             app.js's message listener), cleared on resetAscentSim(). -->
-        <div class="ascent-sim-label" id="ascent-sim-label" style="display:none;"></div>
+             app.js's message listener), cleared on resetAscentSim(). The
+             small x button lets that be cleared directly from here -- the
+             modal's own X (#ascent-sim-close) only exists while the modal
+             is open, which it never is once a result has already arrived. -->
+        <div class="ascent-sim-label" id="ascent-sim-label" style="display:none;">
+          <span id="ascent-sim-label-text"></span>
+          <button type="button" id="ascent-sim-label-clear" class="ascent-sim-label-clear" title="Clear this ascent sim result">&times;</button>
+        </div>
         <!-- The dial itself -- not a stand-in icon -- is always visible
              and always draggable, collapsed or not. It's a real,
              distinctive circular widget (not another 30px square button

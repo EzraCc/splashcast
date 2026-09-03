@@ -1111,7 +1111,17 @@ function updateMapAltControl() {
   const altFt = resolveMapAltFt();
   mapAltLastResolvedFt = altFt;
   mapAltUpdateSliderUI(altFt);
-  if (state.customAlt === null) mapAltReadoutText.textContent = altFt.toLocaleString() + ' ft';
+  // ASCENT_RESULTS wins over "Specific altitude" entirely once a real sim
+  // exists (resolveMapAltFt()'s own priority-chain comment) -- the plain
+  // readout needs to reflect that even with a customAlt still set
+  // underneath (preserved, not cleared, so it comes right back if the sim
+  // is reset -- see syncAltCustomUI()'s matching condition), or this stays
+  // hidden behind syncAltCustomUI()'s now-stale editable input. Real,
+  // reported bug: starting from a manually-typed "Specific altitude" (e.g.
+  // 8,000ft), then running a real ascent sim with a genuinely different
+  // apogee (e.g. ~5,500ft) correctly updated the drift paths/zone via
+  // resolveMapAltFt(), but the visible altitude box kept showing "8,000 ft."
+  if (state.customAlt === null || ASCENT_RESULTS) mapAltReadoutText.textContent = altFt.toLocaleString() + ' ft';
 }
 
 // Read-only for now (per direction) -- DATA.descent_params.main_deploy_altitude_ft
@@ -1162,7 +1172,14 @@ altCustomInput.addEventListener('input', () => {
 // status into the input, safe to call any time state.customAlt, hour, or
 // deploy changes (cheap -- reads zoneFor()'s cache, doesn't re-simulate).
 function syncAltCustomUI() {
-  const active = state.customAlt !== null;
+  // !ASCENT_RESULTS -- once a real sim result exists it overrides "Specific
+  // altitude" entirely (resolveMapAltFt()'s own priority chain), so showing
+  // this editable input while it has zero effect on the actual zone is
+  // misleading. Falls back to the plain (now sim-driven) readout instead,
+  // WITHOUT clearing state.customAlt itself -- if the sim later gets reset,
+  // the custom value reappears here with no extra code needed. Same bug/fix
+  // as updateMapAltControl()'s own comment.
+  const active = state.customAlt !== null && !ASCENT_RESULTS;
   mapAltReadoutText.style.display = active ? 'none' : '';
   altCustomInputRow.style.display = active ? '' : 'none';
   if (active) altCustomInput.value = state.customAlt;
@@ -2365,6 +2382,18 @@ const ascentSimIframe = document.getElementById('ascent-sim-iframe');
 const ascentSimClose = document.getElementById('ascent-sim-close');
 const ascentSimError = document.getElementById('ascent-sim-error');
 const ascentSimLabel = document.getElementById('ascent-sim-label');
+const ascentSimLabelText = document.getElementById('ascent-sim-label-text');
+// Requested directly ("put a reset icon near the rocket + motor name, so
+// the user can clear the ascent path") -- the modal's own X (ascentSimClose)
+// only exists while the modal is open, which it never is once a result has
+// arrived (closeAscentSimModal() runs immediately on success); this is the
+// only way to clear an already-active result without reopening the modal
+// and clicking X there instead. Same resetAscentSim() the modal's own X and
+// click-away already use -- one reset path, not a second one.
+document.getElementById('ascent-sim-label-clear').addEventListener('click', evt => {
+  evt.stopPropagation();
+  resetAscentSim();
+});
 
 // `{rocketName, parseWarnings, stability, rocketConfig?, resultsByHour}`
 // once a sim result has come back, else null -- `resultsByHour` is
@@ -2605,8 +2634,12 @@ function resetAscentSim() {
   railAngleControl.classList.remove('sim-active');
   railAngleControl.title = '';
   ascentSimLabel.style.display = 'none';
-  ascentSimLabel.textContent = '';
+  ascentSimLabelText.textContent = '';
   closeAscentSimModal();
+  // A customAlt set before/during the sim was preserved, not cleared (see
+  // syncAltCustomUI()'s own comment) -- this brings its editable input back
+  // now that ASCENT_RESULTS no longer overrides it.
+  syncAltCustomUI();
   renderDescent3D();
   render();
 }
@@ -2681,10 +2714,16 @@ window.addEventListener('message', evt => {
     // motor) rather than showing nothing.
     const label = data.rocketConfig?.label || data.rocketName;
     if (label) {
-      ascentSimLabel.textContent = label;
+      ascentSimLabelText.textContent = label;
       ascentSimLabel.style.display = 'block';
     }
     closeAscentSimModal();
+    // A customAlt set before this result arrived (e.g. "Specific altitude"
+    // typed in) is now overridden by resolveMapAltFt()'s real sim-priority
+    // value -- without this, the box kept showing the old typed number even
+    // though the drift paths/zone had already switched to the real apogee.
+    // Real, reported bug. See syncAltCustomUI()'s own comment.
+    syncAltCustomUI();
     // Both, not just one -- a message arriving after the page's own initial
     // synchronous render() already happened is the same async-timing shape
     // as the local prototype's fetch callback (descent3d.js's own comment

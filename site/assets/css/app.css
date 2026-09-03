@@ -1318,9 +1318,19 @@
   .ascent-sim-label {
     position: absolute; left: 0; bottom: 100%; margin-bottom: 6px; white-space: nowrap;
     background: var(--surface-1); border: 1px solid var(--border); border-radius: 6px;
-    padding: 3px 8px; font-size: var(--fs-xs); font-weight: 600; color: var(--text-primary);
+    padding: 3px 6px 3px 8px; font-size: var(--fs-xs); font-weight: 600; color: var(--text-primary);
     box-shadow: 0 1px 4px rgba(0,0,0,0.15);
+    display: flex; align-items: center; gap: 4px;
   }
+  /* Small enough to sit inline with the label's own compact text/padding
+     (3px 8px) without dominating it -- same minimal treatment
+     .ascent-sim-close uses for the modal's own X, just sized down to fit
+     inside this pill instead of a full modal header. */
+  .ascent-sim-label-clear {
+    border: none; background: transparent; color: var(--text-secondary);
+    font-size: 1rem; line-height: 1; cursor: pointer; padding: 0 1px; flex-shrink: 0;
+  }
+  .ascent-sim-label-clear:hover { color: var(--text-primary); }
   /* Same 30px icon-button treatment .map-fullscreen-toggle already
      establishes -- a real, always-visible entry point (not hidden behind
      an existing control), but sized to not compete with the dial itself
