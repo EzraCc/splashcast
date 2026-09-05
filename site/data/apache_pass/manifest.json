@@ -1,6 +1,6 @@
 {
   "site_id": "apache_pass",
-  "generated_at": "2026-09-04T20:47:56",
+  "generated_at": "2026-09-05T04:29:33",
   "site_geometry": {
     "site_px": [
       1693.0,
@@ -28,10 +28,10 @@
   "launch_dates": [
     {
       "target_date": "2026-09-05",
-      "capture_date": "2026-09-04",
-      "lead_days": 1,
-      "label": "Sat, Sep 5 (T-1)",
-      "data_path": "data/apache_pass/live/2026-09-05/splash_zones_captured_2026-09-04.json",
+      "capture_date": "2026-09-05",
+      "lead_days": 0,
+      "label": "Sat, Sep 5 (T-0)",
+      "data_path": "data/apache_pass/live/2026-09-05/splash_zones_captured_2026-09-05.json",
       "history_path": "data/apache_pass/live/2026-09-05/points_history.json",
       "real_flight_paths": []
     },
