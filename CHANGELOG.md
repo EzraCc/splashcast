@@ -2,6 +2,13 @@
 
 Dated, terse log of notable changes. For the full design rationale and decision history, see [docs/spec.md](docs/spec.md).
 
+## 2026-09-08
+
+**Fixed: real-flight path never appeared in the 3D History view for a fresh/direct load**
+- Reported directly: "I don't see the actuals on 9/5 Hutto in the 3d history view." Diagnosed via headless-Chromium against `?site=hutto&mode=byHistory&date=2026-09-05&view=3d` with nothing hovered/pinned: `REAL_FLIGHTS` loaded correctly (2 entries), but `activeRealFlight()` returned `null` -- it resolves `hoveredRealFlightIndex`/`pinnedRealFlightIndex`, which are only ever set by `drawRealFlightMarker()`'s mouse listeners on the 2D SVG markers, and the map-view-toggle code sets the 2D frame to `display:none` in 3D mode. There was no way to select a real flight while ever looking at the 3D view -- 2026-09-07 (3)'s own new feature was unreachable outside a 2D→3D switch after hovering.
+- Fixed by rendering every `REAL_FLIGHTS` entry for the active date unconditionally in `renderDescent3D()`'s `byHistory` branch (`descent3d.js`), the same way the HRRR-analysis `'actual'` path already renders unconditionally, instead of gating on the 2D-only hover/pin state. Each pushed `paths` entry now carries its own `flight` object directly; `shiftForModel()` and the real-point-marker draw call take the whole path entry (`p`) instead of a bare model-name string, so multiple real flights active at once each get their own correct apogee-offset shift and their own solid rail/anchor/landing markers rather than colliding on a single `activeRealFlight()` lookup.
+- Verified via headless-Chromium: hutto/2026-09-05 (2 manual flights, zero hover) now shows two dashed pink paths with correct landing markers on a fresh load, no console errors; hutto/2026-08-01 (partial-GPS flight) still renders correctly (no regression); a site with zero real flights (gunter) renders with no errors either.
+
 ## 2026-09-07 (3)
 
 **Added: real-flight descent path in the 3D History view -- dashed simulated line, solid markers for actual real GPS fixes**

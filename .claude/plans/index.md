@@ -7,4 +7,4 @@
 | Rocketry flight-sim integration | in-progress | high | new-feature | rocketry-flight-sim-integration.md | 2026-09-03 |
 | Grid-edge accuracy investigation | done | medium | new-feature | plans-archive/grid-edge-accuracy-investigation.md | 2026-09-02 |
 | Manual real-flight entries | done | medium | new-feature | plans-archive/manual-real-flight-entries.md | 2026-09-07 |
-| Real-flight 3D descent path | done | medium | new-feature | plans-archive/real-flight-3d-path.md | 2026-09-07 |
+| Real-flight 3D descent path | done | medium | new-feature | plans-archive/real-flight-3d-path.md | 2026-09-08 |

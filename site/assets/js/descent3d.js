@@ -1148,15 +1148,24 @@ function renderDescent3D() {
     // historyActualPathForAltitude()'s own comment for why.
     const actualPath = historyActualPathForAltitude(state.timeMinutes, state.deploy, altFt);
     if (actualPath) paths.push({ model: 'actual', path: actualPath });
-    // The currently hovered/pinned real flight's own descent path (app.js's
-    // activeRealFlight(), same 2D overlay gate as drawRealFlightMarker()'s
-    // rail/apogee/predicted-landing markers) -- independent of
+    // EVERY real flight for this date (REAL_FLIGHTS), not just app.js's
+    // activeRealFlight() -- that resolves hoveredRealFlightIndex/
+    // pinnedRealFlightIndex, which are only ever set by drawRealFlightMarker()'s
+    // mouse listeners on the 2D SVG markers, and the 2D map frame is
+    // display:none in 3D mode (see the map-view-toggle code), so those
+    // indices can never become non-null in a 3D-only session -- a real
+    // flight's path would silently never appear. Each pushed entry carries
+    // its own `flight` object directly (not looked up again via
+    // activeRealFlight() at draw time) so shiftForModel()/
+    // path3dDrawRealFlightMarkers() below work correctly even with more
+    // than one real flight active at once. Independent of
     // activeCapture/altFt/selectedModels, same reasoning as 'actual' above:
-    // this is one specific real rocket's own reconstruction, not tied to
+    // each is one specific real rocket's own reconstruction, not tied to
     // any forecast capture or the currently-selected ladder altitude.
-    const flight = activeRealFlight();
-    const realFlightPath = flight ? realFlightDescentPath(flight) : null;
-    if (realFlightPath) paths.push({ model: 'real_flight', path: realFlightPath });
+    REAL_FLIGHTS.forEach(flight => {
+      const realFlightPath = realFlightDescentPath(flight);
+      if (realFlightPath) paths.push({ model: 'real_flight', path: realFlightPath, flight });
+    });
   } else {
     const pathsRaw = descentPathsFor(state.timeMinutes, state.deploy, altFt);
     paths = pathsRaw.filter(p => state.selectedModels === null || state.selectedModels.has(p.model));
@@ -1238,25 +1247,27 @@ function path3dDrawScene(paths, altFt, ascentMean) {
   // ascentMeanApogeeFt()'s own comment for why a mean rather than picking
   // one model arbitrarily.
   const railShift = ascentMean || railShiftFt(altFt);
-  function shiftForModel(model) {
+  function shiftForModel(p) {
     // 'real_flight' shifts by THIS flight's own real/estimated apogee
-    // offset (app.js's activeRealFlight()) -- a real rocket's own boost
+    // offset (p.flight, set when this entry was pushed in renderDescent3D()
+    // -- NOT looked up via activeRealFlight() here, since more than one
+    // real flight can be active at once now) -- a real rocket's own boost
     // drift, not the generic rail-angle dial or any forecast model's sim
     // result. Checked before the ASCENT_RESULTS branch below since the two
     // are unrelated -- a real flight can be active regardless of whether an
     // ascent sim result also is.
-    if (model === 'real_flight') {
-      const flight = activeRealFlight();
+    if (p.model === 'real_flight') {
+      const flight = p.flight;
       return flight ? { x: flight.apogee.offset_from_pad_ft.x, y: flight.apogee.offset_from_pad_ft.y } : railShift;
     }
     if (!ASCENT_RESULTS) return railShift; // dial-based, shared, unchanged from before this feature existed
-    const ascentPath = ascentPathForModel(model, state.timeMinutes);
+    const ascentPath = ascentPathForModel(p.model, state.timeMinutes);
     return ascentPath ? ascentApogeeFt(ascentPath) : railShift; // per-model when rocketry returned one, else the mean (e.g. 'actual')
   }
   let maxXY = 1;
   const maxZ = Math.max(1, altFt);
   paths.forEach(p => {
-    const shift = shiftForModel(p.model);
+    const shift = shiftForModel(p);
     p.path.forEach(pt => {
       maxXY = Math.max(maxXY, Math.abs(pt.x_ft + padOffsetFt.x + shift.x), Math.abs(pt.y_ft + padOffsetFt.y + shift.y));
     });
@@ -1401,18 +1412,19 @@ function path3dDrawScene(paths, altFt, ascentMean) {
     .map(o => o.p);
 
   ordered.forEach(p => {
-    const shift = shiftForModel(p.model);
+    const shift = shiftForModel(p);
     const shiftedToScreenPath = toScreenPathFor(shift);
     path3dDrawPath(p, shiftedToScreenPath, altFt, shift);
     // Solid real-position markers (rail/descent-anchor/landing/a measured
-    // apogee) for the currently hovered/pinned real flight -- drawn right
-    // after its own dashed simulated path, in this same per-model-shifted
-    // coordinate frame (shiftedToScreenPath), not the generic mean-shifted
-    // one. See path3dDrawRealFlightMarkers()'s own comment for why these
-    // are separate from the path's own styling.
-    if (p.model === 'real_flight') {
-      const flight = activeRealFlight();
-      if (flight) path3dDrawRealFlightMarkers(toScreen, shiftedToScreenPath, flight);
+    // apogee) for this path's own real flight (p.flight, one per entry now
+    // that every REAL_FLIGHTS entry for the date renders, not just
+    // activeRealFlight()) -- drawn right after its own dashed simulated
+    // path, in this same per-model-shifted coordinate frame
+    // (shiftedToScreenPath), not the generic mean-shifted one. See
+    // path3dDrawRealFlightMarkers()'s own comment for why these are
+    // separate from the path's own styling.
+    if (p.model === 'real_flight' && p.flight) {
+      path3dDrawRealFlightMarkers(toScreen, shiftedToScreenPath, p.flight);
     }
   });
 

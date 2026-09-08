@@ -1,7 +1,7 @@
 Status: done
 Priority: medium
 Type: new-feature
-Last updated: 2026-09-07
+Last updated: 2026-09-08
 
 # Real-flight 3D descent path
 
@@ -65,6 +65,18 @@ reconciled -- explicitly deferred by the user as a future problem.
 - Did not add hit-testing/hover-tooltips for the new solid real-point
   markers -- the existing 2D info box already covers this flight's own
   numbers; out of scope for "add the path."
+
+## Detours
+- 2026-09-08: reported directly ("I don't see the actuals on 9/5 Hutto in
+  the 3d history view") that the just-shipped path never appeared on a
+  fresh/direct 3D load. Root cause: rendering was gated on `activeRealFlight()`
+  (2D-only hover/pin state), and the 2D SVG frame is `display:none` in 3D
+  mode -- there was no way to select a flight while ever looking at 3D.
+  Fixed by rendering every `REAL_FLIGHTS` entry for the date unconditionally
+  in 3D (same as the `'actual'` path), each carrying its own `flight` object
+  through `shiftForModel()`/`path3dDrawRealFlightMarkers()` instead of a
+  single shared lookup, so multiple real flights on the same date each get
+  their own correct shift/markers. See CHANGELOG 2026-09-08.
 
 ## Open questions
 (none)
