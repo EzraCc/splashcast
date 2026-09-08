@@ -888,6 +888,21 @@ def analyze_partial_gps(site_id: str, target_date: date, samples: list[FlightSam
             "configured_dual_deploy_fps": config.DUAL_DEPLOY_RATES_FPS,
         },
         "density_scaling_check": density_scaling_check,
+        # The ONE real GPS fix this flight has during descent -- previously
+        # computed (anchor_x_ft/anchor_y_ft feed est_x/est_y above) but
+        # never actually published, so nothing downstream could show it.
+        # Real, reported gap: "there's a flight with real GPS data but only
+        # for [part] of the descent... we can add the path" -- this is the
+        # one genuinely measured point along that path (rail and landing are
+        # the only other real ones), distinct from the apogee-to-ground
+        # descent, which is entirely simulated on both sides of it.
+        "descent_anchor": {
+            "time_local": anchor_t.strftime("%H:%M:%S.%f")[:-3],
+            "altitude_agl_ft": round(anchor_agl_ft, 1),
+            "lat": round(anchor_lat, 6), "lon": round(anchor_lon, 6),
+            "offset_from_pad_ft": {"x": round(anchor_x_ft, 1), "y": round(anchor_y_ft, 1), "dist": round(math.hypot(anchor_x_ft, anchor_y_ft), 1)},
+            "note": "Real GPS fix partway down the drogue descent -- the one point this flight's apogee estimate is backsolved against (see apogee.position_estimation_note), not extrapolated or simulated.",
+        },
         "landing": {
             "lat": round(landing_lat, 6), "lon": round(landing_lon, 6),
             "offset_from_pad_ft": {"x": round(real_x_ft, 1), "y": round(real_y_ft, 1), "dist": round(real_dist_ft, 1)},

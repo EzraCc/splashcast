@@ -1148,6 +1148,15 @@ function renderDescent3D() {
     // historyActualPathForAltitude()'s own comment for why.
     const actualPath = historyActualPathForAltitude(state.timeMinutes, state.deploy, altFt);
     if (actualPath) paths.push({ model: 'actual', path: actualPath });
+    // The currently hovered/pinned real flight's own descent path (app.js's
+    // activeRealFlight(), same 2D overlay gate as drawRealFlightMarker()'s
+    // rail/apogee/predicted-landing markers) -- independent of
+    // activeCapture/altFt/selectedModels, same reasoning as 'actual' above:
+    // this is one specific real rocket's own reconstruction, not tied to
+    // any forecast capture or the currently-selected ladder altitude.
+    const flight = activeRealFlight();
+    const realFlightPath = flight ? realFlightDescentPath(flight) : null;
+    if (realFlightPath) paths.push({ model: 'real_flight', path: realFlightPath });
   } else {
     const pathsRaw = descentPathsFor(state.timeMinutes, state.deploy, altFt);
     paths = pathsRaw.filter(p => state.selectedModels === null || state.selectedModels.has(p.model));
@@ -1230,6 +1239,16 @@ function path3dDrawScene(paths, altFt, ascentMean) {
   // one model arbitrarily.
   const railShift = ascentMean || railShiftFt(altFt);
   function shiftForModel(model) {
+    // 'real_flight' shifts by THIS flight's own real/estimated apogee
+    // offset (app.js's activeRealFlight()) -- a real rocket's own boost
+    // drift, not the generic rail-angle dial or any forecast model's sim
+    // result. Checked before the ASCENT_RESULTS branch below since the two
+    // are unrelated -- a real flight can be active regardless of whether an
+    // ascent sim result also is.
+    if (model === 'real_flight') {
+      const flight = activeRealFlight();
+      return flight ? { x: flight.apogee.offset_from_pad_ft.x, y: flight.apogee.offset_from_pad_ft.y } : railShift;
+    }
     if (!ASCENT_RESULTS) return railShift; // dial-based, shared, unchanged from before this feature existed
     const ascentPath = ascentPathForModel(model, state.timeMinutes);
     return ascentPath ? ascentApogeeFt(ascentPath) : railShift; // per-model when rocketry returned one, else the mean (e.g. 'actual')
@@ -1383,13 +1402,60 @@ function path3dDrawScene(paths, altFt, ascentMean) {
 
   ordered.forEach(p => {
     const shift = shiftForModel(p.model);
-    path3dDrawPath(p, toScreenPathFor(shift), altFt, shift);
+    const shiftedToScreenPath = toScreenPathFor(shift);
+    path3dDrawPath(p, shiftedToScreenPath, altFt, shift);
+    // Solid real-position markers (rail/descent-anchor/landing/a measured
+    // apogee) for the currently hovered/pinned real flight -- drawn right
+    // after its own dashed simulated path, in this same per-model-shifted
+    // coordinate frame (shiftedToScreenPath), not the generic mean-shifted
+    // one. See path3dDrawRealFlightMarkers()'s own comment for why these
+    // are separate from the path's own styling.
+    if (p.model === 'real_flight') {
+      const flight = activeRealFlight();
+      if (flight) path3dDrawRealFlightMarkers(toScreen, shiftedToScreenPath, flight);
+    }
   });
 
   // Drawn LAST -- on top of the ground plane, axes, and every model's own
   // path/apogee marker, so it's never occluded by any of them regardless
   // of orbit angle.
   path3dDrawApogeeLabel(toScreenPath, altFt);
+}
+
+// Solid, real-position markers for the currently hovered/pinned real flight
+// (app.js's activeRealFlight()) -- rail/descent-anchor/landing/apogee,
+// whichever this flight actually has a real GPS fix for (not every flight
+// type has all four -- see analyze_real_flight.py's own docstrings: a
+// hand-recorded rail/landing pin still counts as "real" here, same
+// treatment the 2D marker already gives it). Deliberately separate from
+// path3dDrawPath()'s own 'real_flight' line (always dashed, simulated end
+// to end) -- these are the genuinely real points, drawn as a solid ring+dot
+// ('target', the same shape/meaning the 2D marker already uses), not
+// folded into that one line's own styling. `toScreen` (unshifted, real
+// absolute pad-relative ft) is used for rail/anchor/landing, which are
+// already published that way; `toScreenPath` (this flight's own per-model
+// shift, from path3dDrawScene()'s own call site) is used only for a
+// GPS-measured apogee, matching how every other apogee marker in this
+// scene is plotted.
+function path3dDrawRealFlightMarkers(toScreen, toScreenPath, flight) {
+  const ctx = path3dCtx;
+  function solidTarget(sx, sy) {
+    ctx.beginPath(); ctx.arc(sx, sy, 6, 0, Math.PI * 2);
+    ctx.lineWidth = 2; ctx.strokeStyle = REAL_FLIGHT_COLOR; ctx.stroke();
+    ctx.beginPath(); ctx.arc(sx, sy, 2.4, 0, Math.PI * 2);
+    ctx.fillStyle = REAL_FLIGHT_COLOR; ctx.fill();
+  }
+  ctx.save();
+  const rail = flight.launch.offset_from_pad_ft;
+  if (rail) solidTarget(...toScreen(rail.x, rail.y, 0));
+  const anchor = flight.descent_anchor;
+  if (anchor) solidTarget(...toScreen(anchor.offset_from_pad_ft.x, anchor.offset_from_pad_ft.y, anchor.altitude_agl_ft));
+  const landing = flight.landing.offset_from_pad_ft;
+  solidTarget(...toScreen(landing.x, landing.y, 0));
+  if (flight.apogee.position_source === 'gps_measured') {
+    solidTarget(...toScreenPath(0, 0, flight.apogee.altitude_agl_ft));
+  }
+  ctx.restore();
 }
 
 // Apogee altitude label -- reported directly: with the satellite ground
@@ -1553,15 +1619,33 @@ function path3dDrawBoostLine(toScreen, toScreenPath, altFt) {
 
 function path3dDrawPath(p, toScreen, altFt, railShift) {
   const ctx = path3dCtx;
-  // 'actual' (3D History's T+1 flight, renderDescent3D()) isn't a real
-  // model -- reuses PROJECTION_MARKER_COLOR (app.js), the same amber the
-  // 2D History star already draws this exact concept in, rather than
-  // falling through to the generic '#888' every other unrecognized model
-  // key gets.
-  const color = p.model === 'actual' ? PROJECTION_MARKER_COLOR : (MODEL_COLORS_HEX[p.model] || '#888');
+  // 'actual' (3D History's T+1 HRRR-analysis flight, renderDescent3D())
+  // isn't a real model -- reuses PROJECTION_MARKER_COLOR (app.js), the same
+  // amber the 2D History star already draws this exact concept in, rather
+  // than falling through to the generic '#888' every other unrecognized
+  // model key gets. 'real_flight' (one specific real GPS-tracked/manually-
+  // reported flight, app.js's activeRealFlight()) similarly reuses
+  // REAL_FLIGHT_COLOR, the same pink/magenta its own 2D marker already uses.
+  const color = p.model === 'actual' ? PROJECTION_MARKER_COLOR
+    : p.model === 'real_flight' ? REAL_FLIGHT_COLOR
+    : (MODEL_COLORS_HEX[p.model] || '#888');
   ctx.save();
   ctx.strokeStyle = color;
   ctx.lineWidth = 1.75;
+  // Dashed, deliberately, for 'real_flight' only -- requested directly
+  // ("dashed lines where movement was predicted... solid where actual GPS
+  // data"): this line is a wind-drift simulation end to end, same physics
+  // as every other model's own path, but unlike a forecast/'actual' path
+  // (where that IS the real point, a legitimate model/analysis output) this
+  // one stands in for ONE specific rocket's real flight, most of which
+  // isn't actually measured -- the dash signals "simplified/derived," this
+  // app's usual convention (see path3dDrawBoostLine()'s own comment). The
+  // real GPS fixes this flight DOES have (rail/anchor/landing, and a
+  // measured apogee for a full-GPS flight) are drawn separately as solid
+  // markers, not by varying this line's own dash pattern partway through --
+  // any gap between a real fix and where this line passes at that same
+  // altitude is left visible, not reconciled (a deliberate "later").
+  if (p.model === 'real_flight') ctx.setLineDash([6, 4]);
   ctx.beginPath();
   p.path.forEach((pt, i) => {
     const [sx, sy] = toScreen(pt.x_ft, pt.y_ft, pt.alt_ft);

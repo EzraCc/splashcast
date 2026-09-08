@@ -315,6 +315,16 @@ const MODEL_SHAPES = { gfs: 'circle', ecmwf: 'square', gem: 'triangle-up', icon:
 // is never iterated as "the list of every real model" (only ever indexed
 // by a single already-known key), confirmed directly before adding this.
 MODEL_SHAPES.actual = 'star';
+// Same idea, for a real GPS-tracked/manually-reported flight's own
+// apogee-to-ground descent path (3D History, realFlightDescentPath()) --
+// 'diamond' for the SIMULATED path's own endpoint (predicted landing),
+// deliberately NOT 'target' (reserved for genuinely real/measured points,
+// drawn separately -- see path3dDrawRealFlightMarkers()): predicted landing
+// only coincides with the real one for a no-GPS/manual flight (solved to
+// match it by construction); for a full or partial-GPS flight it's a
+// genuine independent prediction that can miss, and a 'target' ring+dot
+// there would misrepresent a simulated point as a measured one.
+MODEL_SHAPES.real_flight = 'diamond';
 // A circle radius=size / square half-width=size / triangle circumradius=
 // size / diamond circumradius=size / plus-or-x arm-reach=size don't come
 // out to the same visual area at the same `size` (a square is ~4x a
@@ -5194,6 +5204,37 @@ function historyActualPathForAltitude(timeMinutes, deploy, altitudeFt) {
   }
   historyActualPathCache.set(cacheKey, path);
   return path;
+}
+
+// Real-flight 3D descent path (renderDescent3D(), byHistory mode) -- same
+// simulateDriftPath()/actualProfileForTime() construction as
+// historyActualPathForAltitude() above, seeded from this ONE flight's own
+// apogee altitude/rates instead of the ladder-selected altitude/generic
+// rateFps. Requested directly ("we can add the path"): the descent line
+// itself is drawn dashed (path3dDrawPath()'s own real_flight special case),
+// since it's simulated math end to end, same as every other model's own
+// path -- what makes THIS flight different is its real GPS fixes (rail/
+// anchor/landing, and a measured apogee for a full-GPS flight), drawn
+// separately as solid markers (path3dDrawRealFlightMarkers(), descent3d.js)
+// rather than by styling one line differently partway through. Any real
+// gap between a real fix and where the dashed sim passes at that same
+// altitude is left visible, not reconciled -- a real, deliberate "later"
+// per direction ("we'll deal with that later... that's a future problem").
+// null if this flight has no known/estimated descent config at all (a
+// bare-minimum manual record, see analyze_manual()) -- nothing to simulate.
+function realFlightDescentPath(flight) {
+  const rates = flight.descent_rates_ground_equivalent_fps;
+  const apogeeOff = flight.apogee.offset_from_pad_ft;
+  if (!rates || !apogeeOff) return null;
+  const profile = actualProfileForTime(flight.closest_hour * 60);
+  if (!profile) return null;
+  const apogeeFt = flight.apogee.altitude_agl_ft;
+  const dp = DATA.descent_params;
+  const mainDeployAlt = flight.main_deploy ? flight.main_deploy.altitude_agl_ft : dp.main_deploy_altitude_ft;
+  const phases = rates.drogue
+    ? [[rates.drogue.mean, apogeeFt, mainDeployAlt], [rates.main.mean, mainDeployAlt, 0]]
+    : [[rates.main.mean, apogeeFt, 0]];
+  return simulateDriftPath(profile, apogeeFt, phases, dp.site_elev_ft, dp.descent_step_ft);
 }
 
 // Draggable launch pad: capped at DATA.max_pad_move_ft from the surveyed GPS
