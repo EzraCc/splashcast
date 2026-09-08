@@ -628,6 +628,140 @@ def analyze_no_gps(site_id: str, target_date: date, samples: list[FlightSample],
     }
 
 
+def analyze_manual(site_id: str, target_date: date, apogee_agl_ft: float, launch_time_local: str,
+                    landing_lat: float, landing_lon: float,
+                    rail_lat: float | None = None, rail_lon: float | None = None,
+                    deploy: str | None = None, rate_fps=None, main_deploy_altitude_ft: float | None = None,
+                    reused_from: str | None = None, altitude_bucket: int | None = None) -> dict:
+    """Minimal real-flight record for when only headline facts are known by
+    hand -- apogee altitude, launch time, landing GPS, optionally a rail GPS
+    pin -- with no barometric/GPS track at all (unlike analyze()/
+    analyze_no_gps(), both of which need a real altitude-vs-time series even
+    when there's no onboard GPS). Requested directly for exactly this case:
+    known headline numbers today, a fuller tracker log ("GPS data...later")
+    possibly to follow -- re-running against a real tracker format later
+    overwrites this same file with a complete record.
+
+    `deploy`/`rate_fps`/`main_deploy_altitude_ft` are OPTIONAL, hand-supplied
+    descent info (`rate_fps` a single float for deploy="single", an
+    (drogue, main) tuple for "dual") -- when given, AND a real HRRR-analysis
+    actual pull exists for this site/date (pull_historical.py
+    --actual-only), this unlocks the same estimated-apogee-position/
+    self-consistent-predicted-landing construction analyze_no_gps() uses:
+    real apogee altitude + the given rate(s) + the real wind profile blended
+    to launch_time_local, backed out against the real landing point. Without
+    them (or without real wind data yet), apogee position stays unknown and
+    predicted_landing_offset_from_pad_ft is omitted entirely -- see
+    app.js's realFlightBoxHTML(), which renders whichever fields this
+    produces, not a fixed shape.
+
+    `reused_from` (e.g. "apache_pass 2026-07-04") labels rate_fps/
+    main_deploy_altitude_ft as coming from a PREVIOUS flight of the same
+    rocket, not derived from this flight's own track -- requested directly
+    ("it's the same rocket, so descent is the same") for a flier known to
+    reuse one airframe across sites. Recorded in the summary so this is
+    never mistaken for a real per-flight derived rate later."""
+    site = config.SITES[site_id]
+    site_elev_ft = config.elev_ft_for_site(site_id)
+    pad_lat, pad_lon = site["lat"], site["lon"]
+
+    real_x_ft, real_y_ft = latlon_to_ft(landing_lat, landing_lon, pad_lat, pad_lon)
+    real_dist_ft = math.hypot(real_x_ft, real_y_ft)
+
+    time_fmt = "%H:%M:%S" if launch_time_local.count(":") == 2 else "%H:%M"
+    launch_t = datetime.strptime(launch_time_local, time_fmt)
+    hour_a = launch_t.hour
+    hour_b = hour_a + 1
+    weight_b = (launch_t.minute + launch_t.second / 60) / 60
+
+    launch = {"time_local": launch_time_local}
+    if rail_lat is not None and rail_lon is not None:
+        rail_x_ft, rail_y_ft = latlon_to_ft(rail_lat, rail_lon, pad_lat, pad_lon)
+        launch["offset_from_pad_ft"] = {"x": round(rail_x_ft, 1), "y": round(rail_y_ft, 1), "dist": round(math.hypot(rail_x_ft, rail_y_ft), 1)}
+
+    apogee_entry = {"altitude_agl_ft": round(apogee_agl_ft, 1), "position_source": "not_recorded"}
+    predicted_landing = None
+    raw_path = Path(config.DATA_DIR) / site_id / "raw" / f"{target_date}_actual.parquet"
+    rate_source_note = f'a descent rate reused from a previous flight of the same rocket ({reused_from})' if reused_from else 'a hand-reported descent rate for this flight'
+    if deploy and rate_fps is not None and raw_path.exists():
+        raw = pd.read_parquet(raw_path)
+        hdt_a = sz.datetime.combine(target_date, sz.dtime(hour_a, 0), tzinfo=sz._SITE_TZ).astimezone(sz.timezone.utc).replace(tzinfo=None)
+        hdt_b = sz.datetime.combine(target_date, sz.dtime(hour_b, 0), tzinfo=sz._SITE_TZ).astimezone(sz.timezone.utc).replace(tzinfo=None)
+        profile_a = sz.build_actual_profile(raw[raw["valid_time"] == hdt_a], site_elev_ft)
+        profile_b = sz.build_actual_profile(raw[raw["valid_time"] == hdt_b], site_elev_ft)
+        if len(profile_a) >= 2 and len(profile_b) >= 2:
+            blended_profile = blend_wind_profiles(profile_a, profile_b, weight_b)
+            if deploy == "single":
+                phases = [(rate_fps, apogee_agl_ft, 0)]
+            else:
+                drogue, main = rate_fps
+                phases = [(drogue, apogee_agl_ft, main_deploy_altitude_ft), (main, main_deploy_altitude_ft, 0)]
+            sim_x, sim_y = sz.simulate(blended_profile, apogee_agl_ft, phases, site_elev_ft)
+            est_x, est_y = float(real_x_ft - sim_x), float(real_y_ft - sim_y)
+            est_dist_ft = math.hypot(est_x, est_y)
+            apogee_entry.update({
+                "offset_from_pad_ft": {"x": round(est_x, 1), "y": round(est_y, 1), "dist": round(est_dist_ft, 1)},
+                "boost_angle_from_vertical_deg": round(math.degrees(math.atan2(est_dist_ft, apogee_agl_ft)), 2),
+                "configured_boost_angle_deg": config.BOOST_ANGLE_OFF_VERTICAL_DEG,
+                "position_source": "estimated_from_landing_and_wind_model",
+                "position_estimation_note": (
+                    f"No GPS/track for this specific flight -- apogee position is *inferred*, not "
+                    f"measured: assumes the descent-only wind simulation (real apogee altitude + "
+                    f"{rate_source_note} + the real wind profile for this flight's actual time of day) "
+                    f"is accurate, then backs the boost-phase offset out of the difference between that "
+                    f"simulation and the real recorded landing point. predicted_landing_offset_from_pad_ft "
+                    f"is this same estimated apogee plus that same descent sim, so it lands exactly on "
+                    f"the real landing point by construction -- a self-consistency check, not an "
+                    f"independent prediction (see delta_from_predictions, which has no self-simulated "
+                    f"accuracy figure for this reason)."
+                ),
+            })
+            predicted_landing = {"x": round(float(est_x + sim_x), 1), "y": round(float(est_y + sim_y), 1)}
+
+    if altitude_bucket is None:
+        altitude_bucket = nearest_altitude_bucket(site_id, target_date, apogee_agl_ft)
+    comparison = compare_to_pipeline(site_id, target_date, real_x_ft, real_y_ft, real_dist_ft, altitude_bucket)
+
+    completeness_bits = ["apogee altitude", "launch time", "landing GPS"]
+    if rail_lat is not None:
+        completeness_bits.append("rail GPS")
+    if deploy and rate_fps is not None:
+        completeness_bits.append(f"deploy config ({rate_source_note})")
+    summary = {
+        "site_id": site_id,
+        "target_date": str(target_date),
+        # Same convention analyze()/analyze_no_gps() use -- app.js's marker
+        # click handler reads this unconditionally (snaps the time slider to
+        # it) regardless of which analyze_*() produced the record.
+        "closest_hour": hour_a if weight_b < 0.5 else hour_b,
+        "data_completeness": (
+            f"partial -- hand-entered facts only ({', '.join(completeness_bits)}), no barometric/GPS "
+            f"track. Re-running against a real tracker log (see this module's own docstring for "
+            f"supported formats) will overwrite this same file with a complete record."
+        ),
+        "launch": launch,
+        "apogee": apogee_entry,
+        "landing": {
+            "lat": round(landing_lat, 6), "lon": round(landing_lon, 6),
+            "offset_from_pad_ft": {"x": round(real_x_ft, 1), "y": round(real_y_ft, 1), "dist": round(real_dist_ft, 1)},
+        },
+        "delta_from_predictions": {"altitude_bucket_used_ft": altitude_bucket, **comparison},
+    }
+    if deploy:
+        summary["deploy"] = deploy
+    if deploy and rate_fps is not None:
+        if deploy == "single":
+            summary["descent_rates_ground_equivalent_fps"] = {"main": {"mean": rate_fps}, "note": rate_source_note}
+        else:
+            drogue, main = rate_fps
+            summary["descent_rates_ground_equivalent_fps"] = {"drogue": {"mean": drogue}, "main": {"mean": main}, "note": rate_source_note}
+        if main_deploy_altitude_ft is not None and deploy == "dual":
+            summary["main_deploy"] = {"altitude_agl_ft": round(main_deploy_altitude_ft, 1), "note": rate_source_note}
+    if predicted_landing:
+        summary["predicted_landing_offset_from_pad_ft"] = predicted_landing
+    return summary
+
+
 # --- Tracker-specific loaders (expect more of these / replacements later) ---
 
 def analyze_partial_gps(site_id: str, target_date: date, samples: list[FlightSample],
@@ -1123,6 +1257,22 @@ if __name__ == "__main__":
     p_fluctus.add_argument("--label", default=None, help="distinguishes multiple same-day flights in the output filename, e.g. a motor designation like J270")
     p_fluctus.add_argument("--out", default=None)
 
+    p_manual = sub.add_parser("manual", help="Headline facts only (apogee altitude/launch time/landing GPS, optionally rail GPS + a known/reused descent config) -- no track at all; a placeholder record until a real tracker log is available")
+    p_manual.add_argument("--site", required=True, choices=list(config.SITES))
+    p_manual.add_argument("--date", required=True, type=date.fromisoformat)
+    p_manual.add_argument("--apogee-ft", required=True, type=float)
+    p_manual.add_argument("--launch-time-local", required=True, help="HH:MM or HH:MM:SS")
+    p_manual.add_argument("--landing-lat", required=True, type=float)
+    p_manual.add_argument("--landing-lon", required=True, type=float)
+    p_manual.add_argument("--rail-lat", type=float, default=None)
+    p_manual.add_argument("--rail-lon", type=float, default=None)
+    p_manual.add_argument("--deploy", choices=["single", "dual"], default=None, help="only meaningful together with --rate-fps -- unlocks an estimated apogee position/predicted landing")
+    p_manual.add_argument("--rate-fps", type=float, nargs="+", default=None, help="one value for --deploy single, two (drogue main) for --deploy dual")
+    p_manual.add_argument("--main-deploy-alt-ft", type=float, default=None, help="required with --deploy dual")
+    p_manual.add_argument("--reused-from", default=None, help='e.g. "apache_pass 2026-07-04" -- labels --rate-fps/--main-deploy-alt-ft as coming from a previous flight of the same rocket, not this one\'s own track')
+    p_manual.add_argument("--label", default=None, help="distinguishes multiple same-day flights in the output filename, e.g. a flier's callsign")
+    p_manual.add_argument("--out", default=None)
+
     args = parser.parse_args()
 
     out_path = out_path_for(args.site, args.date, args.out, getattr(args, "label", None))
@@ -1154,7 +1304,7 @@ if __name__ == "__main__":
               f"(estimated apogee offset {apogee['offset_from_pad_ft']['dist']}ft -- no GPS on this flight, "
               f"see apogee.position_estimation_note; no self-simulated accuracy figure, "
               f"see delta_from_predictions -- only the T-0 model-forecast comparisons are independent scoring here)")
-    else:
+    elif args.tracker == "fluctus":
         (samples, ground_baseline, rail_lat, rail_lon, landing_lat, landing_lon,
          anchor_t, anchor_agl_ft, anchor_lat, anchor_lon) = load_fluctus_fbb(args.fbb_path, args.launch_time_local, args.date)
         summary = analyze_partial_gps(args.site, args.date, samples, rail_lat, rail_lon, landing_lat, landing_lon,
@@ -1170,4 +1320,14 @@ if __name__ == "__main__":
               f"(estimated apogee offset {apogee['offset_from_pad_ft']['dist']}ft, backsolved from a real GPS fix "
               f"partway down the drogue descent, not the far-away landing point -- see apogee.position_estimation_note; "
               f"boost-adjusted error {headline['ft']}ft ({headline['pct_of_descent_drift']}% of actual descent drift))")
+    else:
+        rate_fps = None
+        if args.rate_fps is not None:
+            rate_fps = args.rate_fps[0] if args.deploy == "single" else tuple(args.rate_fps)
+        summary = analyze_manual(args.site, args.date, args.apogee_ft, args.launch_time_local,
+                                  args.landing_lat, args.landing_lon, args.rail_lat, args.rail_lon,
+                                  args.deploy, rate_fps, args.main_deploy_alt_ft, args.reused_from)
+        write_summary(out_path, summary)
+        print(f"apogee {summary['apogee']['altitude_agl_ft']}ft, "
+              f"landing {summary['landing']['offset_from_pad_ft']['dist']}ft from pad -- {summary['data_completeness']}")
     print(f"-> {out_path}")

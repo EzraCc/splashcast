@@ -2,6 +2,21 @@
 
 Dated, terse log of notable changes. For the full design rationale and decision history, see [docs/spec.md](docs/spec.md).
 
+## 2026-09-07 (2)
+
+**Added: manual real-flight entries (`analyze_real_flight.py manual`) for when only headline facts are known, no tracker log yet**
+- Requested directly: "add an actual flight. hutto, 9/5, 9:31am, apogee 7050, landing 30.62270, -97.49921. I may [get] GPS data from this flight later." A second flight followed with a rail GPS pin too, then "for the first flight, set it as a single deploy at 25fps descent" and "[flight 2] is from konrad, aka YEET... same rocket [as a previous flight]... reuse [its] descent" -- identified that previous flight by its unusually strong boost angle (confirmed with the user: apache_pass 2026-07-04, 21.4° off vertical) and reused its real drogue/main rates and main-deploy altitude.
+- New `analyze_manual()`, distinct from `analyze()`/`analyze_no_gps()` (both of which still need a real altitude-vs-time sample series even when there's no onboard GPS) -- takes just apogee altitude, launch time, landing GPS, and optionally a rail GPS pin. When a deploy config is also given (hand-reported, as with flight 1's known 25fps single-deploy, or `--reused-from` a previous flight of the same rocket, as with flight 2), and a real HRRR-analysis actual pull exists for the site/date, unlocks the same estimated-apogee-position/self-consistent-predicted-landing construction `analyze_no_gps()` already uses -- otherwise apogee position stays unknown and is left out entirely rather than guessed. `data_completeness` states plainly what's hand-entered vs. computed; re-running against a real tracker log later overwrites the same file with a complete record.
+- Found and fixed real crashes this exposed in `app.js`: `realFlightBoxHTML()`, `updateActiveRealFlightOverlay()`, and the real-flight marker's click handler all unconditionally dereferenced `apogee.offset_from_pad_ft`, `descent_rates_ground_equivalent_fps`, `main_deploy`, and `launch.offset_from_pad_ft` -- none of which a partial manual record necessarily has. All four now degrade gracefully (fewer overlay markers, a plain-text fallback in the info box) instead of throwing. Verified via headless-Chromium: hovering/clicking both new flights produces no console errors, and the info box renders the right shape for each (single-deploy vs. dual-deploy-with-rail).
+- Two real flights added for hutto/2026-09-05: 9:31am (apogee 7,050ft, single deploy 25fps, no rail) and 12:05pm (apogee 6,615ft, dual deploy reusing Konrad/YEET's rocket's rates, real rail GPS).
+
+## 2026-09-07
+
+**Fixed: History mode's "actual" star only showed at the discrete ladder altitudes, not at a custom one**
+- Reported directly: "I'm only seeing the * for actual on the set increments, not on intermediate altitudes. I thought we have that worked out for any altitude?" Confirmed: `historyPointsForAltitude()` (forecast points) and `historyActualPathForAltitude()` (the 3D actual path) already resimulate at any altitude via `state.customAlt`, using the real raw wind profile (`HISTORY.actual_wind_profile`/`DATA.wind_profiles`) rather than a server-precomputed lookup -- but the 2D star specifically still read `HISTORY.actuals[key]` directly, which `build_points_history()` only ever precomputes at the discrete ladder altitudes. A custom altitude silently found no entry, exactly like a date with no actual data at all, even though every other altitude-aware view on the same page had already been fixed.
+- New `historyActualPointForAltitude()` -- same `actualProfileForTime()` blend `historyActualPathForAltitude()` already established, `simulateDrift()`'s landing point instead of `simulateDriftPath()`'s full path. `renderHistory()`'s own `actual` lookup now calls it whenever `state.customAlt !== null`, falling back to the ladder-keyed lookup only in ladder mode (unaffected, verified unchanged).
+- Verified via headless-Chromium: at a genuinely non-ladder custom altitude (5,500ft, hutto/2026-09-05), the star now renders a real computed point instead of nothing; ladder mode (`state.customAlt === null`) still resolves the exact same value as before.
+
 ## 2026-09-03
 
 **Fixed: "Specific altitude" box kept showing a stale manually-typed value once a real ascent sim result arrived**

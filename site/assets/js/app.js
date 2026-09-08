@@ -4399,32 +4399,56 @@ function realFlightBoxHTML() {
   // just the configured survey point. Angle recomputed from that same live
   // distance rather than trusting the baked-in boost_angle_from_vertical_deg,
   // for the same reason.
+  //
+  // apogee.offset_from_pad_ft (and descent_rates_ground_equivalent_fps/
+  // main_deploy below) can be missing entirely now -- analyze_manual()'s
+  // partial/hand-entered records (real, reported need: known headline facts
+  // now, a full tracker log possibly later) have no track at all to even
+  // estimate apogee position from when no descent config was given either.
+  // Real, confirmed bug otherwise: this box unconditionally dereferenced all
+  // of these, crashing on hover/click for any such record instead of
+  // degrading gracefully.
   const apogeeOff = rf.apogee.offset_from_pad_ft;
-  const apogeeFt = Math.hypot(apogeeOff.x - padOffsetFt.x, apogeeOff.y - padOffsetFt.y);
-  const apogeeAngleDeg = Math.atan2(apogeeFt, rf.apogee.altitude_agl_ft) * 180 / Math.PI;
-  // Carried by both no-GPS flights (analyze_no_gps()) and partial-GPS ones
-  // (analyze_partial_gps(), see apogee.position_source) -- see this
-  // function's own docstring and apogee.position_estimation_note in the
-  // summary JSON. The two differ in whether predicted landing is a genuine
-  // prediction: analyze_no_gps() solves apogee to match the real landing
-  // point exactly (no delta line above, predicted-landing star sits right
-  // on the real marker -- not a bug), where analyze_partial_gps() solves
-  // apogee against a real GPS fix mid-descent instead, so predicted landing
-  // is independent and does get scored (the delta line above).
-  const apogeeNote = rf.apogee.position_source && rf.apogee.position_source !== 'gps_measured'
+  const apogeeLine = apogeeOff
+    ? (() => {
+        const apogeeFt = Math.hypot(apogeeOff.x - padOffsetFt.x, apogeeOff.y - padOffsetFt.y);
+        const apogeeAngleDeg = Math.atan2(apogeeFt, rf.apogee.altitude_agl_ft) * 180 / Math.PI;
+        return `apogee ${rf.apogee.altitude_agl_ft.toLocaleString()} ft (${apogeeFt.toFixed(0)} ft from pad, ${apogeeAngleDeg.toFixed(1)}&deg; off vertical)<br>`;
+      })()
+    : `apogee ${rf.apogee.altitude_agl_ft.toLocaleString()} ft (horizontal position not recorded)<br>`;
+  // Single-deploy manual records (analyze_manual() with deploy="single")
+  // have only a `main` rate and no main_deploy at all (main pops at apogee,
+  // no drogue phase) -- a third shape alongside "full dual-deploy" and
+  // "nothing recorded."
+  const rates = rf.descent_rates_ground_equivalent_fps;
+  const rateLines = !rates ? '' : rates.drogue
+    ? `drogue rate ~${rates.drogue.mean.toFixed(0)} fps<br>` +
+      (rf.main_deploy ? `main deploy ${rf.main_deploy.altitude_agl_ft.toLocaleString()} ft<br>` : '') +
+      `main rate ~${rates.main.mean.toFixed(0)} fps<br>`
+    : `descent rate ~${rates.main.mean.toFixed(0)} fps (single deploy, main at apogee)<br>`;
+  // Carried by no-GPS flights (analyze_no_gps()), partial-GPS ones
+  // (analyze_partial_gps()), and now analyze_manual()'s own estimated case
+  // (see apogee.position_source) -- see this function's own docstring and
+  // apogee.position_estimation_note in the summary JSON. analyze_no_gps()/
+  // analyze_manual() solve apogee to match the real landing point exactly
+  // (no delta line above, predicted-landing star sits right on the real
+  // marker -- not a bug); analyze_partial_gps() solves apogee against a
+  // real GPS fix mid-descent instead, so predicted landing is independent
+  // and does get scored (the delta line above). "not_recorded" (no descent
+  // config at all) gets its own plain note -- there's no estimate to explain.
+  const apogeeNote = rf.apogee.position_source === 'not_recorded'
+    ? `<div class="rf-note">No descent config recorded for this flight yet, so apogee's own horizontal position isn't known or estimated -- only its altitude and the real landing point.</div>`
+    : rf.apogee.position_source && rf.apogee.position_source !== 'gps_measured'
     ? (boostAdjusted
         ? `<div class="rf-note">No usable GPS fix at apogee on this flight -- apogee position (and the launch-angle direction) is calculated from wind models for this time of day, not measured, anchored to a real GPS fix partway down the descent instead of the landing point. The predicted-landing star is that same estimate re-simulated all the way to the ground -- a genuine prediction, scored above, not forced to match the real landing.</div>`
         : `<div class="rf-note">No usable GPS fix at apogee on this flight -- apogee position (and the launch-angle direction) is calculated from wind models for this time of day, not measured. The predicted-landing star is that same estimate re-simulated, so it matches the real landing by construction -- a self-consistency check, not an independent prediction.</div>`)
     : '';
+  const completenessNote = rf.data_completeness ? `<div class="rf-note">${rf.data_completeness}</div>` : '';
   return `
     <div class="rf-title">Real flight</div>
     launch ${rf.launch.time_local.split('.')[0]}<br>
-    apogee ${rf.apogee.altitude_agl_ft.toLocaleString()} ft (${apogeeFt.toFixed(0)} ft from pad, ${apogeeAngleDeg.toFixed(1)}&deg; off vertical)<br>
-    drogue rate ~${rf.descent_rates_ground_equivalent_fps.drogue.mean.toFixed(0)} fps<br>
-    main deploy ${rf.main_deploy.altitude_agl_ft.toLocaleString()} ft<br>
-    main rate ~${rf.descent_rates_ground_equivalent_fps.main.mean.toFixed(0)} fps<br>
-    landing ${landFt.toFixed(0)} ft from pad<br>
-    ${deltaLine}${apogeeNote}`;
+    ${apogeeLine}${rateLines}landing ${landFt.toFixed(0)} ft from pad<br>
+    ${deltaLine}${apogeeNote}${completenessNote}`;
 }
 
 // SVG user-space (viewBox) coordinates -> actual screen pixels, accounting
@@ -4907,9 +4931,12 @@ let pathCache = new Map();
 // state.rateFps exactly like the three above, cleared alongside them.
 let historyPathCache = new Map();
 let historyActualPathCache = new Map();
+// 2D counterpart to historyActualPathCache -- historyActualPointForAltitude()'s
+// own cache, same state.rateFps dependency.
+let historyActualPointCache = new Map();
 function invalidateZones() {
   zoneCache.clear(); historyZoneCache.clear(); pathCache.clear();
-  historyPathCache.clear(); historyActualPathCache.clear();
+  historyPathCache.clear(); historyActualPathCache.clear(); historyActualPointCache.clear();
 }
 
 // One altitude's zone at the given time/deploy, computed just-in-time from
@@ -5114,6 +5141,39 @@ function actualProfileForTime(timeMinutes) {
   const wrapped = {};
   for (const h of hours) wrapped[h] = { actual: rawProfile[h] };
   return blendProfilesForTime(wrapped, hours, timeMinutes)?.actual || null;
+}
+
+// 2D counterpart to historyActualPathForAltitude() below -- same
+// actualProfileForTime() blend, but simulateDrift()'s landing point instead
+// of simulateDriftPath()'s full path, for renderHistory()'s own star marker.
+// Added after a real, reported gap: historyPointsForAltitude()/
+// historyActualPathForAltitude() (this function's own 3D-path sibling)
+// already resimulate at ANY altitude via customAlt, but the 2D star still
+// read the server-precomputed HISTORY.actuals[key] lookup directly, which
+// (like HISTORY.points_by_key before historyPointsForAltitude() existed)
+// only has entries at the ladder's own discrete altitudes (build_points_history()
+// only precomputes those) -- so a custom altitude silently showed no star at
+// all, even on a date with real actual data, while every OTHER altitude-aware
+// view on this same page had already been fixed to work at any altitude.
+function historyActualPointForAltitude(timeMinutes, deploy, altitudeFt) {
+  const cacheKey = `${timeMinutes}_${deploy}_${altitudeFt}`;
+  if (historyActualPointCache.has(cacheKey)) return historyActualPointCache.get(cacheKey);
+
+  const dp = DATA.descent_params;
+  let point = null;
+  if (!(deploy === 'single' && altitudeFt > dp.single_deploy_max_alt_ft)) {
+    const profile = actualProfileForTime(timeMinutes);
+    if (profile) {
+      const r = groundEquivalentRateFps(state.rateFps, dp.site_elev_ft);
+      const phases = deploy === 'dual'
+        ? [[r.drogue, altitudeFt, dp.main_deploy_altitude_ft], [r.main, dp.main_deploy_altitude_ft, 0]]
+        : [[r.main, altitudeFt, 0]];
+      const [x_ft, y_ft] = simulateDrift(profile, altitudeFt, phases, dp.site_elev_ft, dp.descent_step_ft);
+      point = { x_ft, y_ft };
+    }
+  }
+  historyActualPointCache.set(cacheKey, point);
+  return point;
 }
 
 function historyActualPathForAltitude(timeMinutes, deploy, altitudeFt) {
@@ -5482,6 +5542,16 @@ function updateActiveRealFlightOverlay() {
   const flight = activeRealFlight();
   if (!flight) return;
 
+  // Each of the three offsets below can now be missing entirely --
+  // analyze_manual()'s partial/hand-entered records (real, reported need:
+  // known headline facts now, a full tracker log possibly later) may have
+  // no rail position (no rail pin given), no apogee position (no descent
+  // config given, so nothing to estimate it from), or neither. Each marker
+  // is skipped, not crashed on, when its own data isn't there -- real,
+  // confirmed bug otherwise: this function unconditionally dereferenced all
+  // three, so hovering a partial-record marker crashed instead of just
+  // showing fewer overlay markers.
+
   // Real launch-rail GPS position -- separate from the pad's *configured*
   // lat/lon (a surveyed/estimated point, not necessarily exactly where this
   // rail sat). Model points and the splash zone stay anchored to the
@@ -5491,27 +5561,33 @@ function updateActiveRealFlightOverlay() {
   // find and drag the crosshair by hand. Not interactive itself
   // (pointer-events: none) -- purely informational.
   const railOffset = flight.launch.offset_from_pad_ft;
-  const [railPx, railPy] = ftToPxAbsolute(railOffset.x, railOffset.y);
-  launchRailEl = drawMarker(svg, 'target', railPx, railPy, 6, REAL_FLIGHT_COLOR, REAL_FLIGHT_COLOR);
-  launchRailEl.style.display = 'none';
-  launchRailEl.style.pointerEvents = 'none';
+  if (railOffset) {
+    const [railPx, railPy] = ftToPxAbsolute(railOffset.x, railOffset.y);
+    launchRailEl = drawMarker(svg, 'target', railPx, railPy, 6, REAL_FLIGHT_COLOR, REAL_FLIGHT_COLOR);
+    launchRailEl.style.display = 'none';
+    launchRailEl.style.pointerEvents = 'none';
+    activeOverlaySvgPoints.push([railPx, railPy]);
+  }
 
   // This flight's own predicted landing (real apogee + real derived rates +
   // real wind) -- shown in place of the generic "Final projection" star
   // while comparing, see setRealFlightComparing().
   const predOffset = flight.predicted_landing_offset_from_pad_ft;
-  const [predPx, predPy] = ftToPxAbsolute(predOffset.x, predOffset.y);
-  predictedLandingStarEl = drawMarker(svg, 'star', predPx, predPy, 13, PREDICTED_LANDING_COLOR, PREDICTED_LANDING_STROKE);
-  predictedLandingStarEl.style.display = 'none';
-  // Not interactive, same as apogeeMarkerEl/launchRailEl below -- matters
-  // more here than for those two: for a no-GPS-style flight (analyze_no_gps())
-  // this sits at the *exact same point* as the real landing marker beneath
-  // it (predicted landing = estimated apogee + descent sim, solved to match
-  // the real one), so without this the star's opaque fill silently eats
-  // clicks meant for that marker, leaving only a thin sliver of its ring
-  // clickable through the star's points -- confirmed directly: a real click
-  // dead-center on the landing marker didn't pin it until this was added.
-  predictedLandingStarEl.style.pointerEvents = 'none';
+  if (predOffset) {
+    const [predPx, predPy] = ftToPxAbsolute(predOffset.x, predOffset.y);
+    predictedLandingStarEl = drawMarker(svg, 'star', predPx, predPy, 13, PREDICTED_LANDING_COLOR, PREDICTED_LANDING_STROKE);
+    predictedLandingStarEl.style.display = 'none';
+    // Not interactive, same as apogeeMarkerEl/launchRailEl below -- matters
+    // more here than for those two: for a no-GPS-style flight (analyze_no_gps())
+    // this sits at the *exact same point* as the real landing marker beneath
+    // it (predicted landing = estimated apogee + descent sim, solved to match
+    // the real one), so without this the star's opaque fill silently eats
+    // clicks meant for that marker, leaving only a thin sliver of its ring
+    // clickable through the star's points -- confirmed directly: a real click
+    // dead-center on the landing marker didn't pin it until this was added.
+    predictedLandingStarEl.style.pointerEvents = 'none';
+    activeOverlaySvgPoints.push([predPx, predPy]);
+  }
 
   // This flight's own apogee -- real if apogee.position_source is
   // 'gps_measured', otherwise estimated (see analyze_no_gps() and the info
@@ -5519,12 +5595,13 @@ function updateActiveRealFlightOverlay() {
   // treatment either way here: not interactive, revealed alongside the
   // other real-flight markers while comparing.
   const apogeeOffset = flight.apogee.offset_from_pad_ft;
-  const [apogeePx, apogeePy] = ftToPxAbsolute(apogeeOffset.x, apogeeOffset.y);
-  apogeeMarkerEl = drawMarker(svg, 'triangle-up', apogeePx, apogeePy, 9, APOGEE_MARKER_COLOR, APOGEE_MARKER_STROKE);
-  apogeeMarkerEl.style.display = 'none';
-  apogeeMarkerEl.style.pointerEvents = 'none';
-
-  activeOverlaySvgPoints = [[railPx, railPy], [predPx, predPy], [apogeePx, apogeePy]];
+  if (apogeeOffset) {
+    const [apogeePx, apogeePy] = ftToPxAbsolute(apogeeOffset.x, apogeeOffset.y);
+    apogeeMarkerEl = drawMarker(svg, 'triangle-up', apogeePx, apogeePy, 9, APOGEE_MARKER_COLOR, APOGEE_MARKER_STROKE);
+    apogeeMarkerEl.style.display = 'none';
+    apogeeMarkerEl.style.pointerEvents = 'none';
+    activeOverlaySvgPoints.push([apogeePx, apogeePy]);
+  }
 }
 
 function drawRealFlightMarker() {
@@ -5571,8 +5648,14 @@ function drawRealFlightMarker() {
         // (including this overlay, via renderHistory() -> drawRealFlightMarker()
         // -> updateActiveRealFlightOverlay()); avoidPoints() below reads it
         // fresh afterward.
-        if (padOffsetBeforeRealFlightSnap === null) padOffsetBeforeRealFlightSnap = padOffsetFt;
-        setPadOffsetClamped(flight.launch.offset_from_pad_ft.x, flight.launch.offset_from_pad_ft.y);
+        // flight.launch.offset_from_pad_ft can be missing now -- a
+        // partial/hand-entered record (analyze_manual()) with no rail pin
+        // given. Nothing to snap the pad to in that case -- leave it where
+        // it is rather than crashing.
+        if (flight.launch.offset_from_pad_ft) {
+          if (padOffsetBeforeRealFlightSnap === null) padOffsetBeforeRealFlightSnap = padOffsetFt;
+          setPadOffsetClamped(flight.launch.offset_from_pad_ft.x, flight.launch.offset_from_pad_ft.y);
+        }
         // Line the displayed splash zone/history key up with this flight's
         // own real launch time and apogee altitude, rather than leaving
         // whatever hour/altitude happened to already be selected -- these
@@ -5642,10 +5725,10 @@ function renderHistory() {
   // byAltitude/byTime -- computed just-in-time per capture date via
   // historyPointsForAltitude() instead of the precomputed
   // HISTORY.points_by_key lookup, which only has data at the ladder's own
-  // altitudes. actuals (the HRRR-analysis star) stays ladder-only either
-  // way (see build_points_history()'s comment) -- keying it off the same
-  // effective altitude means it naturally, silently doesn't show for a
-  // custom altitude, same tri-state UX as a date with no actuals at all.
+  // altitudes. The actual star below now gets the same treatment (see
+  // historyActualPointForAltitude()'s own comment -- a real, reported gap:
+  // this used to stay ladder-only even after the forecast points above were
+  // already fixed to work at any altitude).
   const altitude = state.customAlt !== null ? state.customAlt : state.compareAlt;
   const key = `${nearestPublishedHour(state.timeMinutes)}_${state.deploy}_${rate}_${altitude}`;
   const rawPoints = state.customAlt !== null
@@ -5655,7 +5738,9 @@ function renderHistory() {
   rawPoints.forEach(pt => {
     (seriesByModel[pt.model] ??= []).push(pt);
   });
-  const actual = HISTORY.actuals[key];
+  const actual = state.customAlt !== null
+    ? historyActualPointForAltitude(state.timeMinutes, state.deploy, altitude)
+    : HISTORY.actuals[key];
 
   const activeCapture = state.isolatedCapture ?? state.pinnedCapture;
 
