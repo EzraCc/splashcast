@@ -1,6 +1,6 @@
 {
   "site_id": "hearne",
-  "generated_at": "2026-09-08T15:07:27",
+  "generated_at": "2026-09-09T04:42:33",
   "site_geometry": {
     "site_px": [
       1017.5,
@@ -28,10 +28,10 @@
   "launch_dates": [
     {
       "target_date": "2026-09-12",
-      "capture_date": "2026-09-08",
-      "lead_days": 4,
-      "label": "Sat, Sep 12 (T-4)",
-      "data_path": "data/hearne/live/2026-09-12/splash_zones_captured_2026-09-08.json",
+      "capture_date": "2026-09-09",
+      "lead_days": 3,
+      "label": "Sat, Sep 12 (T-3)",
+      "data_path": "data/hearne/live/2026-09-12/splash_zones_captured_2026-09-09.json",
       "history_path": "data/hearne/live/2026-09-12/points_history.json",
       "real_flight_paths": []
     },
