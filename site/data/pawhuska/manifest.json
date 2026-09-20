@@ -1,6 +1,6 @@
 {
   "site_id": "pawhuska",
-  "generated_at": "2026-09-19T14:25:57",
+  "generated_at": "2026-09-20T01:07:57",
   "site_geometry": {
     "site_px": [
       2632.5,
@@ -27,11 +27,20 @@
   },
   "launch_dates": [
     {
-      "target_date": "2026-09-26",
-      "capture_date": "2026-09-19",
+      "target_date": "2026-09-27",
+      "capture_date": "2026-09-20",
       "lead_days": 7,
-      "label": "Sat, Sep 26 (T-7)",
-      "data_path": "data/pawhuska/live/2026-09-26/splash_zones_captured_2026-09-19.json",
+      "label": "Sun, Sep 27 (T-7)",
+      "data_path": "data/pawhuska/live/2026-09-27/splash_zones_captured_2026-09-20.json",
+      "history_path": "data/pawhuska/live/2026-09-27/points_history.json",
+      "real_flight_paths": []
+    },
+    {
+      "target_date": "2026-09-26",
+      "capture_date": "2026-09-20",
+      "lead_days": 6,
+      "label": "Sat, Sep 26 (T-6)",
+      "data_path": "data/pawhuska/live/2026-09-26/splash_zones_captured_2026-09-20.json",
       "history_path": "data/pawhuska/live/2026-09-26/points_history.json",
       "real_flight_paths": []
     },
