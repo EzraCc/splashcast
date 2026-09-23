@@ -2,6 +2,14 @@
 
 Dated, terse log of notable changes. For the full design rationale and decision history, see [docs/spec.md](docs/spec.md).
 
+## 2026-09-22
+
+**Added: per-column raw wind-profile downloads on the History accuracy table (T-x forecast columns + a new T+1 actual column)**
+- Requested directly: expose the published forecast/actual JSON data as downloads, scoped to how it's actually stored. Explicitly ruled out a single "download everything" zip.
+- Storage check first: each T-x column corresponds to one capture date, but not every capture date on disk actually has a standalone `splash_zones_captured_<date>.json` file to link to -- confirmed on hutto/2026-09-05, where 2 of the 8 `HISTORY.captures` entries (2026-08-29, 2026-08-31) have no such file (older/backfilled captures from `pull_historical.py` only ever wrote the raw parquet + folded straight into `points_history.json`, never a full per-capture JSON snapshot). A direct `<a href>` per column would have been a dead link for those two.
+- Fixed by building the download client-side instead, from data `HISTORY` already has fully loaded for every column it ever renders: new `downloadJSON()` helper (`app.js`) blobs `HISTORY.wind_profiles_by_capture[captureDate]` per T-x column, and `HISTORY.actual_wind_profile` for a new "T+1 (actual)" column added after T-0 -- continuing the same T-axis rather than inventing a separate label for ground-truth data, since it's chronologically the real post-launch pull. Download icon (`.download-btn`, same 15px round-icon convention as `.info-btn`/`.zone-color-reset-btn`) sits inline in each `<th>` in `renderAccuracyTable()`; the T+1 column's body cells are empty dashes (no "distance from actual" is meaningful for that column itself), kept so every row stays rectangular.
+- Verified via headless-Chromium: clicking the T-7 (2026-08-29, no file on disk) download button still produces a correct file (`hutto_2026-09-05_capture_2026-08-29_wind_profiles.json`) with real wind data; T+1 downloads `hutto_2026-09-05_actual_wind_profile.json`; no console errors; a site/date with the accuracy table hidden (no actuals yet) renders unaffected.
+
 ## 2026-09-03
 
 **Fixed: "Specific altitude" box kept showing a stale manually-typed value once a real ascent sim result arrived**

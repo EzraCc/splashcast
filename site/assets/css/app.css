@@ -1197,6 +1197,19 @@
   }
   .zone-color-reset-btn:hover { background: var(--surface-2); color: var(--text-primary); border-color: var(--accent); }
 
+  /* Per-column raw-data download (accuracy table's T-x/actual headers, see
+     renderAccuracyTable()) -- same 15px round-icon convention as
+     .info-btn/.zone-color-reset-btn, just a glyph swap, so it reads as part
+     of the same icon-button family rather than a one-off. Sits inline in a
+     <th>, not floated, so it doesn't need its own positioning context. */
+  .download-btn {
+    border: 1px solid var(--border); background: var(--surface-1); color: var(--text-muted);
+    width: 15px; height: 15px; border-radius: 50%; font-size: var(--fs-xs); line-height: 1;
+    display: inline-flex; align-items: center; justify-content: center;
+    cursor: pointer; padding: 0; flex-shrink: 0; margin-left: 4px; font-weight: normal;
+  }
+  .download-btn:hover { background: var(--surface-2); color: var(--text-primary); border-color: var(--accent); }
+
   /* Touch-target floor: these are the smallest interactive controls in the
      app (15-16px visible), well under the ~44px minimum recommended for a
      touch target (WCAG 2.5.5 / Apple HIG) -- this app is regularly used
@@ -1210,10 +1223,10 @@
      mouse-driven hybrid device (e.g. a touchscreen laptop with a trackpad)
      keeps the tight, precise target a mouse doesn't need enlarged. */
   @media (pointer: coarse) {
-    .info-btn, .zone-color-reset-btn {
+    .info-btn, .zone-color-reset-btn, .download-btn {
       position: relative;
     }
-    .info-btn::before, .zone-color-reset-btn::before {
+    .info-btn::before, .zone-color-reset-btn::before, .download-btn::before {
       content: '';
       position: absolute;
       top: 50%; left: 50%;

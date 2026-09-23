@@ -5300,6 +5300,30 @@ function recencyColor(leadDays) {
   return `rgb(${mixed.join(',')})`;
 }
 
+// Client-side "save as file" for a plain JS object -- used by the accuracy
+// table's per-column download icons (renderAccuracyTable()) instead of
+// linking to the static per-capture splash_zones_captured_<date>.json files
+// on disk: not every capture date in HISTORY.captures actually has one of
+// those (older/backfilled captures pulled via pull_historical.py only ever
+// wrote the parquet + folded into points_history.json, never the full
+// per-capture JSON snapshot -- confirmed on hutto/2026-09-05, where 2 of 8
+// capture dates have no matching file on disk today). HISTORY's own
+// wind_profiles_by_capture/actual_wind_profile are guaranteed present for
+// every column this table ever shows, so building the download from
+// already-loaded data sidesteps that gap entirely rather than risking a
+// dead link.
+function downloadJSON(filename, dataObj) {
+  const blob = new Blob([JSON.stringify(dataObj, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
 function leadDaysLabel(captureDateStr, targetDateStr) {
   const leadDays = Math.round((new Date(targetDateStr) - new Date(captureDateStr)) / 86400000);
   return leadDays > 0 ? `T-${leadDays}` : 'T-0';
@@ -5853,11 +5877,26 @@ function renderAccuracyTable() {
   });
   if (!hasAnyCell) return;
 
+  // Ground-truth wind data isn't isolated by activeCapture (there's only
+  // ever one actual_wind_profile per target date, not one per capture) --
+  // shows whenever it exists at all, same gating the "actual" star/table
+  // itself already uses one level up (this whole function already returned
+  // early above if HISTORY.actuals[key] doesn't exist, and actuals/
+  // actual_wind_profile are always populated together by the same pipeline
+  // step -- see compute_actual_points()).
+  const hasActualColumn = !!HISTORY.actual_wind_profile;
+
   const table = document.getElementById('accuracy-table');
   let html = '<thead><tr><th>Model</th>';
   captures.forEach(c => {
-    html += `<th>${leadDaysLabel(c, HISTORY.target_date)}</th>`;
+    html += `<th>${leadDaysLabel(c, HISTORY.target_date)} <button class="download-btn" type="button" data-capture="${c}" title="Download this day's wind profiles (JSON)">&#8595;</button></th>`;
   });
+  // T+1, not T-0/T-1 -- this is the real post-launch wind pull, chronologically
+  // after every forecast column to its left, continuing the same T-axis
+  // rather than inventing a separate label scheme for it.
+  if (hasActualColumn) {
+    html += `<th>T+1 (actual) <button class="download-btn" type="button" data-actual="1" title="Download the real post-launch wind profile (JSON)">&#8595;</button></th>`;
+  }
   html += '</tr></thead><tbody>';
   models.forEach(model => {
     html += `<tr><th>${model}</th>`;
@@ -5872,11 +5911,41 @@ function renderAccuracyTable() {
       const dyStr = (cell.dy >= 0 ? '+' : '') + Math.round(cell.dy);
       html += `<td style="background:${color}"><div class="accuracy-dist">${Math.round(cell.dist)} ft</div><div class="accuracy-xy">(${dxStr}, ${dyStr})</div></td>`;
     });
+    // No meaningful "distance from actual" figure for the actual column
+    // itself -- kept as an empty cell (not omitted) so every row stays the
+    // same width as the header.
+    if (hasActualColumn) html += '<td class="accuracy-empty">&mdash;</td>';
     html += '</tr>';
   });
   html += '</tbody>';
   table.innerHTML = html;
   section.style.display = '';
+
+  table.querySelectorAll('.download-btn[data-capture]').forEach(btn => {
+    btn.addEventListener('click', evt => {
+      evt.preventDefault();
+      evt.stopPropagation();
+      const c = btn.dataset.capture;
+      downloadJSON(`${currentSiteId}_${HISTORY.target_date}_capture_${c}_wind_profiles.json`, {
+        site_id: currentSiteId,
+        target_date: HISTORY.target_date,
+        capture_date: c,
+        wind_profiles: HISTORY.wind_profiles_by_capture[c],
+      });
+    });
+  });
+  const actualBtn = table.querySelector('.download-btn[data-actual]');
+  if (actualBtn) {
+    actualBtn.addEventListener('click', evt => {
+      evt.preventDefault();
+      evt.stopPropagation();
+      downloadJSON(`${currentSiteId}_${HISTORY.target_date}_actual_wind_profile.json`, {
+        site_id: currentSiteId,
+        target_date: HISTORY.target_date,
+        actual_wind_profile: HISTORY.actual_wind_profile,
+      });
+    });
+  }
 }
 
 function drawPoint(g, pt, hour, altitude, fillColor) {
