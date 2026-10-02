@@ -143,15 +143,36 @@
           "site_id": "eggemeyer",
           "years": {
             "2026": [
-              {"date": "2026-08-15", "label": "WTSV Certification Launch"},
-              {"date": "2026-09-19", "label": "WTSV (tentative)"},
-              {"date": "2026-10-17", "label": "WTSV (tentative)"},
-              {"date": "2026-12-19", "label": "WTSV (tentative)"}
+              {
+                "date": "2026-08-15",
+                "label": "WTSV Certification Launch"
+              },
+              {
+                "date": "2026-09-19",
+                "label": "WTSV (tentative)"
+              },
+              {
+                "date": "2026-10-17",
+                "label": "WTSV (tentative)"
+              },
+              {
+                "date": "2026-12-19",
+                "label": "WTSV (tentative)"
+              }
             ],
             "2027": [
-              {"date": "2027-01-16", "label": "WTSV (tentative)"},
-              {"date": "2027-02-20", "label": "WTSV (tentative)"},
-              {"date": "2027-04-17", "label": "WTSV (tentative)"}
+              {
+                "date": "2027-01-16",
+                "label": "WTSV (tentative)"
+              },
+              {
+                "date": "2027-02-20",
+                "label": "WTSV (tentative)"
+              },
+              {
+                "date": "2027-04-17",
+                "label": "WTSV (tentative)"
+              }
             ]
           }
         }
@@ -165,15 +186,42 @@
           "site_id": "leonard",
           "years": {
             "2026": [
-              {"date": "2026-02-15", "label": "Tulsa Rocketry"},
-              {"date": "2026-03-08", "label": "Tulsa Rocketry"},
-              {"date": "2026-04-12", "label": "Tulsa Rocketry"},
-              {"date": "2026-05-03", "label": "Tulsa Rocketry"},
-              {"date": "2026-06-07", "label": "Tulsa Rocketry"},
-              {"date": "2026-07-12", "label": "Tulsa Rocketry"},
-              {"date": "2026-08-09", "label": "Tulsa Rocketry"},
-              {"date": "2026-10-11", "label": "Tulsa Rocketry"},
-              {"date": "2026-11-08", "label": "Tulsa Rocketry"}
+              {
+                "date": "2026-02-15",
+                "label": "Tulsa Rocketry"
+              },
+              {
+                "date": "2026-03-08",
+                "label": "Tulsa Rocketry"
+              },
+              {
+                "date": "2026-04-12",
+                "label": "Tulsa Rocketry"
+              },
+              {
+                "date": "2026-05-03",
+                "label": "Tulsa Rocketry"
+              },
+              {
+                "date": "2026-06-07",
+                "label": "Tulsa Rocketry"
+              },
+              {
+                "date": "2026-07-12",
+                "label": "Tulsa Rocketry"
+              },
+              {
+                "date": "2026-08-09",
+                "label": "Tulsa Rocketry"
+              },
+              {
+                "date": "2026-10-11",
+                "label": "Tulsa Rocketry"
+              },
+              {
+                "date": "2026-11-08",
+                "label": "Tulsa Rocketry"
+              }
             ]
           }
         },
@@ -182,8 +230,14 @@
           "site_id": "pawhuska",
           "years": {
             "2026": [
-              {"date": "2026-09-26", "label": "High Frontier (Sat)"},
-              {"date": "2026-09-27", "label": "High Frontier (Sun)"}
+              {
+                "date": "2026-09-26",
+                "label": "High Frontier (Sat)"
+              },
+              {
+                "date": "2026-09-27",
+                "label": "High Frontier (Sun)"
+              }
             ]
           }
         }
@@ -318,6 +372,21 @@
       "date": "2026-07-25",
       "site_id": "gunter",
       "reason": "cancelled due to heat"
+    },
+    {
+      "action": "move",
+      "club": "AARG",
+      "from": {
+        "date": "2026-10-03",
+        "site_id": "hutto"
+      },
+      "to": {
+        "date": "2026-10-17",
+        "site_id": "hutto"
+      },
+      "label": "AARG (moved from Hutto)",
+      "reason": "rescheduled due to rain",
+      "status": "confirmed"
     }
   ]
 }

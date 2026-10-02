@@ -2,6 +2,12 @@
 
 Dated, terse log of notable changes. For the full design rationale and decision history, see [docs/spec.md](docs/spec.md).
 
+## 2026-10-02
+
+**Calendar: AARG's Oct 3 Hutto launch moved to Oct 17 (rained out)**
+- Requested directly ("add a launch for AARG @ Hutto for Oct 17th. The 10/3 launch was rescheduled due to rain"). First attempted a plain `--add` for 10/17, which turned out wrong: AARG's `seasonal_site_swap` rule (`launch_calendar.json`) already auto-generates a recurring Hutto launch every month outside its Apr-Sep Apache Pass season (including Oct 3), so an `--add` would have left that rained-out Oct 3 occurrence still live/pollable alongside a duplicate Oct 17 one. Corrected to `python launch_schedule.py --move hutto 2026-10-03 hutto --new-date 2026-10-17 --reason "rescheduled due to rain"`, the one-off override shape this exact scenario already anticipated (see 2026-08's own note: "rain-date alternates... handled as a one-off `--move` override if/when actually used").
+- Verified via `launch_schedule.py --days-ahead 60`: Oct 3 Hutto no longer listed, Oct 17 Hutto now listed, Nov 7's unrelated recurring Hutto date unaffected.
+
 ## 2026-09-22
 
 **Added: per-column raw wind-profile downloads on the History accuracy table (T-x forecast columns + a new T+1 actual column)**
