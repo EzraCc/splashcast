@@ -2,6 +2,13 @@
 
 Dated, terse log of notable changes. For the full design rationale and decision history, see [docs/spec.md](docs/spec.md).
 
+## 2026-10-10
+
+**Added: real flight record for Pawhuska 2026-09-27 (98mm Alien Interceptor), published from the synthesized-KML reconstruction**
+- Requested directly ("let's publish the synthesized flight as an actual onto github"), then redirected to keep it simple: "We have a KML, the rest doesn't need to be re-engineered. KML > mapped actual. Skip the XLSX part." Dropped an in-progress new NMEA+XLSX ingestor (`load_eggtimer_nmea_and_baro()`, discarded via `git checkout` before it was ever committed) in favor of restoring `analyze_manual()` (`pipeline/analyze_real_flight.py`) -- it existed once already (2026-09-07) but got swept into an unrelated revert on 2026-09-08 (the 3D real-flight-path feature it had nothing to do with turned out broken, and the whole stack was reverted together). Restored byte-for-byte from `git show 1f39fb2`, not rewritten.
+- Fed it the real numbers already established across this flight's own multi-turn analysis, not re-derived: apogee 11,235ft AGL and the corrected main-inflation altitude 9,082ft AGL (both read directly off the synthesized KML's own placemark coordinates -- the file's own geometry, not a second hand-transcription of the same numbers), rail/landing GPS positions (KML's Pad placemark / the real GPS descent track's own last coordinate), and ground-equivalent drogue/main descent rates (55.8 / 11.7 fps) computed from the real event timing this flight's analysis found (apogee T+24.85s -> main-inflation-onset T+57.9s -> landing ~T+785s), via `splash_zones.air_density_ratio()` at each segment's own midpoint altitude -- same scaling convention `implied_ground_rate()` uses elsewhere, applied by hand to 2 segments instead of per-sample since there's no raw track to iterate.
+- Backfilled `pipeline/data/pawhuska/raw/2026-09-27_actual.parquet` via `pull_historical.py --actual-only` (didn't exist yet) so `analyze_manual()`'s optional apogee-position-estimate/predicted-landing path actually activates -- without it the record would have apogee position `"not_recorded"` instead of a scored estimate. Regenerated `pawhuska`'s manifest + points_history via `splash_zones.py` to wire in the new `real_flights` entry. Verified via headless-Chromium: loads with no console errors, real-flight marker and info box both populate correctly.
+
 ## 2026-10-02
 
 **Calendar: AARG's Oct 3 Hutto launch moved to Oct 17 (rained out)**

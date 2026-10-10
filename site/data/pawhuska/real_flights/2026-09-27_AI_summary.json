@@ -1,0 +1,185 @@
+{
+  "site_id": "pawhuska",
+  "target_date": "2026-09-27",
+  "closest_hour": 11,
+  "data_completeness": "partial -- hand-entered facts only (apogee altitude, launch time, landing GPS, rail GPS, deploy config (a hand-reported descent rate for this flight)), no barometric/GPS track. Re-running against a real tracker log (see this module's own docstring for supported formats) will overwrite this same file with a complete record.",
+  "launch": {
+    "time_local": "10:41:40",
+    "offset_from_pad_ft": {
+      "x": 162.9,
+      "y": -34.7,
+      "dist": 166.5
+    }
+  },
+  "apogee": {
+    "altitude_agl_ft": 11235.0,
+    "position_source": "estimated_from_landing_and_wind_model",
+    "offset_from_pad_ft": {
+      "x": 1843.7,
+      "y": -3606.3,
+      "dist": 4050.3
+    },
+    "boost_angle_from_vertical_deg": 19.82,
+    "configured_boost_angle_deg": 10,
+    "position_estimation_note": "No GPS/track for this specific flight -- apogee position is *inferred*, not measured: assumes the descent-only wind simulation (real apogee altitude + a hand-reported descent rate for this flight + the real wind profile for this flight's actual time of day) is accurate, then backs the boost-phase offset out of the difference between that simulation and the real recorded landing point. predicted_landing_offset_from_pad_ft is this same estimated apogee plus that same descent sim, so it lands exactly on the real landing point by construction -- a self-consistency check, not an independent prediction (see delta_from_predictions, which has no self-simulated accuracy figure for this reason)."
+  },
+  "landing": {
+    "lat": 36.682269,
+    "lon": -96.386056,
+    "offset_from_pad_ft": {
+      "x": 5922.2,
+      "y": 2161.4,
+      "dist": 6304.3
+    }
+  },
+  "delta_from_predictions": {
+    "altitude_bucket_used_ft": 10000,
+    "forecast_capture_date_used": "2026-09-27",
+    "model_forecasts": {
+      "11_dual_slow_10000": {
+        "gfs": {
+          "ft": 4359.3,
+          "pct_of_actual_drift": 69.1
+        },
+        "ecmwf": {
+          "ft": 5048.8,
+          "pct_of_actual_drift": 80.1
+        },
+        "gem": {
+          "ft": 4924.8,
+          "pct_of_actual_drift": 78.1
+        },
+        "icon": {
+          "ft": 4780.1,
+          "pct_of_actual_drift": 75.8
+        },
+        "arpege": {
+          "ft": 5746.0,
+          "pct_of_actual_drift": 91.1
+        },
+        "hrrr": {
+          "ft": 4195.6,
+          "pct_of_actual_drift": 66.6
+        }
+      },
+      "11_dual_fast_10000": {
+        "gfs": {
+          "ft": 5008.9,
+          "pct_of_actual_drift": 79.5
+        },
+        "ecmwf": {
+          "ft": 5538.8,
+          "pct_of_actual_drift": 87.9
+        },
+        "gem": {
+          "ft": 5475.6,
+          "pct_of_actual_drift": 86.9
+        },
+        "icon": {
+          "ft": 5342.0,
+          "pct_of_actual_drift": 84.7
+        },
+        "arpege": {
+          "ft": 5968.9,
+          "pct_of_actual_drift": 94.7
+        },
+        "hrrr": {
+          "ft": 4807.0,
+          "pct_of_actual_drift": 76.3
+        }
+      },
+      "13_dual_slow_10000": {
+        "gfs": {
+          "ft": 4989.1,
+          "pct_of_actual_drift": 79.1
+        },
+        "ecmwf": {
+          "ft": 6781.9,
+          "pct_of_actual_drift": 107.6
+        },
+        "gem": {
+          "ft": 5282.0,
+          "pct_of_actual_drift": 83.8
+        },
+        "icon": {
+          "ft": 5860.4,
+          "pct_of_actual_drift": 93.0
+        },
+        "arpege": {
+          "ft": 6448.3,
+          "pct_of_actual_drift": 102.3
+        },
+        "hrrr": {
+          "ft": 5810.3,
+          "pct_of_actual_drift": 92.2
+        }
+      },
+      "13_dual_fast_10000": {
+        "gfs": {
+          "ft": 5411.5,
+          "pct_of_actual_drift": 85.8
+        },
+        "ecmwf": {
+          "ft": 6582.4,
+          "pct_of_actual_drift": 104.4
+        },
+        "gem": {
+          "ft": 5672.5,
+          "pct_of_actual_drift": 90.0
+        },
+        "icon": {
+          "ft": 6002.3,
+          "pct_of_actual_drift": 95.2
+        },
+        "arpege": {
+          "ft": 6403.8,
+          "pct_of_actual_drift": 101.6
+        },
+        "hrrr": {
+          "ft": 5930.5,
+          "pct_of_actual_drift": 94.1
+        }
+      }
+    },
+    "hrrr_analysis_actual_proxy": {
+      "11_dual_slow_10000": {
+        "ft": 5387.0,
+        "pct_of_actual_drift": 85.4
+      },
+      "11_dual_fast_10000": {
+        "ft": 5744.6,
+        "pct_of_actual_drift": 91.1
+      },
+      "13_dual_slow_10000": {
+        "ft": 6849.6,
+        "pct_of_actual_drift": 108.6
+      },
+      "13_dual_fast_10000": {
+        "ft": 6684.9,
+        "pct_of_actual_drift": 106.0
+      }
+    },
+    "within_published_core_hull": {
+      "11": false,
+      "13": false
+    }
+  },
+  "deploy": "dual",
+  "descent_rates_ground_equivalent_fps": {
+    "drogue": {
+      "mean": 55.8
+    },
+    "main": {
+      "mean": 11.7
+    },
+    "note": "a hand-reported descent rate for this flight"
+  },
+  "main_deploy": {
+    "altitude_agl_ft": 9082.0,
+    "note": "a hand-reported descent rate for this flight"
+  },
+  "predicted_landing_offset_from_pad_ft": {
+    "x": 5922.2,
+    "y": 2161.4
+  }
+}

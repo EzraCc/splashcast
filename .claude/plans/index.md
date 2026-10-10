@@ -7,3 +7,4 @@
 | Rocketry flight-sim integration | in-progress | high | new-feature | rocketry-flight-sim-integration.md | 2026-09-03 |
 | Grid-edge accuracy investigation | done | medium | new-feature | plans-archive/grid-edge-accuracy-investigation.md | 2026-09-02 |
 | Accuracy table column downloads | done | medium | new-feature | plans-archive/accuracy-table-column-downloads.md | 2026-09-22 |
+| Manual real-flight entries | done | medium | new-feature | plans-archive/manual-real-flight-entries.md | 2026-10-10 |
