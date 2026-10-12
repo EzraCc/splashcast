@@ -10,3 +10,4 @@
 | Manual real-flight entries | done | medium | new-feature | plans-archive/manual-real-flight-entries.md | 2026-10-10 |
 | Real-flight 3D descent path | done | medium | new-feature | plans-archive/real-flight-3d-path.md | 2026-10-12 |
 | Pad-drag range raised to 2km | done | medium | refinement | plans-archive/pad-drag-range-2km.md | 2026-10-12 |
+| Clickable real-flights list (History) | done | medium | new-feature | plans-archive/real-flights-list.md | 2026-10-12 |

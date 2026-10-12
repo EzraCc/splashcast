@@ -1602,7 +1602,7 @@ function buildTimeLegend() {
     projectionRow.innerHTML = `${shapeSwatchSVG('star', PROJECTION_MARKER_COLOR)}<span>Final projection (once recorded)</span>`;
     el.appendChild(projectionRow);
     if (REAL_FLIGHTS.length) {
-      const label = REAL_FLIGHTS.length > 1 ? `Real flights (${REAL_FLIGHTS.length}, hover or click for details)` : 'Real flight (hover or click for details)';
+      const label = REAL_FLIGHTS.length > 1 ? `Real flights (${REAL_FLIGHTS.length})` : 'Real flight';
       const realFlightRow = document.createElement('div');
       realFlightRow.className = 'alt-row static';
       realFlightRow.innerHTML = `${shapeSwatchSVG('target', REAL_FLIGHT_COLOR)}<span>${label}</span>` +
@@ -1626,6 +1626,58 @@ function buildTimeLegend() {
       realFlightRow.querySelector('.info-btn').addEventListener('click', () => {
         const isOpen = hint.classList.toggle('open');
         realFlightRow.querySelector('.info-btn').classList.toggle('open', isOpen);
+      });
+
+      // One row per flight, earliest launch first -- clicking jumps the
+      // time/altitude selection and opens the info box exactly like
+      // clicking the flight's own landing marker on the map
+      // (activateRealFlight(), shared with drawRealFlightMarker()) -- the
+      // only reachable way to do that without first finding a small marker
+      // on the map, and the only way at all in 3D, where no marker exists
+      // (see plans-archive/real-flight-3d-path.md's own History section).
+      // Sorts a copy of indices, not REAL_FLIGHTS itself -- activeRealFlight()/
+      // activateRealFlight() both index into REAL_FLIGHTS by its own
+      // original, unsorted position.
+      const order = REAL_FLIGHTS.map((_, i) => i)
+        .sort((a, b) => REAL_FLIGHTS[a].launch.time_local.localeCompare(REAL_FLIGHTS[b].launch.time_local));
+      order.forEach(i => {
+        const flight = REAL_FLIGHTS[i];
+        const row = document.createElement('div');
+        // Own class (not just .alt-row, shared with the capture-date rows
+        // above in this same list) -- the document-level click-away
+        // listener needs to clear ONLY a real-flight row's .pinned state,
+        // never a capture date's own independent pin (state.pinnedCapture).
+        row.className = 'alt-row real-flight-row';
+        row.innerHTML = `<div class="alt-swatch" style="background:${REAL_FLIGHT_COLOR}"></div>` +
+          `<span>${flight.launch.time_local.split('.')[0]} &mdash; ${flight.apogee.altitude_agl_ft.toLocaleString()} ft</span>`;
+        const avoidPoints = realFlightAvoidPoints(flight);
+        // Hover previews the same way hovering the marker itself does
+        // (sets hoveredRealFlightIndex, opens the box) -- doesn't touch the
+        // pad/time/altitude selection, only a click does that (see
+        // activateRealFlight()).
+        row.addEventListener('mouseenter', evt => {
+          hoveredRealFlightIndex = i;
+          updateActiveRealFlightOverlay();
+          setRealFlightComparing(true);
+          showRealFlightBox(evt, avoidPoints());
+        });
+        row.addEventListener('mouseleave', () => {
+          hoveredRealFlightIndex = null;
+          updateActiveRealFlightOverlay();
+          setRealFlightComparing(pinnedRealFlightIndex !== null);
+          hideRealFlightBox();
+        });
+        row.addEventListener('click', evt => {
+          evt.stopPropagation(); // don't let the document-level click-away listener immediately re-close this
+          activateRealFlight(i, evt, avoidPoints);
+          // Scoped to .real-flight-row -- not the capture-date rows' own
+          // independent .pinned state (state.pinnedCapture) sharing this
+          // same list.
+          [...el.querySelectorAll('.real-flight-row')].forEach(r => r.classList.remove('pinned'));
+          if (pinnedRealFlightIndex === i) row.classList.add('pinned');
+        });
+        if (pinnedRealFlightIndex === i) row.classList.add('pinned');
+        el.appendChild(row);
       });
     }
     return;
@@ -4517,6 +4569,14 @@ document.addEventListener('click', () => {
   updateActiveRealFlightOverlay();
   setRealFlightComparing(hoveredRealFlightIndex !== null);
   restorePadFromRealFlightSnap();
+  // The real-flights list (buildTimeLegend()) toggles .pinned on its own
+  // clicked row directly, outside the normal rebuild cycle (see its own
+  // comment) -- clear it here too, or a flight unpinned by clicking
+  // elsewhere would leave its list row looking pinned until the next
+  // unrelated rebuild. Scoped to .real-flight-row specifically -- #time-legend
+  // also holds the capture-date rows' own independent .pinned state
+  // (state.pinnedCapture), which this click-away has nothing to do with.
+  document.querySelectorAll('#time-legend .real-flight-row.pinned').forEach(r => r.classList.remove('pinned'));
 });
 
 // --- render ---
@@ -5599,6 +5659,82 @@ function updateActiveRealFlightOverlay() {
   activeOverlaySvgPoints = [[railPx, railPy], [predPx, predPy], [apogeePx, apogeePy]];
 }
 
+// Screen-space positions of every point a real flight's info box needs to
+// dodge -- computed fresh per call (not cached) since pan/zoom can move
+// them between renders. Shared by the 2D marker (drawRealFlightMarker())
+// and the real-flights list (buildTimeLegend()) -- both need the exact same
+// avoid-set for whichever flight they're about to show the box for.
+function realFlightAvoidPoints(flight) {
+  const { x, y } = flight.landing.offset_from_pad_ft;
+  const [px, py] = ftToPxAbsolute(x, y);
+  return () => [svgToScreen(px, py), ...activeOverlaySvgPoints.map(([ax, ay]) => svgToScreen(ax, ay))];
+}
+
+// Toggles pinning real flight index `i` -- the click behavior shared by its
+// 2D marker (drawRealFlightMarker()) and its row in the real-flights list
+// (buildTimeLegend()), extracted so clicking either does exactly the same
+// thing: snaps the pad to this flight's real launch rail, jumps the time/
+// altitude selection to its own closest_hour/altitude_bucket_used_ft (the
+// same buckets analyze_real_flight.py itself picked for its own forecast
+// comparison), and opens the info box. `avoidPoints` is a zero-arg function
+// (see realFlightAvoidPoints()) -- the caller supplies it since only it
+// knows the on-screen point this flight's own marker/row should dodge.
+function activateRealFlight(i, evt, avoidPoints) {
+  const flight = REAL_FLIGHTS[i];
+  const alreadyPinnedHere = pinnedRealFlightIndex === i;
+  pinnedRealFlightIndex = alreadyPinnedHere ? null : i;
+  if (pinnedRealFlightIndex !== null) {
+    // No reason to leave the pad marker somewhere that isn't this flight's
+    // real launch position once it's known -- snap it here instead of
+    // making the user find and drag the crosshair by hand to see the
+    // projections lined up against where the rocket actually flew. Only
+    // save the pre-snap position on the *first* snap (see
+    // padOffsetBeforeRealFlightSnap's own declaration) -- switching the pin
+    // straight from one flight to another shouldn't clobber it with the
+    // previous flight's rail. render() rebuilds every marker (including
+    // this overlay, via renderHistory() -> drawRealFlightMarker() ->
+    // updateActiveRealFlightOverlay()); avoidPoints() below reads it fresh
+    // afterward.
+    if (padOffsetBeforeRealFlightSnap === null) padOffsetBeforeRealFlightSnap = padOffsetFt;
+    setPadOffsetClamped(flight.launch.offset_from_pad_ft.x, flight.launch.offset_from_pad_ft.y);
+    // Line the displayed splash zone/history key up with this flight's own
+    // real launch time and apogee altitude, rather than leaving whatever
+    // hour/altitude happened to already be selected -- these are exactly
+    // the buckets analyze_real_flight.py itself picked as "closest" for its
+    // own model-forecast comparison (closest_hour/altitude_bucket_used_ft),
+    // so this is the one apples-to-apples zone for this flight. Not
+    // reverted on unpin (see restorePadFromRealFlightSnap() below, which
+    // only ever reverts the pad snap) -- unlike that snap, this is a normal
+    // user-facing selection worth leaving as-is.
+    state.timeMinutes = flight.closest_hour * 60;
+    hourExplicitlyChosen = true;
+    // Nearest-match, not exact equality -- the published bucket may not
+    // exist verbatim in DATA.altitudes if this date's zone JSON predates a
+    // master-ladder change (see config.ALTITUDES_MASTER_FT).
+    const bucket = flight.delta_from_predictions.altitude_bucket_used_ft;
+    state.compareAlt = DATA.altitudes.reduce((best, a) =>
+      Math.abs(a - bucket) < Math.abs(best - bucket) ? a : best, DATA.altitudes[0]);
+    // A pinned real flight compares against its own published altitude
+    // bucket specifically -- a specific-altitude override active from
+    // before would show an unrelated zone instead, so clear it.
+    state.customAlt = null;
+    syncAltCustomUI();
+    // Resync the slider's thumb position against the state.timeMinutes
+    // reassignment above -- a full renderWeatherPanel() rebuild, same way
+    // this used to re-run buildToggle('hour-toggle', ...) just to refresh
+    // its active button.
+    renderWeatherPanel();
+    buildAltList();
+    render();
+  } else {
+    restorePadFromRealFlightSnap();
+  }
+  updateActiveRealFlightOverlay();
+  setRealFlightComparing(pinnedRealFlightIndex !== null || hoveredRealFlightIndex !== null);
+  if (pinnedRealFlightIndex !== null) showRealFlightBox(evt, avoidPoints());
+  else hideRealFlightBox();
+}
+
 function drawRealFlightMarker() {
   REAL_FLIGHTS.forEach((flight, i) => {
     const { x, y } = flight.landing.offset_from_pad_ft;
@@ -5606,13 +5742,7 @@ function drawRealFlightMarker() {
     const marker = drawMarker(svg, 'target', px, py, 11, REAL_FLIGHT_COLOR, REAL_FLIGHT_COLOR);
     marker.style.cursor = 'pointer';
 
-    // Screen-space positions of every point the info box needs to dodge --
-    // computed fresh per event since pan/zoom can move them between
-    // renders, and re-reads activeOverlaySvgPoints (rather than closing over
-    // a snapshot) since it's only valid for whichever flight is active at
-    // call time -- always this one, since it's read right after this
-    // marker's own handlers make flight `i` active below.
-    const avoidPoints = () => [svgToScreen(px, py), ...activeOverlaySvgPoints.map(([ax, ay]) => svgToScreen(ax, ay))];
+    const avoidPoints = realFlightAvoidPoints(flight);
 
     marker.addEventListener('pointerdown', evt => evt.stopPropagation()); // don't let #map-wrap's pan handler eat this click
     marker.addEventListener('mousemove', evt => {
@@ -5629,58 +5759,7 @@ function drawRealFlightMarker() {
     });
     marker.addEventListener('click', evt => {
       evt.stopPropagation(); // don't let the document-level click-away listener immediately re-close this
-      const alreadyPinnedHere = pinnedRealFlightIndex === i;
-      pinnedRealFlightIndex = alreadyPinnedHere ? null : i;
-      if (pinnedRealFlightIndex !== null) {
-        // No reason to leave the pad marker somewhere that isn't this
-        // flight's real launch position once it's known -- snap it here
-        // instead of making the user find and drag the crosshair by hand to
-        // see the projections lined up against where the rocket actually
-        // flew. Only save the pre-snap position on the *first* snap (see
-        // padOffsetBeforeRealFlightSnap's own declaration) -- switching the
-        // pin straight from one flight to another shouldn't clobber it with
-        // the previous flight's rail. render() rebuilds every marker
-        // (including this overlay, via renderHistory() -> drawRealFlightMarker()
-        // -> updateActiveRealFlightOverlay()); avoidPoints() below reads it
-        // fresh afterward.
-        if (padOffsetBeforeRealFlightSnap === null) padOffsetBeforeRealFlightSnap = padOffsetFt;
-        setPadOffsetClamped(flight.launch.offset_from_pad_ft.x, flight.launch.offset_from_pad_ft.y);
-        // Line the displayed splash zone/history key up with this flight's
-        // own real launch time and apogee altitude, rather than leaving
-        // whatever hour/altitude happened to already be selected -- these
-        // are exactly the buckets analyze_real_flight.py itself picked as
-        // "closest" for its own model-forecast comparison (closest_hour /
-        // altitude_bucket_used_ft), so this is the one apples-to-apples zone
-        // for this flight. Not reverted on unpin (see restorePadFromRealFlightSnap()
-        // below, which only ever reverts the pad snap) -- unlike that snap,
-        // this is a normal user-facing selection worth leaving as-is.
-        state.timeMinutes = flight.closest_hour * 60;
-        hourExplicitlyChosen = true;
-        // Nearest-match, not exact equality -- the published bucket may not
-        // exist verbatim in DATA.altitudes if this date's zone JSON predates
-        // a master-ladder change (see config.ALTITUDES_MASTER_FT).
-        const bucket = flight.delta_from_predictions.altitude_bucket_used_ft;
-        state.compareAlt = DATA.altitudes.reduce((best, a) =>
-          Math.abs(a - bucket) < Math.abs(best - bucket) ? a : best, DATA.altitudes[0]);
-        // A pinned real flight compares against its own published altitude
-        // bucket specifically -- a specific-altitude override active from
-        // before would show an unrelated zone instead, so clear it.
-        state.customAlt = null;
-        syncAltCustomUI();
-        // Resync the slider's thumb position against the state.timeMinutes
-        // reassignment above -- a full renderWeatherPanel() rebuild, same
-        // way this used to re-run buildToggle('hour-toggle', ...) just to
-        // refresh its active button.
-        renderWeatherPanel();
-        buildAltList();
-        render();
-      } else {
-        restorePadFromRealFlightSnap();
-      }
-      updateActiveRealFlightOverlay();
-      setRealFlightComparing(pinnedRealFlightIndex !== null || hoveredRealFlightIndex !== null);
-      if (pinnedRealFlightIndex !== null) showRealFlightBox(evt, avoidPoints());
-      else hideRealFlightBox();
+      activateRealFlight(i, evt, avoidPoints);
     });
   });
 

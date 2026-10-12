@@ -111,5 +111,13 @@ reconciled -- explicitly deferred by the user as a future problem.
   existing, intentional-looking "click anywhere else to dismiss" behavior,
   out of scope for this report.
 
+- 2026-10-12 follow-up: asked directly why the 3D path still never shows
+  with zero interaction at all. Answer at the time: `activeRealFlight()`
+  only ever gets set by hovering/clicking the 2D marker, which doesn't
+  exist once the 3D frame is showing, so a direct 3D load always starts
+  inactive. Resolved not by auto-showing on load, but by
+  [[real-flights-list]] -- a plain-DOM clickable list (reachable in both
+  2D and 3D) that triggers the exact same activation.
+
 ## Open questions
 (none)
