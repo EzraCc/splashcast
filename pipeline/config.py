@@ -47,21 +47,28 @@ SITE_LON = -97.496414  # west-negative; convert to 0-360 for grid lookups
 #
 # max_pad_move_ft: how far the viewer's draggable pad marker can move from
 # the surveyed point (app.js's MAX_PAD_MOVE_FT, sent to the client via
-# build_zone_data()'s output). 2000 by default -- generous enough for a real
-# "set up on the other side of the field" adjustment without pretending to
-# model an actually different site, while every model here is on a grid
-# coarser than that anyway (HRRR, the finest, is ~3km/~9,800ft), so nothing
-# within it could ever pull a different forecast value regardless of exact
-# placement. Raised per-site only where a club's own real alternate pads
-# (not just "try a nearby spot") sit further out than that.
+# build_zone_data()'s output). 6562 (2km) by default -- raised from an
+# original 2000ft, which was too tight to drag the pad out far enough to
+# line a predicted zone up against a real GPS landing on a big-drift flight
+# (reported directly: couldn't reach a real apogee offset of ~4050ft on one
+# high-waiver flight). 2km stays safely inside every model here's own grid
+# resolution (HRRR, the finest, is ~3km/~9,800ft), so nothing within it
+# could ever pull a different forecast value regardless of exact placement
+# -- and well inside every site's own fetched "wide" context image radius
+# (smallest is Gunter's ~8640ft) checked directly before raising this, so
+# nothing drags past real imagery into the plain background fill
+# (app.js's growBaseViewBox(), grown to include the dragged pad and any
+# active real-flight markers every render, not just on page load). Raised
+# further per-site only where a club's own real alternate pads (not just
+# "try a nearby spot") sit further out than that.
 SITES = {
     "hutto": {
         "name": "Hutto", "club": "AARG", "lat": SITE_LAT, "lon": SITE_LON,
-        "waiver_ft": 10000, "elev_m": 197.0, "cron_cutoff_hour_utc": 20, "max_pad_move_ft": 2000,
+        "waiver_ft": 10000, "elev_m": 197.0, "cron_cutoff_hour_utc": 20, "max_pad_move_ft": 6562,
     },
     "seymour": {
         "name": "Seymour, TX (Rocket Ranch)", "club": "TNT",
-        "lat": 33.501037, "lon": -99.338722, "waiver_ft": 45000, "elev_m": 417.0, "cron_cutoff_hour_utc": 20, "max_pad_move_ft": 2000,
+        "lat": 33.501037, "lon": -99.338722, "waiver_ft": 45000, "elev_m": 417.0, "cron_cutoff_hour_utc": 20, "max_pad_move_ft": 6562,
         # waiver_ft: 45,000ft AGL, 4 NM radius, per TNT's own site.
     },
     "apache_pass": {
@@ -69,13 +76,13 @@ SITES = {
         # launch_schedule.py) -- kept as "AARG" so the two group together in
         # the site-picker by club.
         "name": "Apache Pass", "club": "AARG",
-        "lat": 30.680694, "lon": -97.142621, "waiver_ft": 10000, "elev_m": 123.0, "cron_cutoff_hour_utc": 20, "max_pad_move_ft": 2000,
+        "lat": 30.680694, "lon": -97.142621, "waiver_ft": 10000, "elev_m": 123.0, "cron_cutoff_hour_utc": 20, "max_pad_move_ft": 6562,
     },
     "hearne": {
         # Club-provided coordinate for the actual launch point on the runway,
         # not KLHB's official airport reference point (~1.2km away).
         "name": "Hearne, TX (Hearne Municipal Airport / KLHB)", "club": "Tripoli Houston",
-        "lat": 30.861145710845943, "lon": -96.6225689682861, "waiver_ft": 12000, "elev_m": 82.0, "cron_cutoff_hour_utc": 20, "max_pad_move_ft": 2000,
+        "lat": 30.861145710845943, "lon": -96.6225689682861, "waiver_ft": 12000, "elev_m": 82.0, "cron_cutoff_hour_utc": 20, "max_pad_move_ft": 6562,
     },
     "tripoli_houston_south": {
         # waiver_ft: 17,500 AGL, per tripolihouston.com's homepage.
@@ -83,15 +90,17 @@ SITES = {
         # "Tripoli Houston", and siteLabel() in app.js joins them as
         # "{club} - {name}"; the longer form doubled up on "Houston" there.
         "name": "South Site", "club": "Tripoli Houston",
-        "lat": 29.22320, "lon": -95.09726, "waiver_ft": 17500, "elev_m": 1.0, "cron_cutoff_hour_utc": 20, "max_pad_move_ft": 2000,
+        "lat": 29.22320, "lon": -95.09726, "waiver_ft": 17500, "elev_m": 1.0, "cron_cutoff_hour_utc": 20, "max_pad_move_ft": 6562,
     },
     "argonia": {
         # Coordinate is the middle of the field, not the original figure --
         # the club runs "away" and "far away" pads that can sit up to
-        # ~2,500ft east of it, so max_pad_move_ft is raised past the default
-        # to actually reach them (with a little headroom).
+        # ~2,500ft east of it. ~~max_pad_move_ft raised past the default
+        # (3000) to actually reach them~~ -- superseded once the default
+        # itself was raised to 2km: no longer needs its own override, the
+        # shared default already clears this with room to spare.
         "name": "Argonia, KS (The Rocket Pasture)", "club": "KLOUDBusters",
-        "lat": 37.166623, "lon": -97.738819, "waiver_ft": 50000, "elev_m": 382.0, "cron_cutoff_hour_utc": 20, "max_pad_move_ft": 3000,
+        "lat": 37.166623, "lon": -97.738819, "waiver_ft": 50000, "elev_m": 382.0, "cron_cutoff_hour_utc": 20, "max_pad_move_ft": 6562,
     },
     "gunter": {
         # Dallas Area Rocket Society (DARS). waiver_ft is the club's actual
@@ -101,17 +110,18 @@ SITES = {
         # Coordinates moved ~2,000ft (user's own direct knowledge of the
         # field) from dars.org's figure, which is the gate, to the middle of
         # the field where setup actually happens -- the gate coordinate ate
-        # nearly the entire default max_pad_move_ft budget on its own,
-        # leaving no real room to try a different spot within the field.
+        # nearly the entire ORIGINAL default max_pad_move_ft budget (2000)
+        # on its own, leaving no real room to try a different spot within
+        # the field; resolved now that the shared default is 2km instead.
         "name": "Gunter, TX", "club": "DARS",
-        "lat": 33.435039, "lon": -96.8091009, "waiver_ft": 6000, "elev_m": 213.0, "cron_cutoff_hour_utc": 20, "max_pad_move_ft": 2000,
+        "lat": 33.435039, "lon": -96.8091009, "waiver_ft": 6000, "elev_m": 213.0, "cron_cutoff_hour_utc": 20, "max_pad_move_ft": 6562,
     },
     "sd_rocket_jockies": {
         # Coordinates and waiver given directly by the user, not independently
         # verified against the club. Spelled "Jockies" (vs. NAR's official
         # "Jockeys") per explicit instruction on display naming.
         "name": "SD Rocket Jockies", "club": "SD Rocket Jockies",
-        "lat": 44.5149338, "lon": -96.8551149, "waiver_ft": 14000, "elev_m": 499.0, "cron_cutoff_hour_utc": 20, "max_pad_move_ft": 2000,
+        "lat": 44.5149338, "lon": -96.8551149, "waiver_ft": 14000, "elev_m": 499.0, "cron_cutoff_hour_utc": 20, "max_pad_move_ft": 6562,
     },
     "leonard": {
         # Coordinates given directly by the user. waiver_ft: "9,400 foot AGL
@@ -121,7 +131,7 @@ SITES = {
         # practical-ceiling nuance above), so the config value is the real
         # outer limit, not the no-approval-needed one.
         "name": "Leonard, OK", "club": "Tulsa Rocketry",
-        "lat": 35.9338002, "lon": -95.7860019, "waiver_ft": 9400, "elev_m": 179.0, "cron_cutoff_hour_utc": 20, "max_pad_move_ft": 2000,
+        "lat": 35.9338002, "lon": -95.7860019, "waiver_ft": 9400, "elev_m": 179.0, "cron_cutoff_hour_utc": 20, "max_pad_move_ft": 6562,
     },
     "pawhuska": {
         # Tulsa Rocketry's Leonard site's own annual off-site event (Pawhuska
@@ -132,7 +142,7 @@ SITES = {
         # (that page also flags mandatory RASAero sims above 21,500ft AGL,
         # a submission requirement this app doesn't model).
         "name": "Pawhuska, OK (High Frontier)", "club": "Tulsa Rocketry",
-        "lat": 36.6763510, "lon": -96.4062740, "waiver_ft": 29000, "elev_m": 306.0, "cron_cutoff_hour_utc": 20, "max_pad_move_ft": 2000,
+        "lat": 36.6763510, "lon": -96.4062740, "waiver_ft": 29000, "elev_m": 306.0, "cron_cutoff_hour_utc": 20, "max_pad_move_ft": 6562,
     },
     "eggemeyer": {
         # Coordinates given directly by the user in degrees/minutes (31 19.89N
@@ -141,7 +151,7 @@ SITES = {
         # San Angelo, TX. waiver_ft: "FAA waiver up to 10,000ft AGL" per NAR's
         # own club listing.
         "name": "Eggemeyer Field, San Angelo, TX", "club": "WTSV",
-        "lat": 31.3315, "lon": -100.28875, "waiver_ft": 10000, "elev_m": 588.0, "cron_cutoff_hour_utc": 20, "max_pad_move_ft": 2000,
+        "lat": 31.3315, "lon": -100.28875, "waiver_ft": 10000, "elev_m": 588.0, "cron_cutoff_hour_utc": 20, "max_pad_move_ft": 6562,
     },
 }
 

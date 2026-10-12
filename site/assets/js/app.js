@@ -5187,16 +5187,16 @@ function realFlightDescentPath(flight) {
 // Draggable launch pad: capped at DATA.max_pad_move_ft from the surveyed GPS
 // point -- per-site (config.SITES[...]["max_pad_move_ft"] server-side, see
 // its own comment there), since a club's real alternate pads aren't the
-// same distance out everywhere. Defaults to 2000ft: every model here is on a
-// grid coarser than that anyway (HRRR, the finest, is ~3km/~9,800ft), so
-// nothing within it could ever pull a different forecast value regardless
-// of exact placement, and it's generous enough for a real "set up on the
-// other side of the field" adjustment without modeling an actually
-// different site. Set per-dataset in initFromData(), not just on first
-// load like railAngleDeg -- this is a physical fact about whichever site
-// is currently selected, not a standing user preference that should
-// survive a site switch unchanged.
-let MAX_PAD_MOVE_FT = 2000;
+// same distance out everywhere. Defaults to 6562ft (2km): every model here
+// is on a grid coarser than that anyway (HRRR, the finest, is ~3km/
+// ~9,800ft), so nothing within it could ever pull a different forecast
+// value regardless of exact placement -- generous enough to drag a
+// predicted zone out to a real GPS landing on even a big-drift flight, not
+// just "set up on the other side of the field." Set per-dataset in
+// initFromData(), not just on first load like railAngleDeg -- this is a
+// physical fact about whichever site is currently selected, not a standing
+// user preference that should survive a site switch unchanged.
+let MAX_PAD_MOVE_FT = 6562;
 // Not part of `state` -- like railAngleDeg, this is a standing "what if"
 // exploration setting, not a "which zone am I looking at" selection. Reset
 // on site switch (selectSite()) since a different site's pad is a genuinely
@@ -6187,6 +6187,18 @@ function syncUrl() {
 // here duplicates a little of drawZone()'s own work, but it's cheap (see
 // simulateDrift()'s own comment on performance headroom) and lets the
 // background rect be sized correctly *before* it's drawn, not after.
+//
+// Also always folds in the pad marker's own current position and every
+// active real flight's fixed GPS points (rail/landing/apogee) -- raised
+// directly alongside MAX_PAD_MOVE_FT going from 2000ft to 2km (config.py's
+// own comment): dragging the pad that far to test a real landing against a
+// predicted zone is exactly the case where `zones` alone isn't enough --
+// the real flight's own points don't move with the pad (ftToPxAbsolute(),
+// same reasoning as drawRealFlightMarker()'s own comment) and could sit far
+// from wherever the dragged zone lands. Unconditional, every render, in
+// every mode -- cheap (at most a handful of points) and closes the same gap
+// for a drag with zero zones selected, not just byHistory's real-flight
+// case specifically.
 function growBaseViewBox(zones) {
   const allX = [], allY = [];
   zones.forEach(zone => {
@@ -6195,7 +6207,16 @@ function growBaseViewBox(zones) {
       allX.push(x); allY.push(y);
     });
   });
-  if (!allX.length) return;
+  const [padX, padY] = ftToPx(0, 0);
+  allX.push(padX); allY.push(padY);
+  REAL_FLIGHTS.forEach(flight => {
+    const rail = flight.launch?.offset_from_pad_ft;
+    if (rail) { const [x, y] = ftToPxAbsolute(rail.x, rail.y); allX.push(x); allY.push(y); }
+    const landing = flight.landing.offset_from_pad_ft;
+    { const [x, y] = ftToPxAbsolute(landing.x, landing.y); allX.push(x); allY.push(y); }
+    const apogee = flight.apogee?.offset_from_pad_ft;
+    if (apogee) { const [x, y] = ftToPxAbsolute(apogee.x, apogee.y); allX.push(x); allY.push(y); }
+  });
   const pad = 80;
   const minX = Math.min(BASE_VB[0], Math.min(...allX) - pad);
   const minY = Math.min(BASE_VB[1], Math.min(...allY) - pad);
@@ -6255,14 +6276,28 @@ function render() {
     const alt = state.customAlt !== null ? state.customAlt : state.compareAlt;
     timeZones = orderedHours.map(hour => ({ hour, zone: zoneFor(hour * 60, state.deploy, alt) })).filter(hz => hz.zone);
     growBaseViewBox(timeZones.map(hz => hz.zone));
+  } else if (state.mode === 'byHistory' && HISTORY) {
+    // Same reasoning as byAltitude/byTime above -- previously skipped here
+    // entirely (left BASE_VB at the server's own un-grown default sweep),
+    // which silently capped how far a dragged pad or a real flight's fixed
+    // points could ever show before running off into the plain background
+    // fill. Recomputes renderHistory()'s own rawPoints a second time -- a
+    // small duplicated lookup, same tradeoff this function's own top
+    // comment already accepts for drawZone()'s work.
+    const rate = state.rateName || 'fast';
+    const altitude = state.customAlt !== null ? state.customAlt : state.compareAlt;
+    const key = `${nearestPublishedHour(state.timeMinutes)}_${state.deploy}_${rate}_${altitude}`;
+    const rawPoints = state.customAlt !== null
+      ? historyPointsForAltitude(state.timeMinutes, state.deploy, altitude)
+      : (HISTORY.points_by_key[key] || []);
+    growBaseViewBox([{ points: rawPoints, altitude }]);
   }
 
   // First real render for this dataset: start the visible view at this
   // site's own hand-tuned default if one's been set (SITE_DEFAULT_VIEWS),
-  // else BASE_VB (what's actually relevant -- the current zones' own
-  // extent, just grown above for byAltitude/byTime, or the server's own
-  // default sweep as-is for byHistory, which doesn't grow it) rather than
-  // the far wider full detail image -- per direction, a user shouldn't need
+  // else BASE_VB (what's actually relevant -- the current mode's own data
+  // extent, grown above for whichever mode is active) rather than the far
+  // wider full detail image -- per direction, a user shouldn't need
   // to zoom in just to see their own data; zooming OUT (up to MAX_SPAN) is
   // still how to reach the wider image for context. Only the very first
   // render after a dataset loads does this -- every render after that
