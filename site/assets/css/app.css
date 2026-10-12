@@ -239,13 +239,17 @@
   .copy-link-btn:hover { background: var(--surface-2); }
   .copy-link-btn.copied { background: var(--accent); color: #fff; border-color: var(--accent); }
 
-  /* Single column, every screen size, since 2026-08 -- the "side" column
-     (grid-area) this used to carry is gone: the rate editor (its last
-     always-visible occupant) moved to #rate-editor-row above the map, and
-     #time-legend-block (its only other occupant, History-mode-only)
-     moved into .map-col-notes next to #accuracy-section. Grid (not flex)
-     kept anyway so "notes" and "accuracy" stay named areas rather than
-     bare source order, matching how .map-col-map already reads. */
+  /* Single column by default (phones and narrow tablets) -- the "side"
+     column (grid-area) this used to carry was removed 2026-08 when the
+     rate editor (its last always-visible occupant) moved to
+     #rate-editor-row above the map, leaving #time-legend-block (its only
+     other occupant, byTime/byHistory-only) to fall in with .map-col-notes
+     below the map instead. Reported directly as broken on desktop (too
+     much dead horizontal space, a short legend stranded under a tall
+     stack of map+weather-panel+model-legend) -- restored as a real
+     right-hand sidebar at >=900px (see the media query below), same
+     threshold the fluid type scale above already treats as "desktop."
+     Below that, stays exactly as it's been since 2026-08. */
   .layout {
     display: grid;
     grid-template-columns: 1fr;
@@ -264,6 +268,24 @@
   .site-heading:empty { display: none; }
   .map-col-notes { grid-area: notes; }
   .accuracy-section { grid-area: accuracy; min-width: 0; }
+
+  /* Right-hand sidebar for #time-legend-block (the only thing left in
+     .map-col-notes) on anything wide enough to spare it -- .accuracy-table
+     still spans the full width below (its own overflow-x:auto already
+     handles a narrow viewport; squeezing it into a 260px column would just
+     force a permanent horizontal scrollbar for no reason). 260px, not the
+     old sidebar's 190/230px -- this column only ever holds the time/age
+     legend now, not also the rate editor/altitude ladder/model checkboxes
+     that used to justify a narrower width fight. align-items:start (set
+     above, unconditionally) is what keeps this short column pinned to the
+     top of the row instead of stretching to match the much taller map
+     column beside it. */
+  @media (min-width: 900px) {
+    .layout {
+      grid-template-columns: minmax(0, 1fr) 260px;
+      grid-template-areas: "map notes" "accuracy accuracy";
+    }
+  }
 
   .map-frame { position: relative; }
 
@@ -1683,10 +1705,10 @@
   .footnote code { background: var(--surface-2); padding: 1px 5px; border-radius: 4px; }
 
   @media (max-width: 760px) {
-    /* .layout's own grid-template-columns/-areas need no mobile override
-       any more -- single column, "map"/"notes"/"accuracy", is already the
-       default at every width since #rate-editor-row/.side-col's removal
-       (see .layout's own comment). */
+    /* .layout's own grid-template-columns/-areas need no override here --
+       single column, "map"/"notes"/"accuracy", is already the default
+       below the 900px sidebar breakpoint added above (see .layout's own
+       comment), well clear of this 760px tier. */
     /* .descent3d-header-controls' desktop padding-left/right (reserving
        horizontal room beside the #layer-toggle/#burn-ban-chip stack and
        #map-view-toggle) doesn't scale down -- confirmed directly, a narrow

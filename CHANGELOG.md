@@ -2,7 +2,12 @@
 
 Dated, terse log of notable changes. For the full design rationale and decision history, see [docs/spec.md](docs/spec.md).
 
-## 2026-10-10
+## 2026-10-12
+
+**Restore the time/forecast-age legend as a right-hand sidebar on desktop**
+- `#time-legend-block` (titled "Time of day" in byTime mode, "Forecast age" in History mode) had been living in `.map-col-notes`, stacked below the weather panel in a single-column `.layout` at every screen width since the 2026-08 sidebar removal — reported directly as broken on desktop: a short legend stranded under a tall map+weather-panel+model-legend stack, wasting the full width of a 1200px-wide desktop layout.
+- Added a `@media (min-width: 900px)` override in `site/assets/css/app.css` switching `.layout` to `grid-template-columns: minmax(0, 1fr) 260px` with `.map-col-notes` in the second column, `.accuracy-section` still spanning full width below (its table already handles narrow widths via its own `overflow-x: auto`, no reason to squeeze it into 260px). 900px reuses the same breakpoint the fluid type scale already treats as "desktop." Below 900px, unchanged — single column, exactly as it's been since 2026-08.
+- Verified with headless Chromium at 1280px (both byTime and History modes — legend sits beside the map, not below the weather panel) and at 390px (mobile — unchanged single-column stack, legend still below the weather panel).
 
 **Added: real flight record for Pawhuska 2026-09-27 (98mm Alien Interceptor), published from the synthesized-KML reconstruction**
 - Requested directly ("let's publish the synthesized flight as an actual onto github"), then redirected to keep it simple: "We have a KML, the rest doesn't need to be re-engineered. KML > mapped actual. Skip the XLSX part." Dropped an in-progress new NMEA+XLSX ingestor (`load_eggtimer_nmea_and_baro()`, discarded via `git checkout` before it was ever committed) in favor of restoring `analyze_manual()` (`pipeline/analyze_real_flight.py`) -- it existed once already (2026-09-07) but got swept into an unrelated revert on 2026-09-08 (the 3D real-flight-path feature it had nothing to do with turned out broken, and the whole stack was reverted together). Restored byte-for-byte from `git show 1f39fb2`, not rewritten.
