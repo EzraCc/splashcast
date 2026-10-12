@@ -8,3 +8,4 @@
 | Grid-edge accuracy investigation | done | medium | new-feature | plans-archive/grid-edge-accuracy-investigation.md | 2026-09-02 |
 | Accuracy table column downloads | done | medium | new-feature | plans-archive/accuracy-table-column-downloads.md | 2026-09-22 |
 | Manual real-flight entries | done | medium | new-feature | plans-archive/manual-real-flight-entries.md | 2026-10-10 |
+| Real-flight 3D descent path | done | medium | new-feature | plans-archive/real-flight-3d-path.md | 2026-10-12 |
