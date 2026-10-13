@@ -2,6 +2,13 @@
 
 Dated, terse log of notable changes. For the full design rationale and decision history, see [docs/spec.md](docs/spec.md).
 
+## 2026-10-13
+
+**Added a tentative AARG @ Hutto date for Sun 2026-10-18**
+- Reported directly: Sat 2026-10-17 (already scheduled -- see the 2026-09-08 "moved from Hutto" override below) is looking too windy, so Sunday is a potential backup launch day.
+- Added via `launch_schedule.py --add hutto 2026-10-18 "AARG (Sun, weather contingency)" --tentative`, which appends a validated `add` override to `pipeline/launch_calendar.json` rather than hand-editing the JSON. Marked `tentative` (not `confirmed`) since it's a maybe, not a move -- Saturday's event is untouched and still scheduled.
+- Verified with `launch_schedule.py --days-ahead 10`: both 2026-10-17 (confirmed) and 2026-10-18 `[tentative]` now list for `hutto`. No code changed -- the existing cron tiers (`run_live_pulls_near`/`run_live_pulls_far`) will start pulling Open-Meteo forecasts for 10-18 automatically once it's within their lead window, same as any other scheduled date.
+
 ## 2026-10-12
 
 **Restore the time/forecast-age legend as a right-hand sidebar on desktop**

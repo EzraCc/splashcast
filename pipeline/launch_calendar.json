@@ -387,6 +387,15 @@
       "label": "AARG (moved from Hutto)",
       "reason": "rescheduled due to rain",
       "status": "confirmed"
+    },
+    {
+      "action": "add",
+      "club": "AARG",
+      "date": "2026-10-18",
+      "site_id": "hutto",
+      "label": "AARG (Sun, weather contingency)",
+      "reason": "Sat 10/17 looking too windy as of 2026-10-13",
+      "status": "tentative"
     }
   ]
 }
