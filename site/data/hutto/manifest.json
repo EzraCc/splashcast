@@ -1,6 +1,6 @@
 {
   "site_id": "hutto",
-  "generated_at": "2026-10-15T21:29:56",
+  "generated_at": "2026-10-16T04:43:00",
   "site_geometry": {
     "site_px": [
       1695.7281029931903,
@@ -28,19 +28,19 @@
   "launch_dates": [
     {
       "target_date": "2026-10-18",
-      "capture_date": "2026-10-15",
-      "lead_days": 3,
-      "label": "Sun, Oct 18 (T-3)",
-      "data_path": "data/hutto/live/2026-10-18/splash_zones_captured_2026-10-15.json",
+      "capture_date": "2026-10-16",
+      "lead_days": 2,
+      "label": "Sun, Oct 18 (T-2)",
+      "data_path": "data/hutto/live/2026-10-18/splash_zones_captured_2026-10-16.json",
       "history_path": "data/hutto/live/2026-10-18/points_history.json",
       "real_flight_paths": []
     },
     {
       "target_date": "2026-10-17",
-      "capture_date": "2026-10-15",
-      "lead_days": 2,
-      "label": "Sat, Oct 17 (T-2)",
-      "data_path": "data/hutto/live/2026-10-17/splash_zones_captured_2026-10-15.json",
+      "capture_date": "2026-10-16",
+      "lead_days": 1,
+      "label": "Sat, Oct 17 (T-1)",
+      "data_path": "data/hutto/live/2026-10-17/splash_zones_captured_2026-10-16.json",
       "history_path": "data/hutto/live/2026-10-17/points_history.json",
       "real_flight_paths": []
     },
