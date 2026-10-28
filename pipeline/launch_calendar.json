@@ -396,6 +396,80 @@
       "label": "AARG (Sun, weather contingency)",
       "reason": "Sat 10/17 looking too windy as of 2026-10-13",
       "status": "tentative"
+    },
+    {
+      "action": "move",
+      "club": "Tripoli Houston",
+      "from": {
+        "date": "2027-01-23",
+        "site_id": "seymour"
+      },
+      "to": {
+        "date": "2027-01-30",
+        "site_id": "seymour"
+      },
+      "label": "TNT Seymour (Sat)",
+      "reason": "published 2027 TNT schedule (tripolinorthtexas.org) lists Jan 30-31, not the generic 4th-Saturday default",
+      "status": "confirmed"
+    },
+    {
+      "action": "move",
+      "club": "Tripoli Houston",
+      "from": {
+        "date": "2027-01-24",
+        "site_id": "seymour"
+      },
+      "to": {
+        "date": "2027-01-31",
+        "site_id": "seymour"
+      },
+      "label": "TNT Seymour (Sun)",
+      "reason": "published 2027 TNT schedule (tripolinorthtexas.org) lists Jan 30-31, not the generic 4th-Saturday default",
+      "status": "confirmed"
+    },
+    {
+      "action": "move",
+      "club": "Tripoli Houston",
+      "from": {
+        "date": "2027-03-27",
+        "site_id": "seymour"
+      },
+      "to": {
+        "date": "2027-03-20",
+        "site_id": "seymour"
+      },
+      "label": "TNT Seymour (Sat) -- 3rd annual Lone Star Cup",
+      "reason": "published 2027 TNT schedule (tripolinorthtexas.org) lists Mar 20-21 for the 3rd annual Lone Star Cup, not the generic 4th-Saturday default",
+      "status": "confirmed"
+    },
+    {
+      "action": "move",
+      "club": "Tripoli Houston",
+      "from": {
+        "date": "2027-03-28",
+        "site_id": "seymour"
+      },
+      "to": {
+        "date": "2027-03-21",
+        "site_id": "seymour"
+      },
+      "label": "TNT Seymour (Sun) -- 3rd annual Lone Star Cup",
+      "reason": "published 2027 TNT schedule (tripolinorthtexas.org) lists Mar 20-21 for the 3rd annual Lone Star Cup, not the generic 4th-Saturday default",
+      "status": "confirmed"
+    },
+    {
+      "action": "cancel",
+      "club": "Tripoli Houston",
+      "date": "2027-05-22",
+      "site_id": "seymour",
+      "reason": "published 2027 TNT schedule has no separate regular May launch -- the 7th annual Texas Shootout (May 29-31, Memorial Day weekend) is the only May event this year; the generic 4th-Saturday date only coincided with Shootout weekend in 2026 by luck"
+    },
+    {
+      "action": "cancel",
+      "club": "Tripoli Houston",
+      "date": "2027-05-23",
+      "site_id": "seymour",
+      "reason": "published 2027 TNT schedule has no separate regular May launch -- the 7th annual Texas Shootout (May 29-31, Memorial Day weekend) is the only May event this year; the generic 4th-Saturday date only coincided with Shootout weekend in 2026 by luck"
     }
   ]
 }

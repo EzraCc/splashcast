@@ -2,6 +2,14 @@
 
 Dated, terse log of notable changes. For the full design rationale and decision history, see [docs/spec.md](docs/spec.md).
 
+## 2026-10-28
+
+**Updated TNT Seymour's 2027 schedule from the club's published calendar**
+- Fetched the published 2027 schedule from tripolinorthtexas.org and compared it against what the generic `nth_weekday_monthly`/`holiday_relative_multiday` rules in `pipeline/launch_calendar.json` already compute for 2027 at `seymour`. Three months disagreed: Jan (published 30-31, generic rule's 4th-Saturday default gives 23-24), Mar (published 20-21 for the "3rd annual Lone Star Cup", default gives 27-28), and May (published has no separate regular launch at all -- the 7th annual Texas Shootout, May 29-31, is the only May event; the generic rule's 4th-Saturday default of May 22-23 only matched the Shootout weekend in 2026 by coincidence of the calendar, not because the two are the same rule). Feb and Apr already matched the default exactly, no override needed.
+- Added via `launch_schedule.py`'s override helpers: `move` for Jan and Mar (both Sat+Sun legs each), `cancel` for May's regular 4th-Saturday Sat+Sun legs (the Shootout's own `holiday_relative_multiday` rule already generates May 29-31 correctly, unaffected). All six went through `_append_override()`'s `require_match=True` path, so the "from" side of each had to match an actual generic-rule-generated event or the write would have failed loudly.
+- Deliberately ignored the published page's September "High Frontier" entry per direct instruction -- that's Tripoli Tulsa's event at pawhuska, already tracked under the `tulsa_rocketry` club, not TNT's.
+- Verified with `launch_schedule.py`'s `all_events(2027)`: `seymour` now lists exactly Jan 30/31, Feb 27/28, Mar 20/21 (Lone Star Cup), Apr 24/25, May 29-31 (Texas Shootout) -- matching the published page with no extra or missing dates, no second May event.
+
 ## 2026-10-13
 
 **Added a tentative AARG @ Hutto date for Sun 2026-10-18**
