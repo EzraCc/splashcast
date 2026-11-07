@@ -1,6 +1,6 @@
 {
   "site_id": "hutto",
-  "generated_at": "2026-11-06T23:07:31",
+  "generated_at": "2026-11-07T05:58:19",
   "site_geometry": {
     "site_px": [
       1695.7281029931903,
@@ -28,10 +28,10 @@
   "launch_dates": [
     {
       "target_date": "2026-11-07",
-      "capture_date": "2026-11-06",
-      "lead_days": 1,
-      "label": "Sat, Nov 7 (T-1)",
-      "data_path": "data/hutto/live/2026-11-07/splash_zones_captured_2026-11-06.json",
+      "capture_date": "2026-11-07",
+      "lead_days": 0,
+      "label": "Sat, Nov 7 (T-0)",
+      "data_path": "data/hutto/live/2026-11-07/splash_zones_captured_2026-11-07.json",
       "history_path": "data/hutto/live/2026-11-07/points_history.json",
       "real_flight_paths": []
     },
