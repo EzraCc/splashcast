@@ -1,6 +1,6 @@
 {
   "site_id": "argonia",
-  "generated_at": "2026-11-13T23:34:25",
+  "generated_at": "2026-11-14T06:24:06",
   "site_geometry": {
     "site_px": [
       4568.5,
@@ -28,19 +28,19 @@
   "launch_dates": [
     {
       "target_date": "2026-11-15",
-      "capture_date": "2026-11-13",
-      "lead_days": 2,
-      "label": "Sun, Nov 15 (T-2)",
-      "data_path": "data/argonia/live/2026-11-15/splash_zones_captured_2026-11-13.json",
+      "capture_date": "2026-11-14",
+      "lead_days": 1,
+      "label": "Sun, Nov 15 (T-1)",
+      "data_path": "data/argonia/live/2026-11-15/splash_zones_captured_2026-11-14.json",
       "history_path": "data/argonia/live/2026-11-15/points_history.json",
       "real_flight_paths": []
     },
     {
       "target_date": "2026-11-14",
-      "capture_date": "2026-11-13",
-      "lead_days": 1,
-      "label": "Sat, Nov 14 (T-1)",
-      "data_path": "data/argonia/live/2026-11-14/splash_zones_captured_2026-11-13.json",
+      "capture_date": "2026-11-14",
+      "lead_days": 0,
+      "label": "Sat, Nov 14 (T-0)",
+      "data_path": "data/argonia/live/2026-11-14/splash_zones_captured_2026-11-14.json",
       "history_path": "data/argonia/live/2026-11-14/points_history.json",
       "real_flight_paths": []
     },
